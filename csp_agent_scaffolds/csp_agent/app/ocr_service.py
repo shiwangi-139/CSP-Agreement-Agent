@@ -196,6 +196,21 @@ STRONG_PVR = [
     r"police\s+clearance", r"\bpvr\b", r"\bpcc\b", r"\bcctns\b",
     r"चरित्र\s*प्रमाण\s*पत्र", r"पुलिस\s*सत्यापन", r"चरित्र\s*सत्यापन",
 ]
+# A PVR / character certificate / PCC *application*, not the certificate:
+# e.g. UP Police "Service Request Receipt" (Request Type: CHARACTER
+# CERTIFICATE, Current Status, Date of Submission). It has none of the
+# wording of an issued certificate.
+PVR_APPLICATION = [
+    r"service\s+request\s+receipt", r"request\s+type\s*:", r"date\s+of\s+submission",
+    r"current\s+status\s*:", r"acknowledge?ment\s+(?:slip|receipt)", r"application\s+status",
+    r"application\s+(?:has\s+been\s+)?(?:received|submitted|registered)", r"track\s+your\s+application",
+    r"आवेदन\s*(?:की\s*)?(?:स्थिति|पावती)", r"पावती",
+]
+PVR_ISSUED = [
+    r"(?:it\s+is|is\s+hereby|this\s+is\s+to)\s+certif", r"no\s+adverse", r"nothing\s+adverse",
+    r"not\s+(?:been\s+)?found\s+involved", r"police\s+records?\s+(?:show|reveal)", r"valid\s+(?:only\s+)?for",
+    r"प्रमाणित\s*किया\s*जाता", r"कोई\s*प्रतिकूल",
+]
 STRONG_IIBF = [
     r"indian\s+institute\s+of\s+banking", r"institute\s+of\s+banking\s*(?:&|and)\s*finance",
     r"\biibf\b", r"\bbc\s*/\s*bf\b", r"\bbcbf\b", r"certificate\s+examination\s+for\s+business\s+correspondents",
@@ -219,6 +234,11 @@ def classify_allowlist_gate(text: str, filename: str = "") -> Tuple[bool, str, s
     for doc_type, patterns in (("AGREEMENT", STRONG_AGREEMENT), ("POLICE_VERIFICATION", STRONG_PVR),
                                ("IIBF_CERTIFICATE", STRONG_IIBF)):
         hits = _matches(patterns, body)
+        if hits and doc_type == "POLICE_VERIFICATION" and _matches(PVR_APPLICATION, body) \
+                and not _matches(PVR_ISSUED, body):
+            return (False, "PVR_APPLICATION_ONLY",
+                    "This is the application/receipt for a police verification or character certificate, "
+                    "not the certificate itself.", 0.9)
         if hits:
             conf = 0.95 if len(hits) >= 2 else 0.9
             return True, doc_type, f"Matched {doc_type} phrases: {hits[:3]}", conf

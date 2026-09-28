@@ -113,3 +113,23 @@ def test_human_readable_download_naming():
         ext="pdf"
     )
     assert name == "10001_Shiwangi_Sinha_CSP_Agreement_2025.pdf"
+
+
+def test_character_certificate_application_receipt_is_not_a_pvr():
+    # UP Police "Service Request Receipt": proof of applying, not the certificate.
+    from app.ocr_service import classify_allowlist_gate
+    receipt = ("उत्तर प्रदेश पुलिस Service Request Receipt Request Type : CHARACTER CERTIFICATE "
+               "Request No. : 319532439031 Name of Applicant : Kaushar Jahan Submited To : विजय नगर Police Station "
+               "Current Status : थाना पर दिनांक 08/11/2024 17:03:38 को प्राप्त Date of Submission : 08/11/2024 "
+               "Officer-In-Charge")
+    ok, doc_type, reason, _ = classify_allowlist_gate(receipt)
+    assert not ok and doc_type == "PVR_APPLICATION_ONLY" and "not the certificate" in reason
+
+
+def test_issued_character_certificate_is_still_a_pvr():
+    from app.ocr_service import classify_allowlist_gate
+    cert = ("Character Certificate Certificate No. - 316542516797 Date- 29/05/2025 It is certified that "
+            "Mr./Miss/Mrs. Sohit Kumar ... no adverse entry was found against the said candidate in the police "
+            "records. This certificate is valid only for one year. Crime and Criminal Tracking Network and Systems (CCTNS)")
+    ok, doc_type, _, _ = classify_allowlist_gate(cert)
+    assert ok and doc_type == "POLICE_VERIFICATION"

@@ -25,6 +25,8 @@ from app.document_service import _d, _status_for, recompute_current, sync_agreem
 from app.models import CSP, Document, DocumentStatus
 
 KEEP = {DocumentStatus.MANUAL_VERIFIED, DocumentStatus.REJECTED}
+# Re-read as "not the document itself": the stored copy is rejected.
+NOT_THE_DOCUMENT = {"PVR_APPLICATION_ONLY"}
 
 
 def main():
@@ -55,6 +57,24 @@ def main():
                 skipped += 1
                 continue
             ex = extract_document_fields_deterministic(path.read_bytes(), d.original_filename or path.name)
+            if ex["document_type"] in NOT_THE_DOCUMENT:
+                # Stored as a document, but it is only an application/receipt
+                # (or a letter about the agreement): it must not count.
+                changed += 1
+                reason = ex.get("rejection_reason") or ex["document_type"]
+                print(f"  {csp.current_code} {csp.name[:24]:24} {d.document_type}: REJECT — {reason}")
+                report.append({"document_id": d.id, "csp_code": csp.current_code, "csp_name": csp.name,
+                               "type": d.document_type, "change": f"REJECT: {reason}", "file": d.storage_path})
+                if args.apply:
+                    d.status = DocumentStatus.REJECTED
+                    d.extracted_fields = {**(d.extracted_fields or {}), "rejection_reason": reason,
+                                          "reextracted_on": date.today().isoformat()}
+                    recompute_current(db, csp, d.document_type)
+                    sync_agreement_row(db, csp)
+                    refresh_category(db, csp)
+                    vault.place_csp(db, csp)  # moves it into rejected/
+                    db.commit()
+                continue
             if ex["readability"] != "READABLE" or ex["document_type"] != d.document_type:
                 print(f"  {csp.current_code} {d.document_type}: now {ex['readability']} {ex['document_type']} — left unchanged")
                 skipped += 1
