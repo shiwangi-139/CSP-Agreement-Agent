@@ -55,3 +55,9 @@ def _isolated_vault(tmp_path, monkeypatch):
     from app import vault
     monkeypatch.setattr(vault, "ROOT", tmp_path / "documents")
     yield vault.ROOT
+
+
+@pytest.fixture(autouse=True)
+def _no_vault_marker(monkeypatch):
+    # Tests use temporary vault folders, which never hold the .csp_vault marker.
+    monkeypatch.setattr("app.vault.STORAGE_REQUIRE_MARKER", False)
