@@ -50,13 +50,13 @@ def _csp(Session):
     return cid, code, token
 
 
-def _pvr_pdf(issue: date) -> bytes:
+def _pvr_pdf(issue: date, holder: str = "TEST PERSON") -> bytes:
     import fitz
     doc = fitz.open()
     page = doc.new_page()
     text = ("Government of Uttar Pradesh  CHARACTER CERTIFICATE\n"
             f"Application No. - 202503277853 Date - {issue.strftime('%d-%m-%Y')}\n"
-            "This is to certify that Mr. TEST PERSON ... no adverse entry was found against the said\n"
+            f"This is to certify that Mr. {holder} ... no adverse entry was found against the said\n"
             "candidate in the police records. This certificate is valid only for one year.\n"
             "This is a computer generated document so no signature is required.\n"
             f"Digitally signed by TEST OFFICER Date: {issue.strftime('%Y.%m.%d')} 18:29:17 +05'30'\n")

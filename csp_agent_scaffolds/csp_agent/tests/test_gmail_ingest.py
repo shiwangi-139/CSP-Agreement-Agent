@@ -23,6 +23,8 @@ def fake_gmail(monkeypatch, tmp_path):
 
     monkeypatch.setattr(gmail_oauth, "get_message", get_message)
     monkeypatch.setattr(gmail_oauth, "fetch_attachment_bytes", fetch)
+    # No vision model in tests; a test sets calls["model"] to what it "reads".
+    monkeypatch.setattr(gmail_ingest, "read_owner_with_model", lambda data, t: calls.get("model"))
     return mailbox, calls
 
 
@@ -95,11 +97,123 @@ def test_newer_document_moves_older_to_expired_folder(db_session, fake_gmail):
     mailbox, _ = fake_gmail
     csp = _csp(db_session)
     old, new = "o" + uuid.uuid4().hex[:8], "n" + uuid.uuid4().hex[:8]
-    _mail(mailbox, old, csp.current_code, csp.name, {"old.pdf": _pvr_pdf(date.today() - timedelta(days=300))})
-    _mail(mailbox, new, csp.current_code, csp.name, {"new.pdf": _pvr_pdf(date.today() - timedelta(days=5))})
+    _mail(mailbox, old, csp.current_code, csp.name, {"old.pdf": _pvr_pdf(date.today() - timedelta(days=300), csp.name)})
+    _mail(mailbox, new, csp.current_code, csp.name, {"new.pdf": _pvr_pdf(date.today() - timedelta(days=5), csp.name)})
     gmail_ingest.process_message(db_session, None, old)
     gmail_ingest.process_message(db_session, None, new)
     docs = db_session.query(Document).filter_by(csp_id=csp.id).order_by(Document.issue_date).all()
     assert [d.is_current for d in docs] == [False, True]
     assert "/expired/" in docs[0].storage_path and "/expired/" not in docs[1].storage_path
     assert "_PVR_REPLACED_" in docs[0].storage_path and "_PVR_ACTIVE_" in docs[1].storage_path
+
+
+def _named_csp(db, name):
+    c = _csp(db)
+    c.name = name
+    db.flush()
+    return c
+
+
+def _owner_mail(db_session, mailbox, email_csp, pdf):
+    mid = "w" + uuid.uuid4().hex[:8]
+    _mail(mailbox, mid, email_csp.current_code, email_csp.name, {"agreement.pdf": pdf})
+    assert gmail_ingest.process_message(db_session, None, mid) == "PROCESSED"
+    return db_session.query(InboundMessage).filter_by(external_message_id=mid).one()
+
+
+def test_code_on_the_document_beats_the_email_subject(db_session, fake_gmail):
+    # Staff wrote "KO <A>" in the subject but attached CSP B's document.
+    mailbox, _ = fake_gmail
+    a, b = _csp(db_session), _csp(db_session)
+    pdf = _pvr_pdf(date.today() - timedelta(days=5), f"{b.name} CSP Code {b.current_code}")
+    inbound = _owner_mail(db_session, mailbox, a, pdf)
+    assert db_session.query(Document).filter_by(csp_id=a.id).count() == 0
+    doc = db_session.query(Document).filter_by(csp_id=b.id).one()
+    assert doc.is_current and doc.status.value == "VALID"
+    assert inbound.attachment_decisions[0]["csp_code"] == b.current_code
+
+
+def test_document_naming_another_csp_is_held_for_review(db_session, fake_gmail):
+    # The Rahbar case: no readable code, but the name is another CSP's.
+    from app.models import ManualReviewQueue
+    mailbox, _ = fake_gmail
+    a = _named_csp(db_session, "RAJESH RAJESH")
+    b = _named_csp(db_session, "RAHBAR AMAAN SIDDIQUI")
+    _owner_mail(db_session, mailbox, a, _pvr_pdf(date.today() - timedelta(days=5), "RAHBAR AMAAN SIDDIQUI SO SAMIULLAH"))
+    doc = db_session.query(Document).filter_by(csp_id=a.id).one()
+    assert doc.status.value == "NEEDS_REVIEW" and not doc.is_current
+    q = db_session.query(ManualReviewQueue).filter_by(document_id=doc.id).one()
+    assert b.current_code in q.reason and "RAHBAR" in q.reason.upper()
+
+
+def test_document_without_readable_code_or_name_is_held_for_review(db_session, fake_gmail):
+    # The handwritten case: nothing on the page says whose it is.
+    mailbox, _ = fake_gmail
+    a = _named_csp(db_session, "JAY PRAKASH")
+    _owner_mail(db_session, mailbox, a, _pvr_pdf(date.today() - timedelta(days=5), "XXXX"))
+    doc = db_session.query(Document).filter_by(csp_id=a.id).one()
+    assert doc.status.value == "NEEDS_REVIEW" and not doc.is_current
+    assert "no CSP code or name" in doc.extracted_fields["owner_check"]
+
+
+def test_joined_name_on_document_still_confirms_the_csp(db_session, fake_gmail):
+    mailbox, _ = fake_gmail
+    a = _named_csp(db_session, "MUKESH KUMAR SINGH")
+    _owner_mail(db_session, mailbox, a, _pvr_pdf(date.today() - timedelta(days=5), "MUKESHKUMARSINGH"))
+    doc = db_session.query(Document).filter_by(csp_id=a.id).one()
+    assert doc.status.value == "VALID" and doc.is_current
+
+
+def test_one_letter_spelling_difference_still_confirms_the_csp(db_session, fake_gmail):
+    mailbox, _ = fake_gmail
+    a = _named_csp(db_session, "PARDEEP SINGH")
+    _owner_mail(db_session, mailbox, a, _pvr_pdf(date.today() - timedelta(days=5), "PRADEEP SINGH"))
+    assert db_session.query(Document).filter_by(csp_id=a.id).one().status.value == "VALID"
+
+
+def test_model_reading_this_csps_handwritten_code_confirms_it(db_session, fake_gmail):
+    mailbox, calls = fake_gmail
+    a = _named_csp(db_session, "BHANU PRATAP SINGH")
+    calls["model"] = {"csp_code": a.current_code, "csp_name": None}
+    _owner_mail(db_session, mailbox, a, _pvr_pdf(date.today() - timedelta(days=5), "XXXX"))
+    assert db_session.query(Document).filter_by(csp_id=a.id).one().status.value == "VALID"
+
+
+def test_model_code_and_name_of_another_csp_moves_the_document(db_session, fake_gmail):
+    # The Bhanu Pratap case: filed under Jay Prakash by the email subject.
+    mailbox, calls = fake_gmail
+    jay = _named_csp(db_session, "JAY PRAKASH")
+    bhanu = _named_csp(db_session, "BHANU PRATAP SINGH")
+    calls["model"] = {"csp_code": bhanu.current_code, "csp_name": "Bhanu Pratap Singh"}
+    _owner_mail(db_session, mailbox, jay, _pvr_pdf(date.today() - timedelta(days=5), "XXXX"))
+    assert db_session.query(Document).filter_by(csp_id=jay.id).count() == 0
+    assert db_session.query(Document).filter_by(csp_id=bhanu.id).one().is_current
+
+
+def test_model_code_alone_never_moves_a_document(db_session, fake_gmail):
+    # A misread handwritten digit can point at a real CSP: only review.
+    mailbox, calls = fake_gmail
+    jay = _named_csp(db_session, "JAY PRAKASH")
+    other = _named_csp(db_session, "SOMEONE ELSE")
+    calls["model"] = {"csp_code": other.current_code, "csp_name": "Bhanu Pratap Singh"}
+    _owner_mail(db_session, mailbox, jay, _pvr_pdf(date.today() - timedelta(days=5), "XXXX"))
+    doc = db_session.query(Document).filter_by(csp_id=jay.id).one()
+    assert doc.status.value == "NEEDS_REVIEW" and other.current_code in doc.extracted_fields["owner_check"]
+
+
+def test_reviewer_approval_teaches_the_name(db_session, fake_gmail):
+    from app.models import ExtractionCorrection
+    mailbox, calls = fake_gmail
+    a = _named_csp(db_session, "MOHD AYUB KHAN")
+    calls["model"] = {"csp_code": None, "csp_name": "Mahmmad Ayub"}
+    _owner_mail(db_session, mailbox, a, _pvr_pdf(date.today() - timedelta(days=5), "XXXX"))
+    first = db_session.query(Document).filter_by(csp_id=a.id).one()
+    assert first.status.value == "NEEDS_REVIEW" and first.extracted_fields["owner_seen_name"] == "Mahmmad Ayub"
+    # What the dashboard's Accept button records:
+    db_session.add(ExtractionCorrection(document_id=first.id, field_name="owner_name",
+                                        ai_value="Mahmmad Ayub", human_value=a.name))
+    db_session.flush()
+    calls["model"] = None
+    _owner_mail(db_session, mailbox, a, _pvr_pdf(date.today() - timedelta(days=4), "MAHMMAD AYUB"))
+    second = db_session.query(Document).filter(Document.csp_id == a.id, Document.id != first.id).one()
+    assert second.status.value == "VALID"

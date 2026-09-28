@@ -23,21 +23,22 @@ ever invented from an email):
 There is no sender allowlist (CSPs use personal mail); a sender who is not
 on the calling sheet and not @eko.co.in is flagged on the dashboard.
 """
+import difflib
 import hashlib
 import logging
 import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parseaddr, parsedate_to_datetime
-from typing import Optional
+from typing import Callable, Optional
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .config import GMAIL_BACKFILL_DAYS, INTERNAL_EMAIL_DOMAIN, MAX_UPLOAD_SIZE_BYTES
 from .db import SessionLocal
-from .models import CSP, Document, IngestState, InboundMessage, InternalUser, EmailCategory
+from .models import CSP, Document, ExtractionCorrection, IngestState, InboundMessage, InternalUser, EmailCategory
 from .validation import normalize_csp_code
-from .ai.extraction.deterministic_extractor import extract_document_fields_deterministic
+from .ai.extraction.deterministic_extractor import extract_document_fields_deterministic, read_owner_with_model
 from .extract_pool import extract_all
 from .ocr_service import detect_mime
 from .document_service import store_extracted_document
@@ -117,6 +118,101 @@ def _find_csp(db: Session, code: Optional[str]) -> Optional[CSP]:
         return None
     code = normalize_csp_code(code)
     return db.query(CSP).filter((CSP.lookup_code == code) | (CSP.current_code == code)).first()
+
+
+def _letters(s: str) -> str:
+    return " ".join(re.sub(r"[^A-Z]+", " ", (s or "").upper()).split())
+
+
+def _name_on_document(name: str, text: str) -> bool:
+    """Every word of the CSP's name is on the document (also matches OCR
+    that joins words, e.g. MUKESHKUMAR for Mukesh Kumar)."""
+    words = [w for w in dict.fromkeys(_letters(name).split()) if len(w) >= 3]
+    if not words:
+        return False
+    if "".join(words) in text.replace(" ", ""):
+        return True
+    # One letter off per word is still the same person (PARDEEP / PRADEEP).
+    tokens = set(text.split())
+    return all(w in tokens or any(len(t) >= 3 and difflib.SequenceMatcher(None, w, t).ratio() >= 0.85
+                                  for t in tokens) for w in words)
+
+
+def learned_names(db: Session) -> dict[int, list[str]]:
+    """Other spellings of each CSP's name, learned from reviewers accepting
+    a document whose name did not match the sheet (app/api/hub.py)."""
+    rows = (db.query(Document.csp_id, ExtractionCorrection.ai_value)
+            .join(ExtractionCorrection, ExtractionCorrection.document_id == Document.id)
+            .filter(ExtractionCorrection.field_name == "owner_name"))
+    out: dict[int, list[str]] = {}
+    for csp_id, seen in rows:
+        if seen:
+            out.setdefault(csp_id, []).append(seen)
+    return out
+
+
+def check_owner(db: Session, csp: CSP, ex: dict, everyone: list[CSP],
+                ask_model: Optional[Callable[[], Optional[dict]]] = None,
+                learned: Optional[dict[int, list[str]]] = None) -> tuple[CSP, Optional[str], Optional[str]]:
+    """Whose document is this? The email chose `csp`; the document itself
+    decides. Returns (csp to file it under, how, reason to hold it for review).
+      1. OCR shows this CSP's code, its name, or a name a reviewer accepted
+         for it before                                    -> this CSP
+      2. OCR shows exactly one other CSP's code            -> that CSP
+      3. otherwise ask the vision model for the code and name (handwriting):
+         this CSP's code or name                           -> this CSP
+         another CSP's code AND that CSP's name            -> that CSP
+      4. still unsure                                      -> this CSP, held for review
+    When held, ex["owner_seen_name"] is set to the name read from the
+    document, so a reviewer's approval can teach it (learned_names).
+    """
+    if ex.get("readability") != "READABLE":
+        return csp, None, None
+    codes = ex.get("csp_codes") or ([ex["csp_code"]] if ex.get("csp_code") else [])
+    found = {}
+    for code in codes:
+        other = _find_csp(db, code)
+        if other is not None:
+            found[other.id] = other
+    if csp.id in found:
+        return csp, None, None
+    if len(found) == 1:
+        return next(iter(found.values())), "CODE_IN_ATTACHMENT", None
+    if found:
+        shown = ", ".join(c.current_code for c in found.values())
+        return csp, None, f"Document shows CSP codes {shown}, not {csp.current_code}."
+    text = _letters(ex.get("match_text"))
+    known = [csp.name, *(learned or {}).get(csp.id, [])]
+    if any(_name_on_document(n, text) for n in known):
+        return csp, None, None
+    named = next((o for o in everyone if o.id != csp.id and len(_letters(o.name).split()) >= 2
+                  and f" {_letters(o.name)} " in f" {text} "), None)
+
+    ans = None
+    if ex.get("model_csp_code") or ex.get("model_csp_name"):
+        ans = {"csp_code": ex.get("model_csp_code"), "csp_name": ex.get("model_csp_name")}
+    elif ask_model is not None:
+        ans = ask_model()
+    hint = ""
+    if ans:
+        m_code, m_name = normalize_csp_code(ans.get("csp_code")), _letters(ans.get("csp_name"))
+        m_csp = _find_csp(db, m_code) if m_code else None
+        if named is None and (m_csp is not None and m_csp.id == csp.id
+                              or m_name and any(_name_on_document(n, m_name) for n in known)):
+            return csp, None, None
+        if m_csp is not None and m_csp.id != csp.id and m_name and _name_on_document(m_csp.name, m_name):
+            return m_csp, "MODEL_CODE_AND_NAME", None
+        if m_code or m_name:
+            hint = f" The vision model read code {m_code or '-'}, name {m_name.title() or '-'}."
+        if m_name:
+            ex["owner_seen_name"] = m_name.title()
+    if not ex.get("owner_seen_name") and ex.get("holder_name"):
+        ex["owner_seen_name"] = ex["holder_name"]
+    if named is not None:
+        return csp, None, (f"Document names {named.name} ({named.current_code}), "
+                           f"not {csp.name} ({csp.current_code}).{hint}")
+    return csp, None, (f"Could not confirm this is {csp.name}'s ({csp.current_code}) document: "
+                       f"no CSP code or name readable on it (e.g. handwritten).{hint}")
 
 
 def match_csp(db: Session, subject: str, body: str, sender_email: str, filenames: list[str]) -> tuple[Optional[CSP], str]:
@@ -240,6 +336,9 @@ def process_message(db: Session, service, msg_id: str) -> str:
                 Document.csp_id == csp.id, Document.sha256 == hashlib.sha256(data).hexdigest()).first():
             duplicate_ids.add(att["attachment_id"])
     read_all([a for a in attachments if a["attachment_id"] not in duplicate_ids])
+    everyone = db.query(CSP).all()
+    learned = learned_names(db)
+    touched = {csp.id: csp}
     for att in attachments:
         entry = {"filename": att["filename"], "decision": None, "document_id": None, "reason": None}
         try:
@@ -252,12 +351,25 @@ def process_message(db: Session, service, msg_id: str) -> str:
                 ex = {"readability": "DUPLICATE"}
             else:
                 ex = extracted.get(att["attachment_id"]) or extract_document_fields_deterministic(data, att["filename"])
+            owner, owner_how, review = check_owner(
+                db, csp, ex, everyone, learned=learned,
+                ask_model=lambda: read_owner_with_model(data, ex.get("document_type") or "UNKNOWN"))
+            if review:
+                ex = {**ex, "owner_review": review}
+                logger.info("attachment_owner_unconfirmed msg=%s file=%s csp=%s: %s",
+                            msg_id, att["filename"], csp.current_code, review)
+            if owner.id != csp.id:
+                logger.info("attachment_refiled msg=%s file=%s email_csp=%s document_csp=%s",
+                            msg_id, att["filename"], csp.current_code, owner.current_code)
+                entry["csp_code"] = owner.current_code
+                entry["matched_by"] = owner_how
+            touched[owner.id] = owner
             with db.begin_nested():
                 out = store_extracted_document(
-                    db, csp, data, att["filename"], detect_mime(data), ex, channel="GMAIL_INBOUND",
+                    db, owner, data, att["filename"], detect_mime(data), ex, channel="GMAIL_INBOUND",
                     source_message_id=msg_id, source_date=received, sender_on_sheet=inbound.sender_on_sheet)
             known = out.document if out.decision == "DUPLICATE" else None
-            entry.update(decision=out.decision, reason=out.reason,
+            entry.update(decision=out.decision, reason=review or out.reason,
                          document_id=out.document.id if out.document else None,
                          document_type=ex.get("document_type") or (known.document_type if known else None),
                          issue_date=ex.get("start_date") or (known.issue_date.isoformat() if known and known.issue_date else None),
@@ -272,7 +384,8 @@ def process_message(db: Session, service, msg_id: str) -> str:
     inbound.error_message = f"Matched CSP {csp.current_code} by {how}."
     inbound.processed_at = _now()
     from .renewal_engine import on_documents_received
-    on_documents_received(db, csp)
+    for c in touched.values():
+        on_documents_received(db, c)
     return inbound.status
 
 

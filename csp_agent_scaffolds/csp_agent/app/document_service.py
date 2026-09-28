@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from . import vault
 from .compliance import USABLE, canonical_type
-from .models import Agreement, CSP, Document, DocumentStatus, RenewalStatus
+from .models import Agreement, CSP, Document, DocumentStatus, ManualReviewQueue, RenewalStatus, ReviewStatus
 
 logger = logging.getLogger(__name__)
 
@@ -104,10 +104,19 @@ def store_extracted_document(
         "extraction_method", "model_provider", "page_count", "pages_readable",
         "readability_reason", "rejection_reason")}
     fields["registration_number"] = extraction.get("iibf_registration_number")
+    owner_review = extraction.get("owner_review") if decision == "READABLE" else None
+    if owner_review:
+        fields["owner_check"] = owner_review
+        fields["owner_seen_name"] = extraction.get("owner_seen_name")
+    if decision != "READABLE":
+        status = DocumentStatus.UNREADABLE
+    elif owner_review:
+        status = DocumentStatus.NEEDS_REVIEW
+    else:
+        status = _status_for(extraction)
     doc = Document(
         csp_id=csp.id, document_type=doc_type, sha256=sha, file_size_bytes=len(data),
-        mime_type=mime_type, storage_path=path,
-        status=_status_for(extraction) if decision == "READABLE" else DocumentStatus.UNREADABLE,
+        mime_type=mime_type, storage_path=path, status=status,
         extracted_fields=fields, overall_confidence=extraction.get("confidence"),
         extraction_method=extraction.get("extraction_method"), uploaded_at=now,
         is_current=False, upload_channel=channel, original_filename=(filename or "")[:250],
@@ -121,6 +130,8 @@ def store_extracted_document(
     )
     db.add(doc)
     db.flush()
+    if owner_review:
+        db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=owner_review[:500]))
     if decision == "READABLE":
         recompute_current(db, csp, doc_type)
         sync_agreement_row(db, csp)
@@ -136,7 +147,9 @@ def recompute_current(db: Session, csp: CSP, doc_type: str) -> Optional[Document
     t = canonical_type(doc_type)
     same = [d for d in db.query(Document).filter(Document.csp_id == csp.id)
             if canonical_type(d.document_type) == t]
-    usable = [d for d in same if d.status in USABLE and d.readability != "UNREADABLE"]
+    # A copy that may belong to another CSP counts only once a reviewer accepts it.
+    usable = [d for d in same if d.status in USABLE and d.readability != "UNREADABLE"
+              and not (d.status == DocumentStatus.NEEDS_REVIEW and (d.extracted_fields or {}).get("owner_check"))]
     best = max(usable, key=lambda d: (d.issue_date or date.min, d.uploaded_at or datetime.min, d.id or 0),
                default=None)
     for d in same:

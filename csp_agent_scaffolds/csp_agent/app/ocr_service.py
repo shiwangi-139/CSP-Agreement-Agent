@@ -435,7 +435,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .config import OCR_WORKERS, OCR_CACHE
+from .config import OCR_WORKERS, OCR_CACHE, OCR_SECOND_ENGINE, OCR_SECOND_ENGINE_BELOW
 
 _TESS_SLOTS = threading.BoundedSemaphore(OCR_WORKERS)
 if OCR_WORKERS > 1:
@@ -524,6 +524,46 @@ def _ocr_image(gray) -> tuple[str, float]:
     return eng_text, eng_conf
 
 
+_second = None
+_second_lock = threading.Lock()
+
+
+def _second_engine():
+    """The RapidOCR engine, created once; None when off or not installed."""
+    global _second
+    if _second is None:
+        if OCR_SECOND_ENGINE != "rapidocr":
+            _second = False
+        else:
+            try:
+                from rapidocr import RapidOCR
+                _second = RapidOCR()
+            except Exception as e:
+                logger.info(f"second OCR engine not available: {e}")
+                _second = False
+    return _second or None
+
+
+def _ocr_second(gray) -> Optional[tuple[str, float]]:
+    """RapidOCR on the unprocessed page: (text, confidence 0-100)."""
+    engine = _second_engine()
+    if engine is None:
+        return None
+    t0 = time.perf_counter()
+    try:
+        with _second_lock:
+            res = engine(gray)
+    except Exception as e:
+        logger.warning(f"second OCR engine failed: {e}")
+        return None
+    finally:
+        _timed("ocr_second", t0)
+    txts, scores = list(res.txts or []), list(res.scores or [])
+    if not txts:
+        return None
+    return "\n".join(txts), 100.0 * sum(scores) / len(scores)
+
+
 def _gray_from_png(png: bytes):
     import cv2
     import numpy as np
@@ -546,6 +586,14 @@ def _ocr_page(gray, layer: str) -> tuple[str, float, float, str]:
     prepared = _prepare_for_ocr(gray)
     _timed("prepare", t0)
     text, conf = _ocr_image(prepared)
+    if conf < OCR_SECOND_ENGINE_BELOW and len(layer.strip()) < MIN_PAGE_TEXT_LAYER:
+        second = _ocr_second(gray)
+        if second is not None:
+            # Keep both readings, the more confident one first (the rules
+            # take the first match): each engine catches what the other misses.
+            s_text, s_conf = second
+            text = f"{s_text}\n{text}" if s_conf > conf else f"{text}\n{s_text}"
+            conf = max(conf, s_conf)
     # Keep any small text layer too (e.g. the IIBF digital signature).
     if layer.strip():
         text = f"{text}\n{layer}"
@@ -562,7 +610,8 @@ def _cache_file(sha256: str) -> Path:
 
 
 def _cache_key() -> str:
-    return f"{CACHE_VERSION}:dpi{OCR_DPI}"
+    second = f":{OCR_SECOND_ENGINE}" if _second_engine() is not None else ""
+    return f"{CACHE_VERSION}:dpi{OCR_DPI}{second}"
 
 
 def _cache_load(sha256: str) -> dict:

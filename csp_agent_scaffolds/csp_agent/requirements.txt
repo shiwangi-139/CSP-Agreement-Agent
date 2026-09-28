@@ -19,6 +19,9 @@ opencv-python-headless==5.0.0.93
 numpy==2.5.2
 pillow==12.3.0
 openpyxl==3.1.5
+# Second OCR engine (PaddleOCR models on ONNX, CPU) for photos and stamps
+rapidocr==3.9.2
+onnxruntime==1.30.0
 
 # Gmail + (at deployment) the live calling sheet
 google-api-python-client==2.200.0

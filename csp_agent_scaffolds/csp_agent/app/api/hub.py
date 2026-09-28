@@ -20,7 +20,7 @@ from ..compliance import CATEGORY_NAMES, DOC_LABELS, REQUIRED_TYPES, canonical_t
 from ..comms import outbound
 from ..config import OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE, CALLING_SHEET_SOURCE, CALLING_SHEET_TAB
 from ..db import get_db, SessionLocal
-from ..models import (CSP, ContactChangeRequest, Document, DocumentStatus, InboundMessage, InternalUser,
+from ..models import (CSP, ContactChangeRequest, Document, DocumentStatus, ExtractionCorrection, InboundMessage, InternalUser,
                       ManualReviewQueue, OutboundMessage, OutboundStatus, OutreachCycle, ReviewStatus)
 from ..portal_tokens import issue_upload_link
 from .. import vault
@@ -408,6 +408,12 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
             d.date_source = "MANUAL_REVIEW"
         d.status = DocumentStatus.MANUAL_VERIFIED
         q.status = ReviewStatus.CORRECTED if issue_date else ReviewStatus.APPROVED
+        seen = (d.extracted_fields or {}).get("owner_seen_name")
+        if (d.extracted_fields or {}).get("owner_check") and seen:
+            # Teach the owner check this spelling of the CSP's name.
+            owner = db.get(CSP, d.csp_id)
+            db.add(ExtractionCorrection(document_id=d.id, field_name="owner_name", ai_value=seen,
+                                        human_value=owner.name if owner else None))
     else:
         d.status = DocumentStatus.REJECTED
         q.status = ReviewStatus.REJECTED

@@ -115,6 +115,11 @@ OCR_WORKERS = max(1, int(os.getenv("OCR_WORKERS", str(max(1, min(3, (os.cpu_coun
 # Cache OCR text per file (by SHA-256) next to the vault, so re-reading a
 # document with improved rules never repeats the OCR.
 OCR_CACHE = os.getenv("OCR_CACHE", "on").strip().lower() not in ("0", "off", "false", "no")
+# Second OCR engine (RapidOCR = PaddleOCR models on ONNX, CPU) for pages
+# Tesseract reads with low confidence: phone photos, stamps, faint print.
+# "off" disables it; it is skipped automatically when not installed.
+OCR_SECOND_ENGINE = os.getenv("OCR_SECOND_ENGINE", "rapidocr").strip().lower()
+OCR_SECOND_ENGINE_BELOW = float(os.getenv("OCR_SECOND_ENGINE_BELOW", "80"))
 
 # Gmail
 GMAIL_BACKFILL_DAYS = int(os.getenv("GMAIL_BACKFILL_DAYS", "730"))

@@ -74,13 +74,24 @@ def _enough(text: str, today: date) -> bool:
     return False
 
 
-def _page_for_model(scan: DocumentScan, doc_type: str) -> Optional[bytes]:
-    """The page most likely to hold the issue date, as a JPEG no larger than
-    ~1600 px (small enough for a local 7B vision model)."""
+OWNER_FIELDS = re.compile(r"CSP\s*(?:Name|Code)|hereby\s*appoints|certif\w*\s*that|purchased\s*by", re.I)
+
+
+def _page_for_model(scan: DocumentScan, doc_type: str, owner: bool = False) -> Optional[bytes]:
+    """The page most likely to hold the issue date (or, with owner=True, the
+    CSP code and name), as a JPEG no larger than ~1600 px (small enough for a
+    local 7B vision model)."""
     if not scan.pages:
         return None
     best = scan.pages[0]
-    if doc_type == "AGREEMENT":
+    if owner:
+        for p in scan.pages:
+            if re.search(r"CSP\s*Code|hereby\s*appoints", p.text, re.I):
+                best = p
+                break
+        else:
+            best = next((p for p in scan.pages if OWNER_FIELDS.search(p.text)), best)
+    elif doc_type == "AGREEMENT":
         for p in scan.pages:
             if ESTAMP_LABEL.search(p.text) or HEADING.search(p.text):
                 best = p
@@ -106,6 +117,22 @@ def _ask_model(scan: DocumentScan, doc_type: str) -> Optional[dict]:
         return None
     from ..providers.vision_fallback import read_page
     return read_page(image, doc_type, "image/jpeg")
+
+
+def read_owner_with_model(file_bytes: bytes, doc_type: str) -> Optional[dict]:
+    """Ask the vision model (local Ollama, then Groq) for the CSP code and
+    name on the page that holds them. For documents whose owner OCR could
+    not confirm, typically handwritten. Returns {"csp_code", "csp_name",
+    "provider"} or None."""
+    scan = scan_document(file_bytes)
+    image = _page_for_model(scan, doc_type, owner=True)
+    if image is None:
+        return None
+    from ..providers.vision_fallback import read_page
+    ans = read_page(image, doc_type, "image/jpeg")
+    if not ans:
+        return None
+    return {"csp_code": ans.get("csp_code"), "csp_name": ans.get("csp_name"), "provider": ans.get("provider")}
 
 
 def _model_date(ans: dict, today: date) -> Optional[date]:
@@ -164,8 +191,12 @@ def extract_document_fields_deterministic(
     today = today or date.today()
     scan = scan_document(pdf_bytes, stop_when=lambda t: _enough(t, today))
     text = scan.text
+    # Every CSP code and the text itself, so the caller can check whose
+    # document this is (app/gmail_ingest.py: check_owner). Not stored.
+    codes = list(dict.fromkeys(normalize_csp_code(c) for c in CSP_CODE_PATTERN.findall(text.upper())))
     common = dict(ocr_method=scan.method, page_count=scan.page_count,
-                  pages_readable=scan.readable_pages, text_chars=len(text))
+                  pages_readable=scan.readable_pages, text_chars=len(text),
+                  csp_codes=codes, match_text=text[:20000])
 
     if scan.mime_type is None:
         return _result(NOT_ALLOWED, rejection_reason="Unsupported file type (only PDF, JPG, PNG).",
@@ -277,6 +308,8 @@ def extract_document_fields_deterministic(
         compliance_status=exp["status"],
         iibf_registration_number=r.get("registration_number"),
         holder_name=holder,
+        model_csp_code=(model_ans or {}).get("csp_code"),
+        model_csp_name=(model_ans or {}).get("csp_name"),
         confidence=confidence,
         field_confidences=field_conf,
         extraction_method=method,

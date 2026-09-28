@@ -7,18 +7,24 @@ place. Use after a rule is improved. Gmail is not read again.
     python -m scripts.reextract_documents --type AGREEMENT --apply  # save changes
 
 Only changes to issue date, expiry, validity rule or status are written;
-everything is printed first so you can check it.
+everything is printed first (and saved to logs/reextract_*.csv) so you can
+check it. Documents a reviewer accepted, corrected or rejected, and copies
+held because their owner is unconfirmed, are left alone.
 """
 import argparse
+import csv
 import logging
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 
 from app.ai.extraction.deterministic_extractor import extract_document_fields_deterministic
 from app.compliance import refresh_category
 from app.db import SessionLocal
 from app import vault
 from app.document_service import _d, _status_for, recompute_current, sync_agreement_row
-from app.models import CSP, Document
+from app.models import CSP, Document, DocumentStatus
+
+KEEP = {DocumentStatus.MANUAL_VERIFIED, DocumentStatus.REJECTED}
 
 
 def main():
@@ -39,7 +45,11 @@ def main():
             q = q.filter(Document.document_type == args.type.upper())
         rows = q.order_by(CSP.current_code).all()
         print(f"{len(rows)} documents to re-check" + ("" if args.apply else " (dry run)"))
+        report = []
         for d, csp in rows:
+            if d.status in KEEP or (d.extracted_fields or {}).get("owner_check"):
+                skipped += 1
+                continue
             path = vault.abs_path(d.storage_path)
             if path is None or not path.exists():
                 skipped += 1
@@ -59,6 +69,8 @@ def main():
             fmt = lambda v: v.isoformat() if isinstance(v, date) else getattr(v, "value", v)
             diff = ", ".join(f"{k}: {fmt(old[k])} -> {fmt(new[k])}" for k in new if old[k] != new[k])
             print(f"  {csp.current_code} {csp.name[:24]:24} {d.document_type}: {diff}")
+            report.append({"document_id": d.id, "csp_code": csp.current_code, "csp_name": csp.name,
+                           "type": d.document_type, "change": diff, "file": d.storage_path})
             if args.apply:
                 for k, v in new.items():
                     setattr(d, k, v)
@@ -71,6 +83,13 @@ def main():
                 refresh_category(db, csp)
                 vault.place_csp(db, csp)  # the dates are in the file name
                 db.commit()
+        out = Path("logs") / f"reextract_{datetime.now():%Y%m%d_%H%M%S}.csv"
+        out.parent.mkdir(exist_ok=True)
+        with open(out, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=["document_id", "csp_code", "csp_name", "type", "change", "file"])
+            w.writeheader()
+            w.writerows(report)
+        print(f"report: {out}")
         print(f"changed: {changed}, unchanged: {same}, skipped: {skipped}"
               + ("" if args.apply else "  — dry run, run again with --apply to save"))
     finally:

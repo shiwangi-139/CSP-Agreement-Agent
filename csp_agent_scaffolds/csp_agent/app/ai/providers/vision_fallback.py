@@ -53,6 +53,8 @@ SCHEMA = {
         "three_year_validity_stated": {"type": ["boolean", "null"]},
         "validity_months_stated": {"type": ["integer", "null"]},
         "holder_name": {"type": ["string", "null"]},
+        "csp_code": {"type": ["string", "null"]},
+        "csp_name": {"type": ["string", "null"]},
     },
     "required": ["is_legible", "document_type", "issue_date"],
 }
@@ -73,6 +75,10 @@ def _prompt(doc_type: str) -> str:
         "- issue_date_evidence: copy the exact words around the date.\n"
         "- three_year_validity_stated: true only if the page says the agreement is valid for three (3) years.\n"
         "- validity_months_stated: 6 or 12 only if the page states it (e.g. 'valid for six months').\n"
+        "- csp_code: the CSP code (1 digit, 1 letter, 6 digits, e.g. 1A852474), printed or handwritten, "
+        "next to 'CSP Code' or 'appoints'; null if not on the page or not certain.\n"
+        "- csp_name: the CSP's (person's) name, printed or handwritten, next to 'CSP Name', "
+        "'certify that' or 'Purchased by'; null if not certain.\n"
     )
 
 
