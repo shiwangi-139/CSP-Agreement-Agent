@@ -1,0 +1,20 @@
+# Prevents the Supabase project (used for document Storage only, since
+# the database itself lives on Neon) from fully pausing after 7 days of
+# inactivity. Supabase's free-tier pause requires a manual dashboard
+# click to resume -- this ping keeps it from ever triggering.
+name: Supabase Storage Keepalive
+
+on:
+  schedule:
+    - cron: "0 6 */3 * *"  # every 3 days, safely under the 7-day pause threshold
+  workflow_dispatch: {}     # allows a manual run from the Actions tab too
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST endpoint
+        run: |
+          curl -sf "${{ secrets.SUPABASE_URL }}/rest/v1/" \
+            -H "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
+            -o /dev/null -w "Supabase responded: %{http_code}\n"

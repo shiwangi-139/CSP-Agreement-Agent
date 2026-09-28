@@ -1,0 +1,16 @@
+# The autonomous agent: Gmail scan, calling sheet, daily follow-ups, outbox.
+# Run exactly ONE of these (jobs also take Postgres locks, so a second copy is harmless but idle).
+[Unit]
+Description=Eko CSP agent - worker
+After=network-online.target postgresql.service ollama.service
+Wants=network-online.target
+
+[Service]
+User=csp
+WorkingDirectory=/opt/csp_agent
+ExecStart=/opt/csp_agent/.venv/bin/python -m app.worker
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

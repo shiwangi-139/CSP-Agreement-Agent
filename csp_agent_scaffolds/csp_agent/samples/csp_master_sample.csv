@@ -1,0 +1,4 @@
+csp_code,csp_name,email,phone,whatsapp_number,rm_email,dc_email,lho_email,agreement_start_date,agreement_expiry_date,police_verification_expiry,preferred_language,status,region,branch,kiosk_location
+CSP10001,Demo Kiosk One,demo1@example.com,+910000000001,+910000000001,rm1@example.com,dc1@example.com,lho1@example.com,2025-01-01,2026-01-01,2025-12-01,ENGLISH,ACTIVE,North,Branch-1,Village-A
+CSP10002,Demo Kiosk Two,demo2@example.com,+910000000002,+910000000002,rm1@example.com,dc1@example.com,lho1@example.com,2025-02-01,2026-02-01,2025-12-15,HINDI,ACTIVE,North,Branch-1,Village-B
+CSP10003,Demo Kiosk Three,demo3@example.com,+910000000003,+910000000003,rm2@example.com,dc1@example.com,lho1@example.com,2025-03-01,2025-12-15,2025-11-01,MIXED,ACTIVE,South,Branch-2,Village-C

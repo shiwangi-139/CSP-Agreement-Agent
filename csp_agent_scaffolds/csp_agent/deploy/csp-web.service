@@ -1,0 +1,17 @@
+# Web server: dashboard, API, upload portal.
+# Install: sudo cp deploy/*.service /etc/systemd/system/ && sudo systemctl daemon-reload
+#          sudo systemctl enable --now csp-web csp-worker
+[Unit]
+Description=Eko CSP agent - web
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+User=csp
+WorkingDirectory=/opt/csp_agent
+ExecStart=/opt/csp_agent/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

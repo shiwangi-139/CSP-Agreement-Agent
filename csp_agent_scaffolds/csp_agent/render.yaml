@@ -1,0 +1,56 @@
+# Render Blueprint — deploys the FastAPI app as a free web service.
+# The database is intentionally NOT defined here: use a separate free
+# Supabase or Neon Postgres project instead of Render's own Postgres,
+# because Render's free Postgres expires 30 days after creation, while
+# Supabase/Neon's free tiers are genuinely permanent. Set DATABASE_URL
+# below to that external connection string after creating the project.
+#
+# Deploy: push this repo to GitHub, then in the Render dashboard choose
+# "New +" -> "Blueprint" and point it at the repo. Render reads this file
+# automatically.
+
+services:
+  - type: web
+    name: csp-agreement-automation
+    runtime: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false        # paste your Supabase/Neon connection string in the Render dashboard
+      - key: TEST_DATABASE_URL
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_APP_PASSWORD
+        sync: false
+      - key: EMAIL_SMTP_HOST
+        value: smtp.gmail.com
+      - key: EMAIL_SMTP_PORT
+        value: "587"
+      - key: EMAIL_INGESTION_INTERVAL_MINUTES
+        value: "15"
+      - key: AI_PROVIDER
+        value: gemini
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: AI_AUTO_REVIEW_THRESHOLD
+        value: "0.90"
+      - key: AI_HUMAN_REVIEW_THRESHOLD
+        value: "0.70"
+      - key: DOCUMENT_AI_MODE
+        value: text
+      - key: DOCUMENT_PARSER
+        value: pymupdf
+      - key: STORAGE_BACKEND
+        value: supabase     # never "local" here -- Render's free disk is ephemeral
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: csp-documents

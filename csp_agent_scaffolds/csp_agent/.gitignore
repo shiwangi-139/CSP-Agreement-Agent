@@ -1,0 +1,18 @@
+# Secrets -- never commit
+.env
+credentials.json
+gmail_token.json
+*.pem
+
+# Data
+storage/
+*.xlsx
+.~lock*
+.backups/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+logs/

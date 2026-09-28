@@ -1,0 +1,34 @@
+# Pinned to the versions this project is tested with (Python 3.14).
+# Install with: .venv/bin/python -m pip install -r requirements.txt
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+python-multipart==0.0.32
+SQLAlchemy==2.0.54
+psycopg2-binary==2.9.13
+alembic==1.20.0
+APScheduler==3.11.3
+python-dotenv==1.2.3
+pydantic==2.13.5
+httpx==0.28.1
+Jinja2==3.1.6
+
+# Documents: PDF text layer, OCR, image clean-up
+pymupdf==1.28.2
+pytesseract==0.3.13
+opencv-python-headless==5.0.0.93
+numpy==2.5.2
+pillow==12.3.0
+openpyxl==3.1.5
+
+# Gmail + (at deployment) the live calling sheet
+google-api-python-client==2.200.0
+google-auth==2.58.0
+google-auth-oauthlib==1.4.1
+google-auth-httplib2==0.4.2
+
+# Tests
+pytest==9.1.1
+freezegun==1.5.5
+
+# System packages (not pip): tesseract-ocr 5.x (+ the Hindi model in ./tessdata),
+# and on the rack server Ollama with `ollama pull qwen2.5vl:7b`.

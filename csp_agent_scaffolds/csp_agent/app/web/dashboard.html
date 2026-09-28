@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eko CSP Renewals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
+<link rel="stylesheet" href="/static/eko.css">
+</head>
+<body>
+<div id="login" class="login card" style="display:none">
+  <h2>Eko CSP Renewals</h2>
+  <p class="muted">Enter the dashboard API key (ADMIN_API_KEY).</p>
+  <form id="loginf"><input type="text" id="key" autocomplete="off" style="width:100%"><p><button class="btn primary">Open dashboard</button></p></form>
+</div>
+
+<div class="shell" id="app" style="display:none">
+  <nav class="side" id="nav">
+    <div class="brand">eko<span>.</span> CSP Renewals</div>
+    <div class="sub">SBI Kiosk Banking · document compliance</div>
+    <button data-view="overview" class="active">Overview</button>
+    <button data-view="categories">Categories <span class="count" id="n-cat"></span></button>
+    <button data-view="documents">Latest documents</button>
+    <button data-view="comms">Communication Hub <span class="count" id="n-drafts"></span></button>
+    <button data-view="contacts">Contacts &amp; gaps</button>
+    <button data-view="ingestion">Gmail ingestion</button>
+    <button data-view="review">Review queue <span class="count" id="n-review"></span></button>
+    <div class="foot" id="modes"></div>
+  </nav>
+  <main>
+    <div class="topbar">
+      <h1 id="title">Overview</h1>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <span class="pill warn" id="modepill"></span>
+        <button class="btn" id="theme" title="Toggle light / dark">◐</button>
+        <button class="btn" id="refresh">Refresh</button>
+      </div>
+    </div>
+    <section id="view"></section>
+  </main>
+</div>
+
+<div class="backdrop" id="backdrop"></div>
+<aside class="drawer" id="drawer"></aside>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (s, el = document) => el.querySelector(s);
+  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+  const fmt = (iso) => iso ? iso.slice(0, 10).split("-").reverse().join("-") : "—";
+  const when = (iso) => iso ? new Date(iso).toLocaleString("en-IN", {dateStyle: "medium", timeStyle: "short"}) : "—";
+  const DOC = {AGREEMENT: "Agreement", POLICE_VERIFICATION: "PVR / Character", IIBF_CERTIFICATE: "IIBF"};
+  const CAT = {1: ["Active", "All three documents valid"], 2: ["Partial", "Some documents missing or unreadable"],
+               3: ["Expired", "At least one document expired"], 4: ["None", "Nothing on file in 2 years"]};
+  const state = {view: "overview", cat: 1, q: "", page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
+
+  // ---------------------------------------------------------------- api
+  let KEY = "";
+  try { KEY = sessionStorage.getItem("eko_key") || ""; } catch (e) {}
+  async function api(path, opts = {}) {
+    const r = await fetch(path, {...opts, headers: {"Content-Type": "application/json", "X-API-Key": KEY, ...(opts.headers || {})}});
+    if (r.status === 401) { showLogin(); throw new Error("Unauthorised"); }
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail?.en || j.detail || r.statusText);
+    return j;
+  }
+  const post = (path, body) => api(path, {method: "POST", body: JSON.stringify(body || {})});
+  function toast(t) { const el = $("#toast"); el.textContent = t; el.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(() => el.style.display = "none", 3200); }
+  function showLogin() { $("#app").style.display = "none"; $("#login").style.display = "block"; }
+  $("#loginf").onsubmit = (e) => { e.preventDefault(); KEY = $("#key").value.trim(); try { sessionStorage.setItem("eko_key", KEY); } catch (e) {} boot(); };
+
+  // --------------------------------------------------------------- theme
+  $("#theme").onclick = () => {
+    const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    document.documentElement.dataset.theme = cur === "dark" ? "light" : "dark";
+    try { localStorage.setItem("eko_theme", document.documentElement.dataset.theme); } catch (e) {}
+  };
+  try { const t = localStorage.getItem("eko_theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+
+  // ----------------------------------------------------------- badges
+  const badge = (s, label) => `<span class="b ${esc(s)}">${esc(label || String(s).replaceAll("_", " ").toLowerCase())}</span>`;
+  function docCell(d) {
+    if (!d) return "—";
+    if (d.status === "VALID") {
+      const soon = d.days_left != null && d.days_left <= 60;
+      return `<span class="b ${soon ? "soon" : "VALID"}">${d.expiry_date ? (soon ? d.days_left + "d left" : "valid") : "valid · lifetime"}</span><div class="small muted mono">${d.expiry_date ? "exp " + fmt(d.expiry_date) : "iss " + fmt(d.issue_date)}</div>`;
+    }
+    if (d.status === "EXPIRED") return `${badge("EXPIRED", "expired")}<div class="small muted mono">exp ${fmt(d.expiry_date)}</div>`;
+    return badge(d.status, d.status === "UNREADABLE" ? "unreadable" : "missing");
+  }
+
+  // ------------------------------------------------------------- views
+  const views = {
+    async overview() {
+      const s = state.summary;
+      const c = s.categories;
+      return `
+      <div class="grid k4">${[1,2,3,4].map((k) => `
+        <div class="card kpi c${k}" data-cat="${k}"><div class="label">Cat ${k} · ${CAT[k][0]}</div>
+          <div class="n">${c[k] ?? 0}</div><div class="small muted">${CAT[k][1]}</div></div>`).join("")}
+      </div>
+      <div class="grid k3" style="margin-top:14px">
+        <div class="card"><h2>Waiting for your approval</h2>
+          <div class="kv"><dt>WhatsApp drafts</dt><dd class="num">${s.drafts_pending.WHATSAPP}</dd>
+          <dt>Email drafts</dt><dd class="num">${s.drafts_pending.EMAIL}</dd>
+          <dt>Review queue</dt><dd class="num">${s.review_pending}</dd>
+          <dt>Contact changes</dt><dd class="num">${s.contact_changes_pending}</dd></div>
+          <p><button class="btn primary" data-go="comms">Open Communication Hub</button></p></div>
+        <div class="card"><h2>Coming up</h2>
+          <div class="kv"><dt>Documents expiring in 60 days</dt><dd class="num">${s.expiring_60_days}</dd>
+          <dt>CSPs on calling sheet</dt><dd class="num">${s.total_csps}</dd>
+          <dt>Not yet categorised</dt><dd class="num">${s.uncategorised}</dd></div>
+          <p class="small muted">Categories refresh on every run of the daily engine (09:00 IST) and on every upload.</p></div>
+        <div class="card"><h2>Contact gaps</h2>
+          <div class="kv"><dt>CSP without phone</dt><dd class="num">${s.contact_gaps.csp_phone}</dd>
+          <dt>CSP without email</dt><dd class="num">${s.contact_gaps.csp_email}</dd>
+          <dt>No RM assigned</dt><dd class="num">${s.contact_gaps.rm_unassigned}</dd>
+          <dt>No DC assigned</dt><dd class="num">${s.contact_gaps.dc_unassigned}</dd></div>
+          <p><button class="btn" data-go="contacts">See contacts</button></p></div>
+      </div>
+      <div class="card" style="margin-top:14px"><h2>Run now</h2>
+        <p class="small muted">The worker runs these on schedule. In review mode, running the engine only creates drafts — nothing is sent until you approve it.</p>
+        <div class="toolbar">
+          <button class="btn" data-run="sheet">Reload calling sheet</button>
+          <button class="btn" data-run="gmail">Scan Gmail</button>
+          <button class="btn forest" data-run="engine">Run categories &amp; follow-ups</button>
+        </div>
+        <div class="small mono muted">${Object.entries(s.jobs || {}).map(([k, v]) => `${esc(k)}: ${esc(v.status)} ${esc(v.finished_at || v.started_at || "")}`).join(" · ") || "No manual runs yet."}</div>
+      </div>`;
+    },
+
+    async categories() {
+      const d = await api(`/api/hub/csps?category=${state.cat}&q=${encodeURIComponent(state.q)}&page=${state.page}&size=50`);
+      const pages = Math.max(1, Math.ceil(d.total / d.size));
+      return `
+      <div class="tabs">${[1,2,3,4].map((k) => `<button data-cat="${k}" class="${state.cat === k ? "active" : ""}">Cat ${k} · ${CAT[k][0]} (${state.summary.categories[k] ?? 0})</button>`).join("")}</div>
+      <div class="toolbar"><input type="search" id="q" placeholder="Search code, name or phone" value="${esc(state.q)}">
+        <span class="muted small">${d.total} CSPs · ${CAT[state.cat][1]}</span>
+        <a class="btn" href="#" data-xlsx="csp">Download CSP report (.xlsx)</a></div>
+      <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>CSP</th><th>Agreement</th><th>PVR</th><th>IIBF</th><th>RM / DC</th><th>Next action</th></tr></thead><tbody>
+        ${d.rows.map((r) => `<tr class="click" data-csp="${r.id}">
+          <td><div class="mono">${esc(r.code)}</div><div>${esc(r.name)}</div><div class="small muted">${esc(r.reason)}</div></td>
+          <td>${docCell(r.docs.AGREEMENT)}</td><td>${docCell(r.docs.POLICE_VERIFICATION)}</td><td>${docCell(r.docs.IIBF_CERTIFICATE)}</td>
+          <td class="small">${esc(r.rm || "—")}<br><span class="muted">${esc(r.dc || "no DC")}</span></td>
+          <td class="small mono">${fmt(r.next_action_at)}</td></tr>`).join("")}
+        </tbody></table>` : `<div class="empty">No CSPs in this category.</div>`}</div>
+      ${pager(pages)}`;
+    },
+
+    async documents() {
+      const d = await api(`/api/hub/documents?doc_type=${state.docType}&size=300`);
+      return `
+      <div class="tabs">${[["", "All"], ["AGREEMENT", "Agreements"], ["POLICE_VERIFICATION", "PVR / Character"], ["IIBF_CERTIFICATE", "IIBF"]]
+        .map(([k, l]) => `<button data-doctype="${k}" class="${state.docType === k ? "active" : ""}">${l}</button>`).join("")}</div>
+      <p class="small muted">Current documents per CSP, soonest expiry first. Expired ones stay listed in red with their dates. Unreadable files are kept for audit only and count as missing.</p>
+      <div class="card tablewrap"><table><thead><tr><th>CSP</th><th>Type</th><th>Status</th><th>Issued</th><th>Expires</th><th>Rule</th><th>Read by</th><th>Source</th><th></th></tr></thead><tbody>
+      ${d.rows.map((r) => `<tr>
+        <td class="click" data-csp="${r.csp_id}"><div class="mono">${esc(r.csp_code)}</div><div class="small">${esc(r.csp_name)}</div></td>
+        <td>${esc(DOC[r.type] || r.type)}${r.holder_name ? `<div class="small muted">${esc(r.holder_name)}${r.registration_number ? " · " + esc(r.registration_number) : ""}</div>` : ""}</td>
+        <td>${badge(r.readability === "UNREADABLE" ? "UNREADABLE" : r.status)}${r.reason && r.readability === "UNREADABLE" ? `<div class="small muted">${esc(r.reason)}</div>` : ""}</td>
+        <td class="mono">${fmt(r.issue_date)}${r.typed_issue_date && r.typed_issue_date !== r.issue_date ? `<div class="small muted">typed ${fmt(r.typed_issue_date)}</div>` : ""}</td>
+        <td class="mono">${r.expiry_date ? fmt(r.expiry_date) : (r.type === "IIBF_CERTIFICATE" ? "lifetime" : "—")}${r.days_left != null ? `<div class="small muted">${r.days_left < 0 ? -r.days_left + "d ago" : r.days_left + "d left"}</div>` : ""}</td>
+        <td class="small">${esc((r.validity_rule || "").replaceAll("_", " ").toLowerCase())}<div class="muted">${esc((r.date_source || "").replaceAll("_", " ").toLowerCase())}</div></td>
+        <td class="small">${r.model ? esc(r.model) : "rules"}</td>
+        <td class="small">${esc(r.channel === "CSP_UPLOAD_PORTAL" ? "portal" : "gmail")}${r.sender_on_sheet === false ? `<div>${badge("PENDING", "sender not on sheet")}</div>` : ""}</td>
+        <td><a href="#" data-file="${r.id}">view</a></td></tr>`).join("") || `<tr><td colspan="9" class="empty">No documents yet. Run the Gmail scan.</td></tr>`}
+      </tbody></table></div>`;
+    },
+
+    async comms() {
+      const d = await api(`/api/hub/messages?channel=${state.channel}&status=${state.msgStatus}&size=100`);
+      const c = d.counts;
+      const statuses = [["QUEUED_FOR_REVIEW", "Drafts to review"], ["READY_NOT_SENT", "Approved · not sent (stub)"], ["APPROVED", "Approved · sending"],
+                        ["SENT", "Sent"], ["BLOCKED", "Blocked"], ["FAILED", "Failed"], ["REJECTED", "Rejected"]];
+      return `
+      <div class="tabs">${[["WHATSAPP", "WhatsApp agent"], ["EMAIL", "Email"]].map(([k, l]) => `<button data-channel="${k}" class="${state.channel === k ? "active" : ""}">${l}</button>`).join("")}</div>
+      <p class="small muted">${state.channel === "WHATSAPP" ? "The WhatsApp agent is send-only: it can't read replies, so a CSP's \"response\" is a new valid upload." : "Emails are sent from the connected Gmail account when approved."}
+        Recipients are fixed to the calling sheet's contacts for that CSP, RM or DC; edits can change the text only.</p>
+      <div class="tabs">${statuses.map(([k, l]) => `<button data-mstatus="${k}" class="${state.msgStatus === k ? "active" : ""}">${l} (${c[k] || 0})</button>`).join("")}</div>
+      ${state.msgStatus === "QUEUED_FOR_REVIEW" && d.rows.length ? `<div class="toolbar"><button class="btn primary" id="approveall">Approve all ${d.rows.length} shown</button></div>` : ""}
+      <div>${d.rows.map(msgCard).join("") || `<div class="card empty">Nothing here.</div>`}</div>`;
+    },
+
+    async contacts() {
+      const d = await api("/api/hub/contacts");
+      const gapTable = (rows, who, col) => rows.length ? `<table><thead><tr><th>CSP</th><th>${who}</th><th>Missing</th></tr></thead><tbody>
+        ${rows.slice(0, 400).map((r) => `<tr class="click" data-csp="${r.id}"><td><span class="mono">${esc(r.code)}</span> ${esc(r.name)}</td>
+          <td>${esc(r[col] ?? (r.phone || r.email || "—"))}</td><td>${r.missing.map((m) => badge("MISSING", m.replace("_", " "))).join(" ")}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">No gaps.</div>`;
+      return `
+      <div class="toolbar"><a class="btn" href="#" data-xlsx="contacts">Download contacts &amp; gaps (.xlsx)</a>
+        <span class="small muted">Also saved every morning at 07:30 in storage/sbi_kiosk/reports/.</span></div>
+      <div class="card"><h2>RM &amp; DC contact details</h2>
+        <p class="small muted">The calling-sheet tab has no RM phone/email columns. Enter them once here; they become the only allowed escalation recipients.</p>
+        <div class="tablewrap"><table><thead><tr><th>Name</th><th>Role</th><th>CSPs</th><th>Mobile</th><th>Email</th><th></th></tr></thead><tbody>
+        ${d.staff.map((u) => `<tr><td>${esc(u.name)}</td><td>${esc(u.role)}</td><td class="num">${u.csps}</td>
+          <td><input type="tel" value="${esc(u.phone || "")}" data-staff-phone="${u.id}" placeholder="10-digit mobile" size="12"></td>
+          <td><input type="email" value="${esc(u.email || "")}" data-staff-email="${u.id}" placeholder="name@eko.co.in"></td>
+          <td><button class="btn" data-savestaff="${u.id}">Save</button></td></tr>`).join("")}</tbody></table></div></div>
+      <div class="grid k3" style="margin-top:14px">
+        <div class="card tablewrap"><h2>CSP contact missing (${d.csp.length})</h2>${gapTable(d.csp, "Has", "x")}</div>
+        <div class="card tablewrap"><h2>RM missing / no contact (${d.rm.length})</h2>${gapTable(d.rm, "RM", "rm")}</div>
+        <div class="card tablewrap"><h2>DC missing / no contact (${d.dc.length})</h2>${gapTable(d.dc, "DC", "dc")}</div>
+      </div>
+      <div class="card" style="margin-top:14px"><h2>Contact changes typed by CSPs (${d.change_requests.length})</h2>
+        <p class="small muted">These never overwrite the calling sheet. Update the sheet, then mark done.</p>
+        ${d.change_requests.length ? `<table><thead><tr><th>CSP</th><th>Field</th><th>On sheet</th><th>CSP typed</th><th></th></tr></thead><tbody>
+        ${d.change_requests.map((r) => `<tr><td class="click" data-csp="${r.csp_id}">#${r.csp_id}</td><td>${esc(r.field)}</td><td>${esc(r.old || "—")}</td><td><b>${esc(r.new)}</b></td>
+          <td><button class="btn" data-cc="${r.id}/done">Done</button> <button class="btn" data-cc="${r.id}/dismiss">Dismiss</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">None.</div>`}</div>`;
+    },
+
+    async ingestion() {
+      const s = state.summary.ingestion;
+      const st = s.state || {};
+      const d = await api("/api/hub/inbound?size=100");
+      return `
+      <div class="grid k3">
+        <div class="card"><h2>Gmail read-once status</h2><div class="kv">
+          <dt>2-year backfill</dt><dd>${st.backfill_complete ? badge("DONE", "complete") : (st.backfill_started_at ? badge("PENDING", "in progress") : badge("PENDING", "not started"))}</dd>
+          <dt>Messages listed</dt><dd class="num">${st.backfill_seen ?? 0}</dd>
+          <dt>Started</dt><dd>${when(st.backfill_started_at)}</dd>
+          <dt>Finished</dt><dd>${when(st.backfill_finished_at)}</dd>
+          <dt>Last new-mail check</dt><dd>${when(st.last_incremental_at)}</dd></div>
+          <p class="small muted">Each email is read once. Later scans fetch only mail added since the last check.</p>
+          <button class="btn" data-run="gmail">Scan now</button></div>
+        <div class="card"><h2>Emails by outcome</h2><div class="kv">${Object.entries(s.messages_by_status || {}).map(([k, v]) => `<dt>${badge(k)}</dt><dd class="num">${v}</dd>`).join("") || "<dt>none yet</dt><dd></dd>"}</div></div>
+        <div class="card"><h2>Decisions per attachment</h2><p class="small muted">Readable → stored as current · Unreadable → kept in archive/, counts as missing · Not allowed → not stored (e.g. Aadhaar) · Duplicate → already on file.</p></div>
+      </div>
+      <div class="card tablewrap" style="margin-top:14px"><table><thead><tr><th>Received</th><th>Subject / sender</th><th>Outcome</th><th>Attachments</th></tr></thead><tbody>
+      ${d.rows.map((i) => `<tr${i.csp_id ? ` class="click" data-csp="${i.csp_id}"` : ""}><td class="small mono">${when(i.received_at)}</td>
+        <td><div>${esc(i.subject)}</div><div class="small muted">${esc(i.sender)}${i.sender_on_sheet === false ? " · " + badge("PENDING", "not on sheet") : ""}</div></td>
+        <td>${badge(i.status)}<div class="small muted">${esc(i.note || "")}</div></td>
+        <td class="small">${(i.decisions || []).map((a) => `<div>${badge(a.decision)} ${esc(a.filename)}${a.issue_date ? ` · <span class="mono">${fmt(a.issue_date)}</span>` : ""}</div>`).join("") || "—"}</td></tr>`).join("") || `<tr><td colspan="4" class="empty">No emails processed yet.</td></tr>`}
+      </tbody></table></div>`;
+    },
+
+    async review() {
+      const d = await api("/api/hub/review");
+      return `<p class="small muted">Only genuine conflicts land here — e.g. the date a CSP typed differs from the date the vision model read. Blurry documents never come here; they count as missing and the CSP is asked for a scanned PDF.</p>
+      ${d.rows.map((r) => `<div class="card" style="margin-bottom:10px">
+        <div class="meta"><b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)} · ${esc(DOC[r.document.type] || r.document.type)}</div>
+        <p>${esc(r.reason)}</p>
+        <div class="toolbar"><a href="#" data-file="${r.document.id}">View document</a>
+          <label>Correct issue date <input type="date" id="rv${r.id}" value="${esc(r.document.issue_date || "")}"></label>
+          <button class="btn primary" data-resolve="${r.id}" data-accept="1">Accept</button>
+          <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button></div></div>`).join("") || `<div class="card empty">Nothing to review.</div>`}`;
+    },
+  };
+
+  function pager(pages) {
+    if (pages <= 1) return "";
+    return `<div class="toolbar" style="margin-top:10px"><button class="btn" data-page="${state.page - 1}" ${state.page <= 1 ? "disabled" : ""}>‹ Prev</button>
+      <span class="small muted">Page ${state.page} of ${pages}</span><button class="btn" data-page="${state.page + 1}" ${state.page >= pages ? "disabled" : ""}>Next ›</button></div>`;
+  }
+
+  function msgCard(m) {
+    const draft = m.status === "QUEUED_FOR_REVIEW";
+    return `<div class="msg" data-msg="${m.id}">
+      <div class="meta">${badge(m.status)} <b class="mono">${esc(m.csp_code || "")}</b> ${esc(m.csp_name || "")}
+        <span class="small muted">→ ${esc(m.role)} · ${esc(m.to)} · ${esc(m.template)} · ${esc(m.stage || "")}${m.edited ? " · edited" : ""}</span>
+        <span class="small muted" style="margin-left:auto">${when(m.created_at)}</span></div>
+      ${m.channel === "EMAIL" ? `<div style="margin-top:6px"><b>${esc(m.subject)}</b></div>` : ""}
+      <pre>${esc(m.body)}</pre>
+      ${m.error ? `<div class="small" style="color:var(--danger-ink);margin-top:6px">${esc(m.error)}</div>` : ""}
+      ${m.sent_at ? `<div class="small muted">Sent ${when(m.sent_at)}${m.delivery_status ? " · " + esc(m.delivery_status) : ""}</div>` : ""}
+      ${m.reviewed_by ? `<div class="small muted">Reviewed by ${esc(m.reviewed_by)} · ${when(m.reviewed_at)}</div>` : ""}
+      ${draft ? `<div class="actions"><button class="btn primary" data-approve="${m.id}">Approve${m.channel === "WHATSAPP" ? "" : " & send"}</button>
+        <button class="btn" data-edit="${m.id}">Edit text</button><button class="btn danger" data-reject="${m.id}">Reject</button></div>` : ""}
+    </div>`;
+  }
+
+  // ------------------------------------------------------------ drawer
+  async function openCsp(id) {
+    const d = await api(`/api/hub/csp/${id}`);
+    const c = d.csp;
+    const person = (p, label) => p ? `${esc(p.name)} · ${esc(p.phone || "no phone")} · ${esc(p.email || "no email")}` : `<span class="muted">no ${label} assigned</span>`;
+    $("#drawer").innerHTML = `
+      <div class="topbar"><div><h1 style="font-size:1.25rem">${esc(c.name)}</h1><div class="mono muted">KO ${esc(c.code)} · ${esc(c.terminal_status || "")}</div></div>
+        <button class="btn" id="closedrawer">Close</button></div>
+      <div class="card"><div class="meta">${badge("c" + d.category, "Cat " + d.category + " · " + CAT[d.category][0])} <span class="muted">${esc(d.reason)}</span></div>
+        <dl class="kv" style="margin-top:10px"><dt>Mobile</dt><dd>${esc(c.phone || "—")}${c.alt_phone ? " / " + esc(c.alt_phone) : ""}</dd>
+          <dt>Email</dt><dd>${esc(c.email || "—")}</dd><dt>RM</dt><dd>${person(c.rm, "RM")}</dd><dt>DC</dt><dd>${person(c.dc, "DC")}</dd>
+          <dt>Branch</dt><dd>${esc(c.branch || "—")}, ${esc(c.state || "")}</dd><dt>Next action</dt><dd class="mono">${fmt(c.next_action_at)}</dd>
+          <dt>Folder</dt><dd class="mono small">${esc(c.folder)}</dd></dl>
+        <div class="toolbar" style="margin-top:10px"><a class="btn" href="#" data-zip="${c.id}">Download all 3 (zip)</a>
+          <button class="btn" data-link="${c.id}">Create upload link</button></div></div>
+      <div class="docgrid" style="margin-top:14px">${Object.entries(d.current).map(([t, s]) => `<div class="doc"><div class="t">${esc(DOC[t])}</div>${docCell(s)}
+        <div class="small mono muted">issued ${fmt(s.issue_date)}</div>${s.document_id ? `<a href="#" data-file="${s.document_id}" class="small">view</a>` : ""}</div>`).join("")}</div>
+      <div class="card" style="margin-top:14px"><h2>All files received (${d.documents.length})</h2><div class="tablewrap"><table><thead><tr><th>Type</th><th>Status</th><th>Issued</th><th>Expires</th><th>How</th><th>Received</th><th></th></tr></thead><tbody>
+        ${d.documents.map((x) => `<tr><td>${esc(DOC[x.type] || x.type)}${x.is_current ? " <span class='b VALID'>current</span>" : ""}</td>
+          <td>${badge(x.readability === "UNREADABLE" ? "UNREADABLE" : x.status)}</td><td class="mono">${fmt(x.issue_date)}</td><td class="mono">${fmt(x.expiry_date)}</td>
+          <td class="small">${esc((x.date_source || x.reason || "").replaceAll("_", " ").toLowerCase())}</td><td class="small">${esc(x.channel === "CSP_UPLOAD_PORTAL" ? "portal" : "gmail")} ${fmt(x.source_date || x.uploaded_at)}</td>
+          <td><a href="#" data-file="${x.id}">view</a></td></tr>`).join("") || `<tr><td colspan="7" class="empty">None.</td></tr>`}</tbody></table></div></div>
+      <div class="card" style="margin-top:14px"><h2>Follow-up cycles</h2>${d.cycles.map((y) => `<div class="small">${badge(y.closed_at ? "DONE" : "PENDING", y.closed_at ? "closed" : "open")}
+        <b>${esc(y.kind)}</b> ${esc(y.document_type)} · CSP ${y.csp} · RM ${y.rm}/2 · DC ${y.dc}/1 · opened ${fmt(y.opened_at)}${y.close_reason ? " · " + esc(y.close_reason.replaceAll("_", " ").toLowerCase()) : ""}</div>`).join("") || `<div class="muted small">No follow-ups yet.</div>`}</div>
+      <div class="card" style="margin-top:14px"><h2>Messages (${d.messages.length})</h2>${d.messages.map(msgCard).join("") || `<div class="muted small">None.</div>`}</div>`;
+    $("#drawer").classList.add("open"); $("#backdrop").classList.add("open");
+  }
+  function closeDrawer() { $("#drawer").classList.remove("open"); $("#backdrop").classList.remove("open"); }
+  $("#backdrop").onclick = closeDrawer;
+
+  async function openFile(id, download) {
+    const r = await fetch(`/api/hub/documents/${id}/file${download ? "?download=1" : ""}`, {headers: {"X-API-Key": KEY}});
+    if (!r.ok) return toast("File not found.");
+    const url = URL.createObjectURL(await r.blob());
+    window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  // ----------------------------------------------------------- events
+  document.addEventListener("click", async (e) => {
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-doctype],[data-approve],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
+    if (!t) return;
+    const ds = t.dataset;
+    try {
+      if (t.id === "closedrawer") return closeDrawer();
+      if (t.id === "refresh") return render();
+      if (ds.view || ds.go) { e.preventDefault(); state.view = ds.view || ds.go; state.page = 1; return render(); }
+      if (ds.cat) { state.view = "categories"; state.cat = +ds.cat; state.page = 1; return render(); }
+      if (ds.page) { state.page = +ds.page; return render(); }
+      if (ds.channel) { state.channel = ds.channel; return render(); }
+      if (ds.mstatus) { state.msgStatus = ds.mstatus; return render(); }
+      if (ds.doctype !== undefined) { state.docType = ds.doctype; return render(); }
+      if (ds.file) { e.preventDefault(); return openFile(ds.file); }
+      if (ds.xlsx) {
+        e.preventDefault();
+        const r = await fetch(`/api/hub/reports/${ds.xlsx}.xlsx`, {headers: {"X-API-Key": KEY}});
+        if (!r.ok) return alert("Report failed: " + r.status);
+        const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
+        a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "report.xlsx"; a.click(); return;
+      }
+      if (ds.zip) {
+        e.preventDefault();
+        const r = await fetch(`/api/hub/csp/${ds.zip}/zip`, {headers: {"X-API-Key": KEY}});
+        const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
+        a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "documents.zip"; a.click(); return;
+      }
+      if (ds.csp) return openCsp(ds.csp);
+      if (ds.approve) { const m = await post(`/api/hub/messages/${ds.approve}/approve`); toast(`Approved → ${m.status.replaceAll("_", " ").toLowerCase()}`); return refreshAfterAction(); }
+      if (ds.reject) { const why = prompt("Reason for rejecting (optional)") ?? null; if (why === null) return; await post(`/api/hub/messages/${ds.reject}/reject`, {reason: why}); toast("Rejected."); return refreshAfterAction(); }
+      if (ds.edit) {
+        const card = t.closest("[data-msg]"); const pre = $("pre", card);
+        const ta = document.createElement("textarea"); ta.value = pre.textContent; pre.replaceWith(ta);
+        t.textContent = "Save text"; t.dataset.edit = ""; t.onclick = async () => { await post(`/api/hub/messages/${ds.edit}/edit`, {body: ta.value}); toast("Saved."); refreshAfterAction(); };
+        return;
+      }
+      if (t.id === "approveall") {
+        const ids = [...document.querySelectorAll("[data-approve]")].map((b) => +b.dataset.approve);
+        if (!confirm(`Approve ${ids.length} drafts?`)) return;
+        const r = await post("/api/hub/messages/approve-bulk", {ids}); toast("Done: " + JSON.stringify(r.result)); return render();
+      }
+      if (ds.run) { await post(`/api/hub/run/${ds.run}`); toast(`Started: ${ds.run}. Refresh in a moment.`); return; }
+      if (ds.link) { const r = await post(`/api/hub/csp/${ds.link}/upload-link`); prompt("Upload link (valid 7 days; replaces older links):", r.link); return; }
+      if (ds.savestaff) {
+        const id = ds.savestaff;
+        await post(`/api/hub/staff/${id}`, {phone: $(`[data-staff-phone="${id}"]`).value, email: $(`[data-staff-email="${id}"]`).value});
+        toast("Saved."); return render();
+      }
+      if (ds.cc) { await post(`/api/hub/contact-changes/${ds.cc}`); return render(); }
+      if (ds.resolve) {
+        await post(`/api/hub/review/${ds.resolve}/resolve`, {accept: ds.accept === "1", issue_date: $(`#rv${ds.resolve}`)?.value || null});
+        toast("Resolved."); return render();
+      }
+    } catch (err) { toast(err.message); }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeDrawer();
+    if (e.key === "Enter" && e.target.id === "q") { state.q = e.target.value; state.page = 1; render(); }
+  });
+  async function refreshAfterAction() { if ($("#drawer").classList.contains("open")) closeDrawer(); render(); }
+
+  // ------------------------------------------------------------ render
+  const TITLES = {overview: "Overview", categories: "Categories", documents: "Latest documents", comms: "Communication Hub",
+                  contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue"};
+  async function render() {
+    try {
+      state.summary = await api("/api/hub/summary");
+      const s = state.summary;
+      const drafts = s.drafts_pending.EMAIL + s.drafts_pending.WHATSAPP;
+      $("#n-drafts").textContent = drafts || ""; $("#n-review").textContent = s.review_pending || "";
+      $("#n-cat").textContent = (s.categories[2] + s.categories[3] + s.categories[4]) || "";
+      $("#modepill").textContent = s.modes.outbound === "review" ? "Review mode: nothing is sent without approval" : "Auto mode: approved messages send automatically";
+      $("#modes").innerHTML = `Outbound: <b>${esc(s.modes.outbound)}</b><br>WhatsApp: <b>${esc(s.modes.whatsapp)}</b><br>Sheet: ${esc(s.modes.calling_sheet)}`;
+      document.querySelectorAll("#nav [data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
+      $("#title").textContent = TITLES[state.view];
+      $("#view").innerHTML = await views[state.view]();
+    } catch (err) { if (err.message !== "Unauthorised") $("#view").innerHTML = `<div class="card empty">Couldn't load: ${esc(err.message)}</div>`; }
+  }
+  async function boot() { $("#login").style.display = "none"; $("#app").style.display = "grid"; await render(); }
+  boot();
+})();
+</script>
+</body>
+</html>
