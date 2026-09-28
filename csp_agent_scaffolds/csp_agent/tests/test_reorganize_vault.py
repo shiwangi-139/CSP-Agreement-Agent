@@ -83,3 +83,33 @@ def test_dry_run_changes_nothing_and_apply_moves_everything(tmp_path, monkeypatc
     s = Session()
     assert s.get(Document, agr_id).storage_path == a.storage_path
     s.close()
+
+
+def test_vault_inside_storage_keeps_cache_and_sweeps_leftover_copies(tmp_path, monkeypatch, test_engine):
+    # The rack-server layout: STORAGE_ROOT=storage/documents, OCR cache beside it.
+    project, Session = _setup(tmp_path, monkeypatch, test_engine)
+    monkeypatch.setattr(vault, "ROOT", project / "storage" / "documents")
+    code = f"6V{uuid.uuid4().int % 1000000:06d}"
+    good = vault.ROOT / f"{code}_RAJESH_RAJESH" / f"{code}_PVR_ACTIVE_2026-09-07_to_2027-09-07.pdf"
+    good.parent.mkdir(parents=True)
+    good.write_bytes(b"%PDF live")
+    leftover = vault.ROOT / code / "AGREEMENT_2026_old_copy_1f35f7db.pdf"     # an old code-only folder
+    leftover.parent.mkdir(parents=True)
+    leftover.write_bytes(b"%PDF live")
+    cache = project / "storage" / "ocr_cache" / "ab" / "abcd.json"
+    cache.parent.mkdir(parents=True)
+    cache.write_text("{}")
+    s = Session()
+    csp = CSP(name="Rajesh Rajesh", current_code=code, lookup_code=code, is_active_in_calling_sheet=True)
+    s.add(csp)
+    s.flush()
+    s.add(Document(csp_id=csp.id, document_type="POLICE_VERIFICATION", sha256=hashlib.sha256(b"%PDF live").hexdigest(),
+                   status=DocumentStatus.VALID, readability="READABLE", is_current=True, issue_date=date(2026, 9, 7),
+                   expiry_date=date(2027, 9, 7), mime_type="application/pdf", storage_path=vault.rel(good)))
+    s.commit()
+    s.close()
+
+    _run(monkeypatch, "--apply")
+    assert good.exists() and cache.exists()                     # live file and OCR cache untouched
+    assert not leftover.exists() and not leftover.parent.exists()
+    assert (vault.ROOT.parent / "legacy" / "duplicates" / "documents" / code / leftover.name).exists()

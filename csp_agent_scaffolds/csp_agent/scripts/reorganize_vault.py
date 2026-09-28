@@ -114,18 +114,27 @@ def main():
             if p is not None and p.exists():
                 known[p.resolve()] = d.sha256
         in_vault_hashes = set(known.values())
+        # Never swept: the OCR cache and reports (they sit next to the vault,
+        # which may itself be inside storage/), files being received, and the
+        # vault's own index and marker. Leftover copies inside the vault (old
+        # code-only folders such as 1A850168/) are swept like any other.
+        keep = [vault.ROOT.parent / "ocr_cache", vault.ROOT.parent / "reports", legacy, vault.ROOT / vault.STAGING]
         orphans = 0
-        for root in OLD_ROOTS:
+        for root in OLD_ROOTS + [vault.ROOT]:
             if not root.is_dir():
                 continue
             for f in sorted(root.rglob("*")):
-                if not f.is_file() or _inside(f, vault.ROOT) or _inside(f, legacy):
+                if not f.is_file() or any(_inside(f, k) for k in keep):
+                    continue
+                if _inside(f, vault.ROOT) and root != vault.ROOT:
+                    continue  # handled in the vault's own pass
+                if f.parent == vault.ROOT and (f.name in ("INDEX.xlsx", vault.MARKER) or f.name.startswith(".~lock")):
                     continue
                 if f.resolve() in known:
                     continue
                 orphans += 1
                 kind = "duplicates" if _sha(f) in in_vault_hashes else "unreferenced"
-                dest = legacy / kind / f.relative_to(root.parent)
+                dest = legacy / kind / f.relative_to(root.parent if root != vault.ROOT else vault.ROOT.parent)
                 rows.append([f"LEGACY_{kind.upper()}", "", "", str(f.relative_to(vault.PROJECT_ROOT)),
                              str(dest.relative_to(vault.PROJECT_ROOT)) if _inside(dest, vault.PROJECT_ROOT) else str(dest)])
                 if args.apply:
@@ -136,11 +145,11 @@ def main():
 
         # ---- 3. empty old folders
         if args.apply:
-            for root in OLD_ROOTS:
+            for root in OLD_ROOTS + [vault.ROOT]:
                 if not root.is_dir():
                     continue
                 for d in sorted((p for p in root.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
-                    if not _inside(d, vault.ROOT) and not _inside(d, legacy) and not any(d.iterdir()):
+                    if d != vault.ROOT and not any(_inside(d, k) for k in keep) and not any(d.iterdir()):
                         d.rmdir()
             vault.write_index(db, today)
     finally:

@@ -302,10 +302,15 @@
   $("#backdrop").onclick = closeDrawer;
 
   async function openFile(id, download) {
+    // Open the tab now, while the click still counts: a tab opened after the
+    // download finishes is blocked as a pop-up.
+    const tab = window.open("", "_blank");
+    if (tab) tab.document.write("<p style='font-family:sans-serif'>Loading document…</p>");
     const r = await fetch(`/api/hub/documents/${id}/file${download ? "?download=1" : ""}`, {headers: {"X-API-Key": KEY}});
-    if (!r.ok) return toast("File not found.");
+    if (!r.ok) { if (tab) tab.close(); return toast(r.status === 401 ? "Wrong API key." : "File not found."); }
     const url = URL.createObjectURL(await r.blob());
-    window.open(url, "_blank");
+    if (tab) tab.location.href = url;
+    else toast("Allow pop-ups for this site to view documents.");
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 
