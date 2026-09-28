@@ -217,3 +217,24 @@ def test_reviewer_approval_teaches_the_name(db_session, fake_gmail):
     _owner_mail(db_session, mailbox, a, _pvr_pdf(date.today() - timedelta(days=4), "MAHMMAD AYUB"))
     second = db_session.query(Document).filter(Document.csp_id == a.id, Document.id != first.id).one()
     assert second.status.value == "VALID"
+
+
+def test_reading_an_email_again_adds_only_files_never_stored(db_session, fake_gmail):
+    # scripts/reprocess_emails.py: a file already stored (even under another
+    # CSP) stays as it is; a file that was rejected before gets a fresh read.
+    mailbox, _ = fake_gmail
+    a, b = _csp(db_session), _csp(db_session)
+    known = _pvr_pdf(date.today() - timedelta(days=30), b.name)
+    first = "r" + uuid.uuid4().hex[:8]
+    _mail(mailbox, first, b.current_code, b.name, {"known.pdf": known})
+    gmail_ingest.process_message(db_session, None, first)
+    assert db_session.query(Document).filter_by(csp_id=b.id).count() == 1
+
+    again = "r" + uuid.uuid4().hex[:8]
+    fresh = _pvr_pdf(date.today() - timedelta(days=3), a.name)
+    _mail(mailbox, again, a.current_code, a.name, {"known.pdf": known, "fresh.pdf": fresh})
+    assert gmail_ingest.process_message(db_session, None, again, known_anywhere=True) == "PROCESSED"
+    assert db_session.query(Document).filter_by(csp_id=b.id).count() == 1     # untouched, no copy
+    assert db_session.query(Document).filter_by(csp_id=a.id).count() == 1     # only the new file
+    decisions = db_session.query(InboundMessage).filter_by(external_message_id=again).one().attachment_decisions
+    assert [d["decision"] for d in decisions] == ["DUPLICATE", "READABLE"]

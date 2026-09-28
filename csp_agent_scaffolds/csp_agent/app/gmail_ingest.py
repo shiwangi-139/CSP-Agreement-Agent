@@ -249,8 +249,11 @@ def _category(subject: str, body: str) -> EmailCategory:
     return EmailCategory.UNKNOWN
 
 
-def process_message(db: Session, service, msg_id: str) -> str:
-    """Process one Gmail message end to end. Returns the final status."""
+def process_message(db: Session, service, msg_id: str, known_anywhere: bool = False) -> str:
+    """Process one Gmail message end to end. Returns the final status.
+    known_anywhere=True (scripts/reprocess_emails.py): a file already stored
+    for ANY CSP is left as it is, so reading an email again only adds the
+    attachments that were never stored."""
     from .comms.gmail_oauth import get_message, fetch_attachment_bytes
 
     if db.query(InboundMessage.id).filter(InboundMessage.external_message_id == msg_id).first():
@@ -330,11 +333,16 @@ def process_message(db: Session, service, msg_id: str) -> str:
     inbound.csp_id = csp.id
     # The same file already on record for this CSP needs no OCR at all.
     duplicate_ids = set()
+    known_docs: dict[str, Document] = {}
     for att in attachments:
         data = downloaded.get(att["attachment_id"])
-        if data and att["attachment_id"] not in extracted and db.query(Document.id).filter(
-                Document.csp_id == csp.id, Document.sha256 == hashlib.sha256(data).hexdigest()).first():
+        if not data or att["attachment_id"] in extracted:
+            continue
+        q = db.query(Document).filter(Document.sha256 == hashlib.sha256(data).hexdigest())
+        known = (q if known_anywhere else q.filter(Document.csp_id == csp.id)).first()
+        if known is not None:
             duplicate_ids.add(att["attachment_id"])
+            known_docs[att["attachment_id"]] = known
     read_all([a for a in attachments if a["attachment_id"] not in duplicate_ids])
     everyone = db.query(CSP).all()
     learned = learned_names(db)
@@ -348,7 +356,13 @@ def process_message(db: Session, service, msg_id: str) -> str:
                 decisions.append(entry)
                 continue
             if att["attachment_id"] in duplicate_ids:
-                ex = {"readability": "DUPLICATE"}
+                known = known_docs[att["attachment_id"]]
+                entry.update(decision="DUPLICATE", reason="Same file already on record.", document_id=known.id,
+                             document_type=known.document_type,
+                             issue_date=known.issue_date.isoformat() if known.issue_date else None,
+                             expiry_date=known.expiry_date.isoformat() if known.expiry_date else None)
+                decisions.append(entry)
+                continue
             else:
                 ex = extracted.get(att["attachment_id"]) or extract_document_fields_deterministic(data, att["filename"])
             owner, owner_how, review = check_owner(
