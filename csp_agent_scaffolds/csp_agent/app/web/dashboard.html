@@ -190,8 +190,10 @@
         ${rows.slice(0, 400).map((r) => `<tr class="click" data-csp="${r.id}"><td><span class="mono">${esc(r.code)}</span> ${esc(r.name)}</td>
           <td>${esc(r[col] ?? (r.phone || r.email || "—"))}</td><td>${r.missing.map((m) => badge("MISSING", m.replace("_", " "))).join(" ")}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">No gaps.</div>`;
       return `
-      <div class="toolbar"><a class="btn" href="#" data-xlsx="contacts">Download contacts &amp; gaps (.xlsx)</a>
-        <span class="small muted">Also saved every morning at 07:30 in storage/sbi_kiosk/reports/.</span></div>
+      <div class="toolbar"><a class="btn" href="#" data-xlsx="contacts">Download contacts (.xlsx)</a>
+        <a class="btn" href="#" data-xlsx="gaps">Download gaps (.xlsx)</a>
+        <span class="small muted">Contacts: every CSP with its RM and DC. Gaps: only what is missing.
+        Both are also saved every morning at 07:30 in storage/reports/.</span></div>
       <div class="card"><h2>RM &amp; DC contact details</h2>
         <p class="small muted">The calling-sheet tab has no RM phone/email columns. Enter them once here; they become the only allowed escalation recipients.</p>
         <div class="tablewrap"><table><thead><tr><th>Name</th><th>Role</th><th>CSPs</th><th>Mobile</th><th>Email</th><th></th></tr></thead><tbody>

@@ -49,12 +49,12 @@ def test_csp_report_tabs_and_rows(db_session):
     assert wb["All CSPs"].cell(row=r, column=head.index("PVR status") + 1).fill.fgColor.rgb.endswith("FDE2E2")
 
 
-def test_contacts_report_lists_each_gap(db_session):
+def test_gaps_report_lists_each_gap(db_session):
     db = db_session
     c = _csp(db, name="=HYPERLINK(bad)", phone=None, email=None,
              contact_gaps={"csp": ["phone_missing", "email_missing"], "rm": ["not_assigned"], "dc": ["not_assigned"]})
-    wb = load_workbook(reports.contacts_report(db))
-    assert wb.sheetnames == ["Summary", "CSP contact missing", "RM gaps", "DC gaps", "RM & DC directory",
+    wb = load_workbook(reports.gaps_report(db))
+    assert wb.sheetnames == ["Summary", "CSP contact missing", "RM gaps", "DC gaps", "RM & DC missing details",
                              "Contact changes from CSPs"]
     row = _rows(wb["CSP contact missing"], c.current_code)[0]
     assert row[1] == "'=HYPERLINK(bad)"                # never runs as a formula
@@ -70,6 +70,21 @@ def test_daily_files_are_written_and_old_ones_pruned(db_session):
     old.write_bytes(b"x")
     out = reports.write_daily(db_session)
     assert sorted(out["written"]) == sorted([f"CSP_Report_{date.today().isoformat()}.xlsx",
-                                             f"Contacts_Gaps_{date.today().isoformat()}.xlsx"])
+                                             f"Contacts_{date.today().isoformat()}.xlsx",
+                                             f"Contact_Gaps_{date.today().isoformat()}.xlsx"])
     assert not old.exists() and (d / out["written"][0]).exists()
     assert d.parent == vault.ROOT.parent
+
+
+def test_contacts_report_lists_every_csp_with_rm_and_dc(db_session):
+    db = db_session
+    c = _csp(db, phone="9876500000", email=None)
+    wb = load_workbook(reports.contacts_report(db))
+    assert wb.sheetnames == ["All CSP contacts", "RM & DC directory"]
+    ws = wb["All CSP contacts"]
+    head = [h.value for h in ws[1]]
+    assert head[:6] == ["CSP code", "CSP name", "Phone", "Alt phone", "WhatsApp", "Email"]
+    row = _rows(ws, c.current_code)[0]
+    assert row[head.index("Phone")] == "9876500000" and row[head.index("Email")] is None
+    r = next(i for i, x in enumerate(ws.iter_rows(values_only=True), 1) if x[0] == c.current_code)
+    assert ws.cell(row=r, column=head.index("Email") + 1).fill.fgColor.rgb.endswith("FDE2E2")   # empty = red

@@ -1,13 +1,15 @@
 """
 app/reports.py
-The two Excel reports, built from the same data the dashboard shows:
+The Excel reports, built from the same data the dashboard shows:
 
   CSP_Report_<date>.xlsx       Summary, All CSPs, one tab per category,
                                Expiring in 60 days
-  Contacts_Gaps_<date>.xlsx    Summary, CSP contact missing, RM gaps, DC gaps,
-                               RM & DC directory, Contact changes from CSPs
+  Contacts_<date>.xlsx         All CSP contacts (CSP, RM, DC phone/email),
+                               RM & DC directory
+  Contact_Gaps_<date>.xlsx     Summary, CSP contact missing, RM gaps, DC gaps,
+                               RM & DC missing details, Contact changes from CSPs
 
-The worker writes both every morning into <vault parent>/reports/ (the last
+The worker writes all three every morning into <vault parent>/reports/ (the last
 REPORTS_KEEP_DAYS days are kept); the dashboard can also download them live.
 """
 import io
@@ -137,7 +139,45 @@ def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
 
 
 # ------------------------------------------------------- contacts & gaps
+def _staff_rows(db: Session, csps: list[CSP], staff: dict) -> list[list]:
+    """RM / DC directory: name, role, number of CSPs, phone, email, what is missing."""
+    counts: dict[int, int] = {}
+    for c in csps:
+        for uid in (c.rm_id, c.dc_id):
+            if uid:
+                counts[uid] = counts.get(uid, 0) + 1
+    people = sorted((u for u in staff.values() if u.role in ("RM", "DC")), key=lambda u: (u.role, u.name or ""))
+    return [[u.name, u.role, counts.get(u.id, 0), u.phone, u.email,
+             ", ".join(x for x, v in (("Phone missing", u.phone), ("Email missing", u.email)) if not v)]
+            for u in people]
+
+
 def contacts_report(db: Session) -> io.BytesIO:
+    """Contacts: every active CSP with its own, its RM's and its DC's phone
+    and email, plus the RM & DC directory. Empty cells are red."""
+    staff = {u.id: u for u in db.query(InternalUser).all()}
+    csps = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).order_by(CSP.current_code).all()
+    head = ["CSP code", "CSP name", "Phone", "Alt phone", "WhatsApp", "Email",
+            "RM", "RM phone", "RM email", "DC", "DC phone", "DC email", "State", "Branch"]
+    rows, fills = [], []
+    for c in csps:
+        rm, dc = staff.get(c.rm_id), staff.get(c.dc_id)
+        row = [c.current_code, c.name, c.phone, c.alt_phone, c.whatsapp_number, c.email,
+               rm.name if rm else None, rm.phone if rm else None, rm.email if rm else None,
+               dc.name if dc else None, dc.phone if dc else None, dc.email if dc else None, c.state, c.branch]
+        rows.append(row)
+        # Highlight the contact fields that are empty (alt phone and WhatsApp are optional).
+        fills.append({i + 1: RED for i in (2, 5, 6, 7, 8, 9, 10, 11) if not row[i]})
+    directory = _staff_rows(db, csps, staff)
+    wb = Workbook()
+    _sheet(wb, "All CSP contacts", head, rows, first=True, fills=fills)
+    _sheet(wb, "RM & DC directory", ["Name", "Role", "CSPs", "Phone", "Email", "Missing"], directory,
+           fills=[{6: RED} if r[-1] else {} for r in directory])
+    return _save(wb)
+
+
+def gaps_report(db: Session) -> io.BytesIO:
+    """Gaps only: what is missing, CSP by CSP, and for RMs / DCs."""
     staff = {u.id: u for u in db.query(InternalUser).all()}
     csps = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).order_by(CSP.current_code).all()
     csp_rows, rm_rows, dc_rows = [], [], []
@@ -153,16 +193,7 @@ def contacts_report(db: Session) -> io.BytesIO:
         if g.get("dc"):
             dc_rows.append([c.current_code, c.name, dc.name if dc else None, dc.phone if dc else None,
                             dc.email if dc else None, _gap_text(g["dc"])])
-
-    counts: dict[int, int] = {}
-    for c in csps:
-        for uid in (c.rm_id, c.dc_id):
-            if uid:
-                counts[uid] = counts.get(uid, 0) + 1
-    people = sorted((u for u in staff.values() if u.role in ("RM", "DC")), key=lambda u: (u.role, u.name or ""))
-    directory = [[u.name, u.role, counts.get(u.id, 0), u.phone, u.email,
-                  ", ".join(x for x, v in (("Phone missing", u.phone), ("Email missing", u.email)) if not v)]
-                 for u in people]
+    staff_gaps = [r for r in _staff_rows(db, csps, staff) if r[-1]]
     by_id = {c.id: c for c in csps}
     changes = [[by_id[r.csp_id].current_code if r.csp_id in by_id else r.csp_id,
                 by_id[r.csp_id].name if r.csp_id in by_id else None, r.field, r.old_value, r.new_value,
@@ -173,7 +204,7 @@ def contacts_report(db: Session) -> io.BytesIO:
                ["CSPs with phone or email missing", len(csp_rows)],
                ["CSPs with no RM, or RM contact missing", len(rm_rows)],
                ["CSPs with no DC, or DC contact missing", len(dc_rows)],
-               ["RMs/DCs with phone or email missing", sum(1 for r in directory if r[-1])],
+               ["RMs/DCs with phone or email missing", len(staff_gaps)],
                ["Contact changes sent by CSPs, not yet checked", len(changes)]]
 
     wb = Workbook()
@@ -184,8 +215,8 @@ def contacts_report(db: Session) -> io.BytesIO:
            fills=[{6: RED} for _ in rm_rows])
     _sheet(wb, "DC gaps", ["CSP code", "CSP name", "DC", "DC phone", "DC email", "Missing"], dc_rows,
            fills=[{6: RED} for _ in dc_rows])
-    _sheet(wb, "RM & DC directory", ["Name", "Role", "CSPs", "Phone", "Email", "Missing"], directory,
-           fills=[{6: RED} if r[-1] else {} for r in directory])
+    _sheet(wb, "RM & DC missing details", ["Name", "Role", "CSPs", "Phone", "Email", "Missing"], staff_gaps,
+           fills=[{6: RED} for _ in staff_gaps])
     _sheet(wb, "Contact changes from CSPs", ["CSP code", "CSP name", "Field", "Old value", "New value", "Sent on"],
            changes)
     return _save(wb)
@@ -197,12 +228,13 @@ def reports_dir() -> Path:
 
 
 def write_daily(db: Session, today: Optional[date] = None) -> dict:
-    """Write both reports for today and drop ones older than REPORTS_KEEP_DAYS."""
+    """Write today's reports (CSP report, contacts, gaps) and drop ones older than REPORTS_KEEP_DAYS."""
     today = today or date.today()
     d = reports_dir()
     d.mkdir(parents=True, exist_ok=True)
     written = []
-    for prefix, buf in (("CSP_Report", csp_report(db, today)), ("Contacts_Gaps", contacts_report(db))):
+    for prefix, buf in (("CSP_Report", csp_report(db, today)), ("Contacts", contacts_report(db)),
+                        ("Contact_Gaps", gaps_report(db))):
         final = d / f"{prefix}_{today.isoformat()}.xlsx"
         tmp = final.with_suffix(".xlsx.part")
         tmp.write_bytes(buf.getvalue())

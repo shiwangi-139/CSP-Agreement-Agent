@@ -310,10 +310,12 @@ def edit_message(message_id: int, subject: Optional[str] = Body(None), body: Opt
 # ------------------------------------------------------------------ reports
 @router.get("/reports/{kind}.xlsx")
 def report_xlsx(kind: str, db: Session = Depends(get_db)):
-    """Live Excel: kind = csp (categories, documents, expiring) or contacts (gaps)."""
+    """Live Excel: kind = csp (categories, documents, expiring), contacts (every
+    CSP / RM / DC contact) or gaps (only what is missing)."""
     from .. import reports
     builders = {"csp": ("CSP_Report", lambda: reports.csp_report(db)),
-                "contacts": ("Contacts_Gaps", lambda: reports.contacts_report(db))}
+                "contacts": ("Contacts", lambda: reports.contacts_report(db)),
+                "gaps": ("Contact_Gaps", lambda: reports.gaps_report(db))}
     if kind not in builders:
         raise HTTPException(404, "unknown report")
     prefix, build = builders[kind]
