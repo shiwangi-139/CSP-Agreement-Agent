@@ -20,7 +20,7 @@
     <div class="brand">eko<span>.</span> CSP Renewals</div>
     <div class="sub">SBI Kiosk Banking · document compliance</div>
     <button data-view="overview" class="active">Overview</button>
-    <button data-view="categories">Categories <span class="count" id="n-cat"></span></button>
+    <button data-view="categories">Slabs <span class="count" id="n-cat"></span></button>
     <button data-view="documents">Latest documents</button>
     <button data-view="comms">Communication Hub <span class="count" id="n-drafts"></span></button>
     <button data-view="contacts">Contacts &amp; gaps</button>
@@ -53,8 +53,11 @@
   const fmt = (iso) => iso ? iso.slice(0, 10).split("-").reverse().join("-") : "—";
   const when = (iso) => iso ? new Date(iso).toLocaleString("en-IN", {dateStyle: "medium", timeStyle: "short"}) : "—";
   const DOC = {AGREEMENT: "Agreement", POLICE_VERIFICATION: "PVR / Character", IIBF_CERTIFICATE: "IIBF"};
-  const CAT = {1: ["Active", "All three documents valid"], 2: ["Partial", "Some documents missing or unreadable"],
-               3: ["Expired", "At least one document expired"], 4: ["None", "Nothing on file in 2 years"]};
+  const CAT = {1: ["Compliant", "All three documents on file and valid"],
+               2: ["Documents missing", "Nothing expired, but a document is missing or unreadable"],
+               3: ["Renewal due", "At least one document expired (others may also be missing)"],
+               4: ["No documents", "Nothing readable on file in 2 years"]};
+  const slab = (k) => `Slab ${k} · ${CAT[k][0]}`;
   const state = {view: "overview", cat: 1, q: "", page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
 
   // ---------------------------------------------------------------- api
@@ -99,7 +102,7 @@
       const c = s.categories;
       return `
       <div class="grid k4">${[1,2,3,4].map((k) => `
-        <div class="card kpi c${k}" data-cat="${k}"><div class="label">Cat ${k} · ${CAT[k][0]}</div>
+        <div class="card kpi c${k}" data-cat="${k}"><div class="label">${slab(k)}</div>
           <div class="n">${c[k] ?? 0}</div><div class="small muted">${CAT[k][1]}</div></div>`).join("")}
       </div>
       <div class="grid k3" style="margin-top:14px">
@@ -112,8 +115,8 @@
         <div class="card"><h2>Coming up</h2>
           <div class="kv"><dt>Documents expiring in 60 days</dt><dd class="num">${s.expiring_60_days}</dd>
           <dt>CSPs on calling sheet</dt><dd class="num">${s.total_csps}</dd>
-          <dt>Not yet categorised</dt><dd class="num">${s.uncategorised}</dd></div>
-          <p class="small muted">Categories refresh on every run of the daily engine (09:00 IST) and on every upload.</p></div>
+          <dt>Not yet in a slab</dt><dd class="num">${s.uncategorised}</dd></div>
+          <p class="small muted">Slabs refresh on every run of the daily engine (09:00 IST) and on every upload.</p></div>
         <div class="card"><h2>Contact gaps</h2>
           <div class="kv"><dt>CSP without phone</dt><dd class="num">${s.contact_gaps.csp_phone}</dd>
           <dt>CSP without email</dt><dd class="num">${s.contact_gaps.csp_email}</dd>
@@ -126,7 +129,7 @@
         <div class="toolbar">
           <button class="btn" data-run="sheet">Reload calling sheet</button>
           <button class="btn" data-run="gmail">Scan Gmail</button>
-          <button class="btn forest" data-run="engine">Run categories &amp; follow-ups</button>
+          <button class="btn forest" data-run="engine">Run slabs &amp; follow-ups</button>
         </div>
         <div class="small mono muted">${Object.entries(s.jobs || {}).map(([k, v]) => `${esc(k)}: ${esc(v.status)} ${esc(v.finished_at || v.started_at || "")}`).join(" · ") || "No manual runs yet."}</div>
       </div>`;
@@ -136,7 +139,7 @@
       const d = await api(`/api/hub/csps?category=${state.cat}&q=${encodeURIComponent(state.q)}&page=${state.page}&size=50`);
       const pages = Math.max(1, Math.ceil(d.total / d.size));
       return `
-      <div class="tabs">${[1,2,3,4].map((k) => `<button data-cat="${k}" class="${state.cat === k ? "active" : ""}">Cat ${k} · ${CAT[k][0]} (${state.summary.categories[k] ?? 0})</button>`).join("")}</div>
+      <div class="tabs">${[1,2,3,4].map((k) => `<button data-cat="${k}" class="${state.cat === k ? "active" : ""}">${slab(k)} (${state.summary.categories[k] ?? 0})</button>`).join("")}</div>
       <div class="toolbar"><input type="search" id="q" placeholder="Search code, name or phone" value="${esc(state.q)}">
         <span class="muted small">${d.total} CSPs · ${CAT[state.cat][1]}</span>
         <a class="btn" href="#" data-xlsx="csp">Download CSP report (.xlsx)</a></div>
@@ -281,7 +284,7 @@
     $("#drawer").innerHTML = `
       <div class="topbar"><div><h1 style="font-size:1.25rem">${esc(c.name)}</h1><div class="mono muted">KO ${esc(c.code)} · ${esc(c.terminal_status || "")}</div></div>
         <button class="btn" id="closedrawer">Close</button></div>
-      <div class="card"><div class="meta">${badge("c" + d.category, "Cat " + d.category + " · " + CAT[d.category][0])} <span class="muted">${esc(d.reason)}</span></div>
+      <div class="card"><div class="meta">${badge("c" + d.category, slab(d.category))} <span class="muted">${esc(d.reason)}</span></div>
         <dl class="kv" style="margin-top:10px"><dt>Mobile</dt><dd>${esc(c.phone || "—")}${c.alt_phone ? " / " + esc(c.alt_phone) : ""}</dd>
           <dt>Email</dt><dd>${esc(c.email || "—")}</dd><dt>RM</dt><dd>${person(c.rm, "RM")}</dd><dt>DC</dt><dd>${person(c.dc, "DC")}</dd>
           <dt>Branch</dt><dd>${esc(c.branch || "—")}, ${esc(c.state || "")}</dd><dt>Next action</dt><dd class="mono">${fmt(c.next_action_at)}</dd>
@@ -379,7 +382,7 @@
   async function refreshAfterAction() { if ($("#drawer").classList.contains("open")) closeDrawer(); render(); }
 
   // ------------------------------------------------------------ render
-  const TITLES = {overview: "Overview", categories: "Categories", documents: "Latest documents", comms: "Communication Hub",
+  const TITLES = {overview: "Overview", categories: "Slabs", documents: "Latest documents", comms: "Communication Hub",
                   contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue"};
   async function render() {
     try {

@@ -26,7 +26,15 @@ TYPE_ALIASES = {
     "IIBF_CERTIFICATION": "IIBF_CERTIFICATE",
     "CSP_AGREEMENT": "AGREEMENT",
 }
+# Codes used by the API and the WhatsApp agent: keep them stable.
 CATEGORY_NAMES = {1: "ACTIVE", 2: "PARTIAL", 3: "EXPIRED", 4: "NONE"}
+# What people see ("Cat A/B/1/2" is already used for other things in the company).
+SLAB_NAMES = {1: "Compliant", 2: "Documents missing", 3: "Renewal due", 4: "No documents"}
+
+
+def slab_label(category: int) -> str:
+    """e.g. "Slab 3 · Renewal due"."""
+    return f"Slab {category} · {SLAB_NAMES.get(category, '')}"
 DOC_LABELS = {
     "AGREEMENT": ("CSP Agreement", "सीएसपी एग्रीमेंट"),
     "POLICE_VERIFICATION": ("Police Verification / Character Certificate", "पुलिस वेरिफिकेशन / चरित्र प्रमाण पत्र"),

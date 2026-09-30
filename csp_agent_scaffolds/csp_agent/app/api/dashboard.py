@@ -838,10 +838,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Category A Compliant -->
+          <!-- Slab 1 Compliant -->
           <div role="button" onclick="filterCategoryAndSwitch('CAT_A')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/50 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-pointer transition group">
             <div class="flex items-center justify-between text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">
-              <span>Category A</span>
+              <span>Slab 1</span>
               <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
             </div>
             <div class="flex items-baseline justify-between mt-2">
@@ -854,10 +854,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Category B Incomplete -->
+          <!-- Slab 2 Incomplete -->
           <div role="button" onclick="filterCategoryAndSwitch('CAT_B')" class="bg-slate-900 border border-slate-800 hover:border-amber-500/50 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-pointer transition group">
             <div class="flex items-center justify-between text-[11px] font-semibold text-amber-400 uppercase tracking-wider">
-              <span>Category B</span>
+              <span>Slab 2</span>
               <span class="w-2 h-2 rounded-full bg-amber-500"></span>
             </div>
             <div class="flex items-baseline justify-between mt-2">
@@ -870,10 +870,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Category C Expired -->
+          <!-- Slab 3 Expired -->
           <div role="button" onclick="filterCategoryAndSwitch('CAT_C')" class="bg-slate-900 border border-slate-800 hover:border-rose-500/50 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-pointer transition group">
             <div class="flex items-center justify-between text-[11px] font-semibold text-rose-400 uppercase tracking-wider">
-              <span>Category C</span>
+              <span>Slab 3</span>
               <span class="w-2 h-2 rounded-full bg-rose-500"></span>
             </div>
             <div class="flex items-baseline justify-between mt-2">
@@ -886,10 +886,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Category D Non-Responsive -->
+          <!-- Slab 4 Non-Responsive -->
           <div role="button" onclick="filterCategoryAndSwitch('CAT_D')" class="bg-slate-900 border border-slate-800 hover:border-slate-500 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-pointer transition group col-span-2 lg:col-span-1">
             <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-              <span>Category D</span>
+              <span>Slab 4</span>
               <span class="w-2 h-2 rounded-full bg-slate-500"></span>
             </div>
             <div class="flex items-baseline justify-between mt-2">
@@ -925,35 +925,35 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
                   <span id="complianceBarLabel">0% Compliant</span>
                 </div>
                 <div class="h-3 w-full bg-slate-950 rounded-full overflow-hidden flex border border-slate-800">
-                  <div id="barCatA" class="bg-emerald-500 h-full transition-all duration-500" style="width: 0%" title="Cat A Compliant"></div>
-                  <div id="barCatB" class="bg-amber-500 h-full transition-all duration-500" style="width: 0%" title="Cat B Incomplete"></div>
-                  <div id="barCatC" class="bg-rose-500 h-full transition-all duration-500" style="width: 0%" title="Cat C Expired"></div>
-                  <div id="barCatD" class="bg-slate-700 h-full transition-all duration-500" style="width: 100%" title="Cat D No Response"></div>
+                  <div id="barCatA" class="bg-emerald-500 h-full transition-all duration-500" style="width: 0%" title="Slab 1 Compliant"></div>
+                  <div id="barCatB" class="bg-amber-500 h-full transition-all duration-500" style="width: 0%" title="Slab 2 Documents missing"></div>
+                  <div id="barCatC" class="bg-rose-500 h-full transition-all duration-500" style="width: 0%" title="Slab 3 Renewal due"></div>
+                  <div id="barCatD" class="bg-slate-700 h-full transition-all duration-500" style="width: 100%" title="Slab 4 No documents"></div>
                 </div>
               </div>
 
               <!-- 4 Interactive Category Cards -->
               <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
                 <div role="button" onclick="filterCategoryAndSwitch('CAT_A')" class="cursor-pointer bg-slate-950/80 border border-emerald-500/30 hover:border-emerald-400 rounded-lg p-3 transition group">
-                  <div class="text-[10px] font-bold text-emerald-400 uppercase">Category A</div>
+                  <div class="text-[10px] font-bold text-emerald-400 uppercase">Slab 1</div>
                   <div class="text-xl font-black text-white mt-1" id="catACount">0</div>
                   <div class="text-[10.5px] text-slate-400 mt-0.5">Compliant (100%)</div>
                 </div>
 
                 <div role="button" onclick="filterCategoryAndSwitch('CAT_B')" class="cursor-pointer bg-slate-950/80 border border-amber-500/30 hover:border-amber-400 rounded-lg p-3 transition group">
-                  <div class="text-[10px] font-bold text-amber-400 uppercase">Category B</div>
+                  <div class="text-[10px] font-bold text-amber-400 uppercase">Slab 2</div>
                   <div class="text-xl font-black text-white mt-1" id="catBCount">0</div>
                   <div class="text-[10.5px] text-slate-400 mt-0.5">Partial / Missing</div>
                 </div>
 
                 <div role="button" onclick="filterCategoryAndSwitch('CAT_C')" class="cursor-pointer bg-slate-950/80 border border-rose-500/30 hover:border-rose-400 rounded-lg p-3 transition group">
-                  <div class="text-[10px] font-bold text-rose-400 uppercase">Category C</div>
+                  <div class="text-[10px] font-bold text-rose-400 uppercase">Slab 3</div>
                   <div class="text-xl font-black text-white mt-1" id="catCCount">0</div>
                   <div class="text-[10.5px] text-slate-400 mt-0.5">Expired / Term</div>
                 </div>
 
                 <div role="button" onclick="filterCategoryAndSwitch('CAT_D')" class="cursor-pointer bg-slate-950/80 border border-slate-700 hover:border-slate-500 rounded-lg p-3 transition group">
-                  <div class="text-[10px] font-bold text-slate-400 uppercase">Category D</div>
+                  <div class="text-[10px] font-bold text-slate-400 uppercase">Slab 4</div>
                   <div class="text-xl font-black text-white mt-1" id="catDCount">537</div>
                   <div class="text-[10.5px] text-slate-400 mt-0.5">Non-Responsive</div>
                 </div>
@@ -1110,10 +1110,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Category A Compliant -->
+          <!-- Slab 1 Compliant -->
           <div role="button" onclick="filterCategory('CAT_A')" class="bg-slate-900 border border-slate-800 hover:border-emerald-500/50 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-pointer transition group">
             <div class="flex items-center justify-between text-[11px] font-semibold text-emerald-400 uppercase tracking-wider">
-              <span>Category A</span>
+              <span>Slab 1</span>
               <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
             </div>
             <div class="flex items-baseline justify-between mt-2">
@@ -1126,10 +1126,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Category B Incomplete -->
+          <!-- Slab 2 Incomplete -->
           <div role="button" onclick="filterCategory('CAT_B')" class="bg-slate-900 border border-slate-800 hover:border-amber-500/50 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-pointer transition group">
             <div class="flex items-center justify-between text-[11px] font-semibold text-amber-400 uppercase tracking-wider">
-              <span>Category B</span>
+              <span>Slab 2</span>
               <span class="w-2 h-2 rounded-full bg-amber-500"></span>
             </div>
             <div class="flex items-baseline justify-between mt-2">
@@ -1142,10 +1142,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Category C Expired -->
+          <!-- Slab 3 Expired -->
           <div role="button" onclick="filterCategory('CAT_C')" class="bg-slate-900 border border-slate-800 hover:border-rose-500/50 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-pointer transition group">
             <div class="flex items-center justify-between text-[11px] font-semibold text-rose-400 uppercase tracking-wider">
-              <span>Category C</span>
+              <span>Slab 3</span>
               <span class="w-2 h-2 rounded-full bg-rose-500"></span>
             </div>
             <div class="flex items-baseline justify-between mt-2">
@@ -1158,10 +1158,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
           </div>
 
-          <!-- Category D Non-Responsive -->
+          <!-- Slab 4 Non-Responsive -->
           <div role="button" onclick="filterCategory('CAT_D')" class="bg-slate-900 border border-slate-800 hover:border-slate-500 rounded-xl p-4 flex flex-col justify-between shadow-sm cursor-pointer transition group col-span-2 lg:col-span-1">
             <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-              <span>Category D</span>
+              <span>Slab 4</span>
               <span class="w-2 h-2 rounded-full bg-slate-500"></span>
             </div>
             <div class="flex items-baseline justify-between mt-2">
@@ -1183,10 +1183,10 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
           <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800/80">
             <div class="flex items-center gap-1.5 overflow-x-auto">
               <button type="button" onclick="filterCategory('ALL')" id="tabALL" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 text-white cursor-pointer transition">All (537)</button>
-              <button type="button" onclick="filterCategory('CAT_A')" id="tabCAT_A" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer transition">Category A</button>
-              <button type="button" onclick="filterCategory('CAT_B')" id="tabCAT_B" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer transition">Category B</button>
-              <button type="button" onclick="filterCategory('CAT_C')" id="tabCAT_C" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer transition">Category C</button>
-              <button type="button" onclick="filterCategory('CAT_D')" id="tabCAT_D" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer transition">Category D</button>
+              <button type="button" onclick="filterCategory('CAT_A')" id="tabCAT_A" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer transition">Slab 1</button>
+              <button type="button" onclick="filterCategory('CAT_B')" id="tabCAT_B" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer transition">Slab 2</button>
+              <button type="button" onclick="filterCategory('CAT_C')" id="tabCAT_C" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer transition">Slab 3</button>
+              <button type="button" onclick="filterCategory('CAT_D')" id="tabCAT_D" class="tab-btn px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-slate-300 hover:bg-slate-700 cursor-pointer transition">Slab 4</button>
             </div>
 
             <!-- Page Record Count Indicator -->
@@ -1815,7 +1815,7 @@ DASHBOARD_HTML_TEMPLATE = """<!DOCTYPE html>
             <div>
               <div class="flex items-center gap-2">
                 <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30" id="dCode">1A850247</span>
-                <span id="dCatBadge" class="text-[10px] font-semibold px-2 py-0.5 rounded">Cat A</span>
+                <span id="dCatBadge" class="text-[10px] font-semibold px-2 py-0.5 rounded">Slab 1</span>
               </div>
               <h3 class="text-sm font-bold text-white mt-1 truncate max-w-[240px]" id="dName">CSP Name</h3>
             </div>
@@ -2301,10 +2301,10 @@ __SERVER_PRELOAD_JSON_SLOT__
 
         // Tab Labels
         setVal('tabALL', `All (${total})`);
-        setVal('tabCAT_A', `Category A (${catA})`);
-        setVal('tabCAT_B', `Category B (${catB})`);
-        setVal('tabCAT_C', `Category C (${catC})`);
-        setVal('tabCAT_D', `Category D (${catD})`);
+        setVal('tabCAT_A', `Slab 1 · Compliant (${catA})`);
+        setVal('tabCAT_B', `Slab 2 · Documents missing (${catB})`);
+        setVal('tabCAT_C', `Slab 3 · Renewal due (${catC})`);
+        setVal('tabCAT_D', `Slab 4 · No documents (${catD})`);
 
         // Populate Dropdowns
         populateFilters();
@@ -2548,9 +2548,9 @@ __SERVER_PRELOAD_JSON_SLOT__
       const pageRecords = filteredData.slice(startIdx, endIdx);
 
       if (pageRecords.length === 0) {
-        const catLabel = currentCategory === 'ALL' ? 'All Categories' : currentCategory.replace('CAT_', 'Category ');
+        const catLabel = currentCategory === 'ALL' ? 'All Categories' : ({CAT_A:'Slab 1 · Compliant',CAT_B:'Slab 2 · Documents missing',CAT_C:'Slab 3 · Renewal due',CAT_D:'Slab 4 · No documents'}[currentCategory] || currentCategory);
         const emptyMsg = currentCategory === 'CAT_A'
-          ? 'Currently 0 CSPs in Neon DB have both a verified 3-Yr Agreement AND 1-Yr Police Verification. Check <button type="button" onclick="filterCategory(&apos;CAT_B&apos;)" class="text-blue-400 hover:underline font-semibold cursor-pointer">Category B (17 Incomplete)</button> or <button type="button" onclick="filterCategory(&apos;CAT_D&apos;)" class="text-blue-400 hover:underline font-semibold cursor-pointer">Category D (518 Awaiting)</button>.'
+          ? 'Currently 0 CSPs in Neon DB have both a verified 3-Yr Agreement AND 1-Yr Police Verification. Check <button type="button" onclick="filterCategory(&apos;CAT_B&apos;)" class="text-blue-400 hover:underline font-semibold cursor-pointer">Slab 2 (17 Incomplete)</button> or <button type="button" onclick="filterCategory(&apos;CAT_D&apos;)" class="text-blue-400 hover:underline font-semibold cursor-pointer">Slab 4 (518 Awaiting)</button>.'
           : 'No records match the current filter selection.';
 
         tbody.innerHTML = `
@@ -2579,13 +2579,13 @@ __SERVER_PRELOAD_JSON_SLOT__
       pageRecords.forEach(csp => {
         let catBadge = "";
         if (csp.cat === "CAT_A") {
-          catBadge = `<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10.5px] font-sans font-semibold">Cat A (Compliant)</span>`;
+          catBadge = `<span class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10.5px] font-sans font-semibold">Slab 1 · Compliant</span>`;
         } else if (csp.cat === "CAT_B") {
-          catBadge = `<span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10.5px] font-sans font-semibold">Cat B (Incomplete)</span>`;
+          catBadge = `<span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[10.5px] font-sans font-semibold">Slab 2 · Documents missing</span>`;
         } else if (csp.cat === "CAT_C") {
-          catBadge = `<span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10.5px] font-sans font-semibold">Cat C (Expired)</span>`;
+          catBadge = `<span class="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 border border-rose-500/40 text-[10.5px] font-sans font-semibold">Slab 3 · Renewal due</span>`;
         } else {
-          catBadge = `<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 text-[10.5px] font-sans font-semibold">Cat D (No Response)</span>`;
+          catBadge = `<span class="px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 text-[10.5px] font-sans font-semibold">Slab 4 · No documents</span>`;
         }
 
         let daysBadge = "";
@@ -2951,7 +2951,7 @@ __SERVER_PRELOAD_JSON_SLOT__
       
       const catBadge = document.getElementById("dCatBadge");
       if (catBadge) {
-        catBadge.innerText = csp.cat.replace('CAT_', 'Category ');
+        catBadge.innerText = ({CAT_A:'Slab 1 · Compliant',CAT_B:'Slab 2 · Documents missing',CAT_C:'Slab 3 · Renewal due',CAT_D:'Slab 4 · No documents'}[csp.cat] || csp.cat);
         catBadge.className = `text-[10px] font-semibold px-2 py-0.5 rounded ${
           csp.cat === 'CAT_A' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40' :
           csp.cat === 'CAT_B' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' :

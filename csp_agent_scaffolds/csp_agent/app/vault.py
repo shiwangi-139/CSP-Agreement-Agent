@@ -339,7 +339,7 @@ def write_index(db: Session, today: Optional[date] = None) -> Path:
     from openpyxl.styles import Font, PatternFill
     from openpyxl.utils import get_column_letter
 
-    from .compliance import CATEGORY_NAMES, DOC_LABELS, REQUIRED_TYPES, canonical_type
+    from .compliance import DOC_LABELS, REQUIRED_TYPES, canonical_type, slab_label
     from .models import InternalUser
 
     today = today or date.today()
@@ -351,7 +351,7 @@ def write_index(db: Session, today: Optional[date] = None) -> Path:
     wb = Workbook()
     ws = wb.active
     ws.title = "Documents"
-    head = ["CSP code", "CSP name", "RM", "DC", "Category", "Folder"]
+    head = ["CSP code", "CSP name", "RM", "DC", "Slab", "Folder"]
     for t in REQUIRED_TYPES:
         label = DOC_LABELS[t][0].split(" /")[0]
         head += [f"{label}: state", f"{label}: issued", f"{label}: expires", f"{label}: days left", f"{label}: file"]
@@ -363,7 +363,7 @@ def write_index(db: Session, today: Optional[date] = None) -> Path:
     for csp in db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).order_by(CSP.current_code):
         docs = by_csp.get(csp.id, {})
         row = [csp.current_code, csp.name, staff.get(csp.rm_id, ""), staff.get(csp.dc_id, ""),
-               CATEGORY_NAMES.get(csp.category or 4, ""), folder_name(csp.current_code, csp.name)]
+               slab_label(csp.category or 4), folder_name(csp.current_code, csp.name)]
         for t in REQUIRED_TYPES:
             d = docs.get(t)
             if d is None:
