@@ -193,18 +193,26 @@ STRONG_AGREEMENT = [
 ]
 STRONG_PVR = [
     r"police\s+verification", r"character\s+certificate", r"character\s*(?:&|and)\s*antecedent",
+    r"character\s+verification",
     r"police\s+clearance", r"\bpvr\b", r"\bpcc\b", r"\bcctns\b",
     r"चरित्र\s*प्रमाण\s*पत्र", r"पुलिस\s*सत्यापन", r"चरित्र\s*सत्यापन",
 ]
-# A PVR / character certificate / PCC *application*, not the certificate:
-# e.g. UP Police "Service Request Receipt" (Request Type: CHARACTER
-# CERTIFICATE, Current Status, Date of Submission). It has none of the
-# wording of an issued certificate.
+# A PVR / character certificate / PCC *application or fee receipt*, not the
+# certificate: UP Police "Service Request Receipt" (Request Type, Current
+# Status, Date of Submission), UP Police "Character Certificate Challan
+# Receipt" (Challan No., Bank Transaction), Haryana Police "CHARACTER
+# VERIFICATION REQUEST" (the application form). None has the wording of an
+# issued certificate.
 PVR_APPLICATION = [
     r"service\s+request\s+receipt", r"request\s+type\s*:", r"date\s+of\s+submission",
     r"current\s+status\s*:", r"acknowledge?ment\s+(?:slip|receipt)", r"application\s+status",
     r"application\s+(?:has\s+been\s+)?(?:received|submitted|registered)", r"track\s+your\s+application",
     r"आवेदन\s*(?:की\s*)?(?:स्थिति|पावती)", r"पावती",
+    # fee payment: UP Police "Character Certificate Challan Receipt"
+    r"challan", r"bank\s+transaction", r"head\s+of\s+account", r"payment\s+receipt",
+    r"service\s+request(?:ed)?\s+(?:no|for)",
+    # the application form itself: Haryana "CHARACTER VERIFICATION REQUEST"
+    r"verification\s+request", r"purpose\s+(?:for|of)\s+applying", r"applicant\s+name", r"आवेदक\s*का\s*नाम",
 ]
 PVR_ISSUED = [
     r"(?:it\s+is|is\s+hereby|this\s+is\s+to)\s+certif", r"no\s+adverse", r"nothing\s+adverse",

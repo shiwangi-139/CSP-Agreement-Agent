@@ -133,3 +133,23 @@ def test_issued_character_certificate_is_still_a_pvr():
             "records. This certificate is valid only for one year. Crime and Criminal Tracking Network and Systems (CCTNS)")
     ok, doc_type, _, _ = classify_allowlist_gate(cert)
     assert ok and doc_type == "POLICE_VERIFICATION"
+
+
+def test_character_certificate_challan_receipt_is_not_a_pvr():
+    # UP Police fee receipt (1A850168): paid Rs.50, no certificate yet.
+    from app.ocr_service import classify_allowlist_gate
+    challan = ("Service Requested For Character Certificate Service Request No. 316422637242 Challan No. POL263839878 "
+               "Challan Reference No. CPAHFIEVV4 Bank Transaction Date & Time 07 September 2026 Bank Transaction Status "
+               "Success Challan Amount Rs.50 Head of Account 005500103030000-Character Character Certificate Challan "
+               "Receipt This is a computer generated document and does not require any signature. "
+               "Crime and Criminal Tracking Network and Systems (CCTNS) 07/09/2026")
+    ok, doc_type, _, _ = classify_allowlist_gate(challan)
+    assert not ok and doc_type == "PVR_APPLICATION_ONLY"
+
+
+def test_haryana_character_verification_request_form_is_not_a_pvr():
+    from app.ocr_service import classify_allowlist_gate
+    form = ("HARYANA POLICE GENERAL VERIFICATION SERVICES CHARACTER VERIFICATION REQUEST UID/Adhar No: 518446810115 "
+            "Appplicant Name (आवेदक का नाम): Chander pal Purpose for Applying: for SBI CSP Mode of Receiving: Wireless")
+    ok, doc_type, _, _ = classify_allowlist_gate(form)
+    assert not ok and doc_type == "PVR_APPLICATION_ONLY"
