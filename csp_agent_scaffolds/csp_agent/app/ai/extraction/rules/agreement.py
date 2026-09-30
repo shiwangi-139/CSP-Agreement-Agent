@@ -15,7 +15,7 @@ Validity, first match wins:
   a. "valid for a period of three (3) years" (or Hindi) anywhere -> 3 years.
   b. A range "valid from X to Y" / "from X till Y" / "for the period X to Y"
      / "X से Y तक" -> expiry = Y.
-  c. Validity not stated anywhere: default 2 years (AGREEMENT_DEFAULT_YEARS).
+  c. Validity not stated anywhere: default 1 year (AGREEMENT_DEFAULT_YEARS).
 """
 import re
 from datetime import date
@@ -133,5 +133,5 @@ def extract_agreement(text: str, today: Optional[date] = None) -> dict:
                 out["issue_date"], out["date_source"] = rng[0], "AGREEMENT_RANGE_START"
         else:
             out["validity_years"] = AGREEMENT_DEFAULT_YEARS
-            out["validity_source"] = "AGREEMENT_DEFAULT_2_YEAR"
+            out["validity_source"] = f"AGREEMENT_DEFAULT_{AGREEMENT_DEFAULT_YEARS}_YEAR"
     return out

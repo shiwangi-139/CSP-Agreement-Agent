@@ -278,3 +278,15 @@ def test_valid_pvr_is_current_before_pcc_and_pcc_before_expired_pvr(db_session):
     new_pvr = doc(date.today() - timedelta(days=30), date.today() + timedelta(days=335), "PVR_STATED_1_YEAR")
     assert recompute_current(db_session, a, "POLICE_VERIFICATION") is new_pvr     # valid PVR beats the PCC
     assert not old_pvr.is_current and not pcc.is_current
+
+
+def test_same_iibf_certificate_sent_again_as_a_new_photo_is_not_stored_twice(db_session):
+    # 1A850776: "WhatsApp Image ... .jpeg" and "iibf.jpeg", both the certificate dated 2019-07-25.
+    from app.document_service import store_extracted_document
+    a = _csp(db_session)
+    ex = {"readability": "READABLE", "document_type": "IIBF_CERTIFICATE", "start_date": "2019-07-25",
+          "expiry_date": "LIFETIME_NO_EXPIRY", "iibf_registration_number": None, "confidence": 0.95}
+    first = store_extracted_document(db_session, a, b"\xff\xd8photo-one", "WhatsApp Image.jpeg", "image/jpeg", ex, "GMAIL_INBOUND")
+    again = store_extracted_document(db_session, a, b"\xff\xd8photo-two", "iibf.jpeg", "image/jpeg", ex, "GMAIL_INBOUND")
+    assert first.decision == "READABLE" and again.decision == "DUPLICATE" and again.document.id == first.document.id
+    assert db_session.query(Document).filter_by(csp_id=a.id).count() == 1

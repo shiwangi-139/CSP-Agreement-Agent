@@ -79,6 +79,20 @@ def sync_agreement_row(db: Session, csp: CSP) -> None:
             d.agreement_id = agr.id
 
 
+def same_iibf(db: Session, csp: CSP, reg_no: Optional[str], issue: Optional[date]) -> Optional[Document]:
+    """The CSP's IIBF certificate already on record with this registration
+    number or issue date (a CSP has only one), if any."""
+    if not reg_no and issue is None:
+        return None
+    for d in db.query(Document).filter(Document.csp_id == csp.id, Document.document_type == "IIBF_CERTIFICATE",
+                                       Document.readability == "READABLE",
+                                       Document.status != DocumentStatus.REJECTED):
+        if (reg_no and d.iibf_reg_number and reg_no.strip() == d.iibf_reg_number.strip()) \
+                or (issue is not None and d.issue_date == issue):
+            return d
+    return None
+
+
 def store_extracted_document(
     db: Session, csp: CSP, data: bytes, filename: str, mime_type: Optional[str],
     extraction: dict, channel: str, source_message_id: Optional[str] = None,
@@ -95,6 +109,11 @@ def store_extracted_document(
 
     doc_type = canonical_type(extraction.get("document_type")) or "UNKNOWN"
     issue, expiry = _d(extraction.get("start_date")), _d(extraction.get("expiry_date"))
+    if doc_type == "IIBF_CERTIFICATE" and decision == "READABLE":
+        same = same_iibf(db, csp, extraction.get("iibf_registration_number"), issue)
+        if same is not None:
+            # A person has one IIBF certificate: a new photo or scan of it is not a new document.
+            return StoreOutcome("DUPLICATE", same, "Same IIBF certificate already on record (same registration no. or date).")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     path = vault.stage(data, sha, mime_type or "application/pdf")

@@ -69,11 +69,11 @@ def test_three_year_clause_garbled_by_ocr():
     assert extract_agreement(text, TODAY)["validity_years"] == 3
 
 
-def test_no_validity_stated_means_two_years():
+def test_no_validity_stated_means_one_year():
     text = "CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 16/02/2024 (“Effective Date”), Prince Kumar"
     r = extract_agreement(text, TODAY)
     assert r["issue_date"] == date(2024, 2, 16)
-    assert r["validity_years"] == 2 and r["validity_source"] == "AGREEMENT_DEFAULT_2_YEAR"
+    assert r["validity_years"] == 1 and r["validity_source"] == "AGREEMENT_DEFAULT_1_YEAR"
 
 
 def test_valid_from_to_range_sets_expiry():
@@ -182,10 +182,10 @@ def test_three_year_clause_when_ocr_moves_years_to_another_line():
 def test_three_months_is_not_three_years():
     r = extract_agreement("CUSTOMER SERVICE POINT AGREEMENT\nvalid for a period of three (3) months\n"
                           "On this day of, 01/04/2024 (\"Effective Date\")", TODAY)
-    assert r["validity_years"] == 2
+    assert r["validity_years"] == 1
 
 
-def test_blank_valid_upto_in_term_clause_means_default_two_years():
+def test_blank_valid_upto_in_term_clause_means_default_one_year():
     # CSP 1A850455: no 3-year line; term clause "valid upto ____ or until terminated" left blank.
     from app.ai.extraction.deterministic_extractor import calculate_document_expiry
     text = ("Certificate Issued Date : 08-Apr-2026 01:18 PM\nCUSTOMER SERVICE POINT AGREEMENT\n"
@@ -193,6 +193,6 @@ def test_blank_valid_upto_in_term_clause_means_default_two_years():
             "Term: This Agreement shall commence on the Effective Date and shall be valid upto\n"
             "or until terminated in accordance with Clause I(4)B or Clause III(1).")
     r = extract_agreement(text, TODAY)
-    assert r["issue_date"] == date(2026, 4, 8) and r["validity_years"] == 2 and r["explicit_expiry"] is None
+    assert r["issue_date"] == date(2026, 4, 8) and r["validity_years"] == 1 and r["explicit_expiry"] is None
     exp = calculate_document_expiry("AGREEMENT", r["issue_date"], has_explicit_3year_clause=False, today=TODAY)
-    assert exp["calculated_expiry"] == date(2028, 4, 8)
+    assert exp["calculated_expiry"] == date(2027, 4, 8)

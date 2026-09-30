@@ -6,7 +6,7 @@ Enforces strict regulatory and organizational business rules:
    - If explicit 3-year validity is stated OR explicit expiry date printed:
      expiry = issue_date + 3 years (or printed expiry).
    - If agreement does NOT explicitly state 3-year validity:
-     expiry = issue_date + AGREEMENT_DEFAULT_YEARS (2) years.
+     expiry = issue_date + AGREEMENT_DEFAULT_YEARS (1) year.
 2. Police Verification / Character Certificate:
    - Exactly 1-year validity from issue date (or printed expiry if specified).
 3. IIBF Certificate:
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # An agreement that states no validity (no 3-year line, no "valid from X to Y")
 # is valid for this many years from its issue date.
-AGREEMENT_DEFAULT_YEARS = 2
+AGREEMENT_DEFAULT_YEARS = 1   # validity not stated anywhere in the agreement (was 2 until 2026-09-30)
 
 
 def add_years(start_dt: date, years: int) -> date:
@@ -46,8 +46,8 @@ class ExpiryRule:
     AGREEMENT_RANGE_FROM_TO = "AGREEMENT_RANGE_FROM_TO"
     PVR_STATED_6_MONTHS = "PVR_STATED_6_MONTHS"
     PVR_STATED_1_YEAR = "PVR_STATED_1_YEAR"
-    AGREEMENT_DEFAULT_1_YEAR = "AGREEMENT_DEFAULT_1_YEAR"   # old rule, kept so older records still display
-    AGREEMENT_DEFAULT_2_YEAR = "AGREEMENT_DEFAULT_2_YEAR"
+    AGREEMENT_DEFAULT_1_YEAR = "AGREEMENT_DEFAULT_1_YEAR"   # current default (no validity stated anywhere)
+    AGREEMENT_DEFAULT_2_YEAR = "AGREEMENT_DEFAULT_2_YEAR"   # previous default, kept so older records still display
     AGREEMENT_PRINTED_EXPIRY = "AGREEMENT_PRINTED_EXPIRY"
     PVR_DEFAULT_1_YEAR = "PVR_DEFAULT_1_YEAR"
     PVR_PRINTED_EXPIRY = "PVR_PRINTED_EXPIRY"
@@ -120,8 +120,8 @@ def calculate_document_expiry(
                 "status": "VALID" if is_valid else "EXPIRED",
                 "calculated_expiry": calc_exp,
                 "explicit_expiry": None,
-                "validity_rule_used": ExpiryRule.AGREEMENT_DEFAULT_2_YEAR,
-                "reason": f"No validity stated in the agreement. Applied the default {AGREEMENT_DEFAULT_YEARS}-year rule: issue ({issue_date.isoformat()}) + {AGREEMENT_DEFAULT_YEARS} years."
+                "validity_rule_used": f"AGREEMENT_DEFAULT_{AGREEMENT_DEFAULT_YEARS}_YEAR",
+                "reason": f"No validity stated in the agreement. Applied the default {AGREEMENT_DEFAULT_YEARS}-year rule: issue ({issue_date.isoformat()}) + {AGREEMENT_DEFAULT_YEARS} year(s)."
             }
 
     # 2. POLICE VERIFICATION / CHARACTER CERTIFICATE

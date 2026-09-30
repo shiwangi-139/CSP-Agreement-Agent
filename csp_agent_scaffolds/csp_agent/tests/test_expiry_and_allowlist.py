@@ -24,8 +24,8 @@ def test_agreement_expiry_explicit_three_year():
     assert result["calculated_expiry"] == date(2028, 4, 1)
 
 
-def test_agreement_expiry_default_two_years():
-    """Agreement that states no validity defaults to 2 years (business rule)."""
+def test_agreement_expiry_default_one_year():
+    """Agreement that states no validity defaults to 1 year (business rule since 2026-09-30)."""
     issue = date(2025, 4, 1)
     ocr_text = "Standard Customer Service Point Agreement entered into between Eko and CSP."
     has_3yr = check_explicit_3year_clause(ocr_text)
@@ -39,8 +39,8 @@ def test_agreement_expiry_default_two_years():
     )
     
     assert result["status"] == "VALID"
-    assert result["validity_rule_used"] == ExpiryRule.AGREEMENT_DEFAULT_2_YEAR
-    assert result["calculated_expiry"] == date(2027, 4, 1)
+    assert result["validity_rule_used"] == ExpiryRule.AGREEMENT_DEFAULT_1_YEAR
+    assert result["calculated_expiry"] == date(2026, 4, 1)
 
 
 def test_pvr_character_certificate_expiry_one_year():
