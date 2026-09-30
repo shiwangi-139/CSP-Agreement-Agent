@@ -150,7 +150,17 @@ def recompute_current(db: Session, csp: CSP, doc_type: str) -> Optional[Document
     # A copy that may belong to another CSP counts only once a reviewer accepts it.
     usable = [d for d in same if d.status in USABLE and d.readability != "UNREADABLE"
               and not (d.status == DocumentStatus.NEEDS_REVIEW and (d.extracted_fields or {}).get("owner_check"))]
-    best = max(usable, key=lambda d: (d.issue_date or date.min, d.uploaded_at or datetime.min, d.id or 0),
+    today = date.today()
+
+    def rank(d: Document) -> int:
+        # PVR section: a valid PVR / character certificate first, then a
+        # lifetime Police Clearance Certificate, then an expired PVR.
+        if d.validity_rule_used == "PVR_PCC_LIFETIME":
+            return 1
+        return 2 if d.expiry_date is None or d.expiry_date >= today else 0
+
+    best = max(usable, key=lambda d: (rank(d) if t == "POLICE_VERIFICATION" else 0,
+                                      d.issue_date or date.min, d.uploaded_at or datetime.min, d.id or 0),
                default=None)
     for d in same:
         d.is_current = d is best

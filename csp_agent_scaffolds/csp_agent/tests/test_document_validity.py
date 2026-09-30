@@ -49,3 +49,27 @@ def test_pvr_expiry_date_computation():
     exp = parser.calculate_expiry(issue)
     assert exp == date(2027, 1, 10)
 
+
+
+def test_police_clearance_certificate_without_validity_is_lifetime():
+    from datetime import date
+    from app.ai.extraction.rules.pvr import extract_pvr
+    pcc = ("POLICE CLEARANCE CERTIFICATE  PCC No. 4521/2023  Date: 14/03/2023  This is to certify that "
+           "Sh. Ram Pal s/o Sh. Mohan Lal has no criminal record in this police station.")
+    r = extract_pvr(pcc, date(2026, 9, 29))
+    assert r["issue_date"] == date(2023, 3, 14) and r["validity_source"] == "PVR_PCC_LIFETIME"
+
+
+def test_pvr_with_stated_validity_keeps_it_even_if_it_says_pcc():
+    from datetime import date
+    from app.ai.extraction.rules.pvr import extract_pvr
+    text = ("Police Clearance Certificate  Date: 14/03/2025  no adverse entry ... "
+            "This certificate is valid for six months only.")
+    assert extract_pvr(text, date(2026, 9, 29))["validity_months"] == 6
+
+
+def test_pcc_expiry_is_lifetime():
+    from datetime import date
+    from app.expiry_engine import calculate_document_expiry
+    r = calculate_document_expiry("POLICE_VERIFICATION", date(2023, 3, 14), validity_rule="PVR_PCC_LIFETIME")
+    assert r["status"] == "VALID" and r["calculated_expiry"] is None

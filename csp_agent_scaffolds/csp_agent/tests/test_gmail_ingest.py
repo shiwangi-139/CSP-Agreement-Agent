@@ -238,3 +238,43 @@ def test_reading_an_email_again_adds_only_files_never_stored(db_session, fake_gm
     assert db_session.query(Document).filter_by(csp_id=a.id).count() == 1     # only the new file
     decisions = db_session.query(InboundMessage).filter_by(external_message_id=again).one().attachment_decisions
     assert [d["decision"] for d in decisions] == ["DUPLICATE", "READABLE"]
+
+
+def _logo_png(w=72, h=41) -> bytes:
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (0, 90, 60)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_email_signature_logos_are_not_stored(db_session, fake_gmail):
+    # image002.jpg / image003.jpg: the Deloitte / Great Place to Work badges.
+    mailbox, _ = fake_gmail
+    a = _csp(db_session)
+    mid = "s" + uuid.uuid4().hex[:8]
+    _mail(mailbox, mid, a.current_code, a.name,
+          {"image002.png": _logo_png(41, 60), "image003.png": _logo_png(), "pvr.pdf": _pvr_pdf(date.today(), a.name)})
+    gmail_ingest.process_message(db_session, None, mid)
+    assert db_session.query(Document).filter_by(csp_id=a.id).count() == 1
+    decisions = db_session.query(InboundMessage).filter_by(external_message_id=mid).one().attachment_decisions
+    assert [d["decision"] for d in decisions] == ["SKIPPED_SIGNATURE_IMAGE", "SKIPPED_SIGNATURE_IMAGE", "READABLE"]
+
+
+def test_valid_pvr_is_current_before_pcc_and_pcc_before_expired_pvr(db_session):
+    from app.document_service import recompute_current
+    from app.models import DocumentStatus
+    a = _csp(db_session)
+    def doc(issue, expiry, rule):
+        d = Document(csp_id=a.id, document_type="POLICE_VERIFICATION", sha256=uuid.uuid4().hex, readability="READABLE",
+                     status=DocumentStatus.VALID if expiry is None or expiry >= date.today() else DocumentStatus.EXPIRED,
+                     issue_date=issue, expiry_date=expiry, validity_rule_used=rule)
+        db_session.add(d)
+        db_session.flush()
+        return d
+    old_pvr = doc(date.today() - timedelta(days=500), date.today() - timedelta(days=135), "PVR_DEFAULT_1_YEAR")
+    pcc = doc(date.today() - timedelta(days=900), None, "PVR_PCC_LIFETIME")
+    assert recompute_current(db_session, a, "POLICE_VERIFICATION") is pcc          # PCC beats an expired PVR
+    new_pvr = doc(date.today() - timedelta(days=30), date.today() + timedelta(days=335), "PVR_STATED_1_YEAR")
+    assert recompute_current(db_session, a, "POLICE_VERIFICATION") is new_pvr     # valid PVR beats the PCC
+    assert not old_pvr.is_current and not pcc.is_current

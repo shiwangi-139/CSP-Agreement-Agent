@@ -110,7 +110,8 @@ def _dates_part(doc: Document, state: str) -> str:
     if doc.issue_date is None:
         return "undated"
     issue = doc.issue_date.isoformat()
-    if kind_of(doc.document_type) == "IIBF" and doc.expiry_date is None:
+    if doc.expiry_date is None and (kind_of(doc.document_type) == "IIBF"
+                                    or doc.validity_rule_used == "PVR_PCC_LIFETIME"):
         return f"{issue}_lifetime"
     if doc.expiry_date is not None:
         return f"{issue}_to_{doc.expiry_date.isoformat()}"

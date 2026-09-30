@@ -51,6 +51,7 @@ class ExpiryRule:
     AGREEMENT_PRINTED_EXPIRY = "AGREEMENT_PRINTED_EXPIRY"
     PVR_DEFAULT_1_YEAR = "PVR_DEFAULT_1_YEAR"
     PVR_PRINTED_EXPIRY = "PVR_PRINTED_EXPIRY"
+    PVR_PCC_LIFETIME = "PVR_PCC_LIFETIME"       # Police Clearance Certificate, no validity stated
     IIBF_LIFETIME_NO_EXPIRY = "IIBF_LIFETIME_NO_EXPIRY"
     MISSING_DATES = "MISSING_DATES"
     UNKNOWN_DOCUMENT = "UNKNOWN_DOCUMENT"
@@ -142,6 +143,15 @@ def calculate_document_expiry(
                 "explicit_expiry": None,
                 "validity_rule_used": ExpiryRule.MISSING_DATES,
                 "reason": "Police verification issue date is missing or unreadable; manual review required."
+            }
+
+        if validity_rule == ExpiryRule.PVR_PCC_LIFETIME:
+            return {
+                "status": "VALID",
+                "calculated_expiry": None,
+                "explicit_expiry": None,
+                "validity_rule_used": ExpiryRule.PVR_PCC_LIFETIME,
+                "reason": "Police Clearance Certificate with no validity stated: accepted for life."
             }
 
         months = validity_months or 12

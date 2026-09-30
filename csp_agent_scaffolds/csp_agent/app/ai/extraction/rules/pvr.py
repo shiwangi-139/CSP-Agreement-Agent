@@ -29,6 +29,8 @@ VALID_UPTO = re.compile(r"(?:valid\s*(?:up\s*to|upto|till|until)|वैध\s*(?:
 SIX_MONTHS = re.compile(r"(?:\b(?:six|6)\s*\(?\s*6?\s*\)?\s*months?\b|(?:छह|छः|छ:|6)\s*(?:माह|महीने|महीना))", re.I)
 ONE_YEAR = re.compile(r"(?:\b(?:one|1)\s*(?:\(\s*1\s*\)\s*)?years?\b|(?:एक|1)\s*(?:वर्ष|साल))", re.I)
 VALIDITY_CONTEXT = re.compile(r"valid|validity|वैध|मान्य", re.I)
+# Police Clearance Certificate: it states no validity and is accepted for life.
+PCC = re.compile(r"police\s*clearance\s*certificate|\bpcc\b|पुलिस\s*क्लीयरेंस|पुलिस\s*क्लियरेंस", re.I)
 
 
 def _validity_months(text: str) -> tuple[Optional[int], Optional[str]]:
@@ -78,4 +80,6 @@ def extract_pvr(text: str, today: Optional[date] = None) -> dict:
         months, source = _validity_months(text)
         if months:
             out["validity_months"], out["validity_source"] = months, source
+        elif PCC.search(text):
+            out["validity_months"], out["validity_source"] = None, "PVR_PCC_LIFETIME"
     return out

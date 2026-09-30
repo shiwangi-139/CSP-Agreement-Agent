@@ -276,7 +276,7 @@ def extract_document_fields_deterministic(
     rule_for_engine = None
     if validity_source in ("AGREEMENT_RANGE_FROM_TO",):
         rule_for_engine = ExpiryRule.AGREEMENT_RANGE_FROM_TO
-    elif validity_source and validity_source.startswith(("PVR_STATED", "MODEL_VISION_6", "MODEL_VISION_12")):
+    elif validity_source and validity_source.startswith(("PVR_STATED", "PVR_PCC", "MODEL_VISION_6", "MODEL_VISION_12")):
         rule_for_engine = validity_source
     exp = calculate_document_expiry(
         doc_type=doc_type, issue_date=issue, explicit_expiry_date=r.get("explicit_expiry"),
@@ -299,7 +299,8 @@ def extract_document_fields_deterministic(
         document_type=doc_type,
         csp_code=csp_code,
         start_date=issue.isoformat(),
-        expiry_date=expiry.isoformat() if expiry else ("LIFETIME_NO_EXPIRY" if doc_type == "IIBF_CERTIFICATE" else None),
+        expiry_date=expiry.isoformat() if expiry else (
+            "LIFETIME_NO_EXPIRY" if doc_type == "IIBF_CERTIFICATE" or validity_source == "PVR_PCC_LIFETIME" else None),
         explicit_expiry=r.get("explicit_expiry").isoformat() if r.get("explicit_expiry") else None,
         has_explicit_3year_clause=three_year,
         validity_months=months if doc_type == "POLICE_VERIFICATION" else (36 if three_year else (12 * AGREEMENT_DEFAULT_YEARS if doc_type == "AGREEMENT" and not r.get("explicit_expiry") else None)),

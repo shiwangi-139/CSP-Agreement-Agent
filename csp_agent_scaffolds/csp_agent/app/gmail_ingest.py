@@ -120,6 +120,26 @@ def _find_csp(db: Session, code: Optional[str]) -> Optional[CSP]:
     return db.query(CSP).filter((CSP.lookup_code == code) | (CSP.current_code == code)).first()
 
 
+MIN_DOC_IMAGE_SIDE = 300      # px; e-mail signature logos are ~40-150 px
+MIN_DOC_IMAGE_BYTES = 10_000
+
+
+def is_signature_image(data: bytes) -> bool:
+    """An image attachment too small to be a photo or scan of a document:
+    a logo from someone's e-mail signature (image001.jpg, Outlook-xxxx.png)."""
+    if detect_mime(data) not in ("image/jpeg", "image/png"):
+        return False
+    if len(data) < MIN_DOC_IMAGE_BYTES:
+        return True
+    try:
+        from PIL import Image
+        import io
+        w, h = Image.open(io.BytesIO(data)).size
+    except Exception:
+        return False
+    return min(w, h) < MIN_DOC_IMAGE_SIDE
+
+
 def _letters(s: str) -> str:
     return " ".join(re.sub(r"[^A-Z]+", " ", (s or "").upper()).split())
 
@@ -312,7 +332,7 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
 
     if csp is None:
         # Last resort: the CSP code printed inside an attachment.
-        read_all(attachments)
+        read_all([a for a in attachments if not is_signature_image(downloaded.get(a["attachment_id"]) or b"%PDF")])
         for att in attachments:
             ex = extracted.get(att["attachment_id"])
             csp = _find_csp(db, ex.get("csp_code")) if ex else None
@@ -331,6 +351,9 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
         return inbound.status
 
     inbound.csp_id = csp.id
+    # E-mail signature logos are not documents: never read or stored.
+    logos = {a["attachment_id"] for a in attachments
+             if downloaded.get(a["attachment_id"]) and is_signature_image(downloaded[a["attachment_id"]])}
     # The same file already on record for this CSP needs no OCR at all.
     duplicate_ids = set()
     known_docs: dict[str, Document] = {}
@@ -343,7 +366,7 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
         if known is not None:
             duplicate_ids.add(att["attachment_id"])
             known_docs[att["attachment_id"]] = known
-    read_all([a for a in attachments if a["attachment_id"] not in duplicate_ids])
+    read_all([a for a in attachments if a["attachment_id"] not in duplicate_ids | logos])
     everyone = db.query(CSP).all()
     learned = learned_names(db)
     touched = {csp.id: csp}
@@ -353,6 +376,11 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
             data = fetch(att)
             if not data:
                 entry.update(decision="NOT_ALLOWED", reason="Attachment too large or could not be downloaded.")
+                decisions.append(entry)
+                continue
+            if att["attachment_id"] in logos:
+                entry.update(decision="SKIPPED_SIGNATURE_IMAGE",
+                             reason="Small image (e-mail signature logo), not a document.")
                 decisions.append(entry)
                 continue
             if att["attachment_id"] in duplicate_ids:
