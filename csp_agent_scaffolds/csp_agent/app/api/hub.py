@@ -250,8 +250,9 @@ MESSAGE_KINDS = {
 
 
 @router.get("/messages")
-def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = None, slab: Optional[int] = None,
+def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = None, slab: str = "",
                   kind: str = "", page: int = 1, size: int = 50, db: Session = Depends(get_db)):
+    slab = int(slab) if slab.strip().isdigit() else None   # "" (All slabs) or a slab number
     base = db.query(OutboundMessage)
     if channel:
         base = base.filter(OutboundMessage.channel == channel.upper())

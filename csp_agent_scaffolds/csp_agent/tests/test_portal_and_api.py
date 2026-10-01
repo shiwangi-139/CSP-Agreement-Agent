@@ -301,6 +301,14 @@ def test_hub_messages_split_by_slab_and_type(client, monkeypatch):
     base = "/api/hub/messages?channel=EMAIL&status=QUEUED_FOR_REVIEW&size=200"
     onboard = c.get(base + "&kind=onboard").json()["rows"]
     assert a_code in [m["csp_code"] for m in onboard] and b_code not in [m["csp_code"] for m in onboard]
+    assert c.get(base + "&slab=&kind=").status_code == 200      # "All slabs" / "All types"
     slab1 = c.get(base + "&slab=1").json()
     assert {m["template"] for m in slab1["rows"] if m["csp_code"] == b_code} == {"RENEWAL_NOTICE", "ESCALATION_RM"}
     assert slab1["by_kind"]["onboard"] >= 1 and slab1["by_slab"]["4"] >= 1
+
+
+def test_upload_page_posts_relative_so_it_works_behind_a_public_sub_path(client):
+    c, Session = client
+    _, _, token = _csp(Session)
+    page = c.get(f"/upload?token={token}").text
+    assert 'fetch("api/portal/upload"' in page and 'fetch("/api/portal/upload"' not in page

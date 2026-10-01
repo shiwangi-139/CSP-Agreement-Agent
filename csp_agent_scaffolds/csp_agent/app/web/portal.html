@@ -213,7 +213,9 @@
     $("send").disabled = true;
     $("send").textContent = "जाँच हो रही है… / Checking… (1–2 min)";
     try {
-      const r = await fetch("/api/portal/upload", { method: "POST", body: fd });
+      // Relative on purpose: the page is served at /upload locally and at
+      // /<public-path>/upload behind Nginx; both post next to the page.
+      const r = await fetch("api/portal/upload", { method: "POST", body: fd });
       const j = await r.json();
       if (!r.ok) { const m = j.detail || {}; $("formerr").textContent = (m.hi || "") + " / " + (m.en || "Upload failed."); return; }
       let allOk = true;
