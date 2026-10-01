@@ -280,3 +280,27 @@ def test_photo_check_names_the_problem():
     assert photo_problem(_photo(1000, 1400, blur=41)) == "blurry"
     assert photo_problem(_photo(1000, 1400)) is None                 # a usable photo goes on to OCR
     assert photo_problem(b"%PDF-1.4 ...") is None                    # PDFs are never pre-rejected
+
+
+def test_hub_messages_split_by_slab_and_type(client, monkeypatch):
+    from app.models import OutboundMessage, OutboundStatus
+    c, Session = client
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "")
+    s = Session()
+    tag = uuid.uuid4().hex[:6]
+    a = CSP(name="Hub A", current_code=f"8H{int(tag, 16) % 1000000:06d}", category=4, is_active_in_calling_sheet=True)
+    b = CSP(name="Hub B", current_code=f"8J{int(tag, 16) % 1000000:06d}", category=1, is_active_in_calling_sheet=True)
+    s.add_all([a, b])
+    s.flush()
+    for csp, tpl in ((a, "ONBOARD_ALL"), (b, "RENEWAL_NOTICE"), (b, "ESCALATION_RM")):
+        s.add(OutboundMessage(csp_id=csp.id, template_name=tpl, channel="EMAIL", destination="x@y.z",
+                              status=OutboundStatus.QUEUED_FOR_REVIEW, payload_json={"body": "hi"}))
+    s.commit()
+    a_code, b_code = a.current_code, b.current_code
+    s.close()
+    base = "/api/hub/messages?channel=EMAIL&status=QUEUED_FOR_REVIEW&size=200"
+    onboard = c.get(base + "&kind=onboard").json()["rows"]
+    assert a_code in [m["csp_code"] for m in onboard] and b_code not in [m["csp_code"] for m in onboard]
+    slab1 = c.get(base + "&slab=1").json()
+    assert {m["template"] for m in slab1["rows"] if m["csp_code"] == b_code} == {"RENEWAL_NOTICE", "ESCALATION_RM"}
+    assert slab1["by_kind"]["onboard"] >= 1 and slab1["by_slab"]["4"] >= 1

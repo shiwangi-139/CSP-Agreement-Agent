@@ -239,16 +239,36 @@ def document_file(doc_id: int, download: bool = False, db: Session = Depends(get
 
 
 # --------------------------------------------------------- communication hub
+# Communication Hub groups: which templates make up each message type.
+MESSAGE_KINDS = {
+    "renewal": ("RENEWAL_NOTICE", "RENEWAL_FOLLOWUP", "RENEWAL_FINAL"),
+    "expired": ("UPLOAD_EXPIRED",),
+    "missing": ("UPLOAD_MISSING", "UNREADABLE_REUPLOAD"),
+    "onboard": ("ONBOARD_ALL",),
+    "escalation": ("ESCALATION_RM", "ESCALATION_DC"),
+}
+
+
 @router.get("/messages")
-def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = None, page: int = 1, size: int = 50,
-                  db: Session = Depends(get_db)):
-    q = db.query(OutboundMessage)
+def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = None, slab: Optional[int] = None,
+                  kind: str = "", page: int = 1, size: int = 50, db: Session = Depends(get_db)):
+    base = db.query(OutboundMessage)
     if channel:
-        q = q.filter(OutboundMessage.channel == channel.upper())
+        base = base.filter(OutboundMessage.channel == channel.upper())
     if status:
-        q = q.filter(OutboundMessage.status == OutboundStatus(status))
+        base = base.filter(OutboundMessage.status == OutboundStatus(status))
     if csp_id:
-        q = q.filter(OutboundMessage.csp_id == csp_id)
+        base = base.filter(OutboundMessage.csp_id == csp_id)
+    # Counts per slab and per message type, for the tabs (within channel + status).
+    by_slab = dict(base.join(CSP, CSP.id == OutboundMessage.csp_id)
+                   .with_entities(CSP.category, func.count()).group_by(CSP.category).all())
+    by_template = dict(base.with_entities(OutboundMessage.template_name, func.count())
+                       .group_by(OutboundMessage.template_name).all())
+    q = base
+    if slab:
+        q = q.join(CSP, CSP.id == OutboundMessage.csp_id).filter(CSP.category == slab)
+    if kind in MESSAGE_KINDS:
+        q = q.filter(OutboundMessage.template_name.in_(MESSAGE_KINDS[kind]))
     total = q.count()
     rows = q.order_by(OutboundMessage.created_at.desc()).offset((page - 1) * size).limit(min(size, 200)).all()
     csps = {c.id: c for c in db.query(CSP).filter(CSP.id.in_({m.csp_id for m in rows} or {-1}))}
@@ -256,6 +276,8 @@ def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = N
                   .filter(OutboundMessage.channel == channel.upper() if channel else True)
                   .group_by(OutboundMessage.status).all())
     return {"total": total, "counts": {k.value: v for k, v in counts.items()},
+            "by_slab": {str(k): by_slab.get(k, 0) for k in (1, 2, 3, 4)},
+            "by_kind": {k: sum(by_template.get(t, 0) for t in ts) for k, ts in MESSAGE_KINDS.items()},
             "rows": [_msg_json(m, csps.get(m.csp_id)) for m in rows]}
 
 

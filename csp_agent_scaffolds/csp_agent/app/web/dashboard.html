@@ -180,7 +180,11 @@
     },
 
     async comms() {
-      const d = await api(`/api/hub/messages?channel=${state.channel}&status=${state.msgStatus}&size=100`);
+      const d = await api(`/api/hub/messages?channel=${state.channel}&status=${state.msgStatus}&slab=${state.msgSlab || ""}&kind=${state.msgKind || ""}&size=100`);
+      const kinds = [["", "All types"], ["renewal", "Renewal reminders"], ["expired", "Renew expired"], ["missing", "Upload missing"],
+                     ["onboard", "Onboarding (no documents)"], ["escalation", "RM / DC escalations"]];
+      const allKinds = Object.values(d.by_kind).reduce((a, b) => a + b, 0);
+      const allSlabs = Object.values(d.by_slab).reduce((a, b) => a + b, 0);
       const c = d.counts;
       const statuses = [["QUEUED_FOR_REVIEW", "Drafts to review"], ["READY_NOT_SENT", "Approved · not sent (stub)"], ["APPROVED", "Approved · sending"],
                         ["SENT", "Sent"], ["BLOCKED", "Blocked"], ["FAILED", "Failed"], ["REJECTED", "Rejected"]];
@@ -189,6 +193,8 @@
       <p class="small muted">${state.channel === "WHATSAPP" ? "The WhatsApp agent is send-only: it can't read replies, so a CSP's \"response\" is a new valid upload." : "Emails are sent from the connected Gmail account when approved."}
         Recipients are fixed to the calling sheet's contacts for that CSP, RM or DC; edits can change the text only.</p>
       <div class="tabs">${statuses.map(([k, l]) => `<button data-mstatus="${k}" class="${state.msgStatus === k ? "active" : ""}">${l} (${c[k] || 0})</button>`).join("")}</div>
+      <div class="tabs"><button data-mslab="" class="${!state.msgSlab ? "active" : ""}">All slabs (${allSlabs})</button>${[1,2,3,4].map((k) => `<button data-mslab="${k}" class="${+state.msgSlab === k ? "active" : ""}">${slab(k)} (${d.by_slab[k] || 0})</button>`).join("")}</div>
+      <div class="tabs">${kinds.map(([k, l]) => `<button data-mkind="${k}" class="${(state.msgKind || "") === k ? "active" : ""}">${l} (${k ? d.by_kind[k] || 0 : allKinds})</button>`).join("")}</div>
       ${state.msgStatus === "QUEUED_FOR_REVIEW" && d.rows.length ? `<div class="toolbar"><button class="btn primary" id="approveall">Approve all ${d.rows.length} shown</button></div>` : ""}
       <div>${d.rows.map(msgCard).join("") || `<div class="card empty">Nothing here.</div>`}</div>`;
     },
@@ -361,7 +367,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-doctype],[data-approve],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-doctype],[data-approve],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -372,6 +378,8 @@
       if (ds.page) { state.page = +ds.page; return render(); }
       if (ds.channel) { state.channel = ds.channel; return render(); }
       if (ds.mstatus) { state.msgStatus = ds.mstatus; return render(); }
+      if (ds.mslab !== undefined) { state.msgSlab = ds.mslab; return render(); }
+      if (ds.mkind !== undefined) { state.msgKind = ds.mkind; return render(); }
       if (ds.doctype !== undefined) { state.docType = ds.doctype; return render(); }
       if (ds.file) { e.preventDefault(); return openFile(ds.file); }
       if (ds.xlsx) {
