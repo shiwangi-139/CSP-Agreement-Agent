@@ -35,8 +35,47 @@ SLAB_NAMES = {1: "All documents on file", 2: "1 document missing", 3: "2 documen
 
 
 def slab_label(category: int) -> str:
-    """e.g. "Slab 3 · Renewal due"."""
+    """e.g. "Slab 3 · 2 documents missing"."""
     return f"Slab {category} · {SLAB_NAMES.get(category, '')}"
+
+
+# Sub-groups inside each slab: what exactly is on file, so each group needs
+# one clear action. Numbered 1.1, 1.2 ... (letters would look like CSP codes
+# 1A85... and the old "Cat A"). Expired / unreachable / no RM are TAGS on top.
+SUB_SLABS = {
+    "1.1": "Fully compliant",
+    "1.2": "Renewal coming up (60 days)",
+    "1.3": "Renewal overdue (expired)",
+    "2.1": "Agreement missing",
+    "2.2": "PVR missing",
+    "2.3": "IIBF missing",
+    "3.1": "Only Agreement on file",
+    "3.2": "Only PVR on file",
+    "3.3": "Only IIBF on file",
+    "4.1": "Never sent anything",
+    "4.2": "Sent, but unreadable",
+}
+RENEWAL_SOON_DAYS = 60
+_ORDER = {"AGREEMENT": "1", "POLICE_VERIFICATION": "2", "IIBF_CERTIFICATE": "3"}
+
+
+def sub_slab(state: "ComplianceState") -> str:
+    present = [t for t, s in state.docs.items() if s.status in ("VALID", "EXPIRED")]
+    if state.category == 1:
+        if state.expired:
+            return "1.3"
+        soon = any(s.status == "VALID" and s.days_left is not None and s.days_left <= RENEWAL_SOON_DAYS
+                   for s in state.docs.values())
+        return "1.2" if soon else "1.1"
+    if state.category == 2:
+        return "2." + _ORDER[state.missing[0]]
+    if state.category == 3:
+        return "3." + _ORDER[present[0]]
+    return "4.2" if any(s.status == "UNREADABLE" for s in state.docs.values()) else "4.1"
+
+
+def sub_slab_label(code: Optional[str]) -> str:
+    return f"{code} · {SUB_SLABS[code]}" if code in SUB_SLABS else ""
 DOC_LABELS = {
     "AGREEMENT": ("CSP Agreement", "सीएसपी एग्रीमेंट"),
     "POLICE_VERIFICATION": ("Police Verification / Character Certificate", "पुलिस वेरिफिकेशन / चरित्र प्रमाण पत्र"),
@@ -139,6 +178,9 @@ def evaluate(db: Session, csp: CSP, today: Optional[date] = None) -> ComplianceS
 
 def refresh_category(db: Session, csp: CSP, today: Optional[date] = None) -> ComplianceState:
     state = evaluate(db, csp, today)
+    sub = sub_slab(state)
+    if csp.sub_slab != sub:
+        csp.sub_slab = sub
     if csp.category != state.category or csp.category_reason != state.reason:
         csp.category = state.category
         csp.category_reason = state.reason[:500]

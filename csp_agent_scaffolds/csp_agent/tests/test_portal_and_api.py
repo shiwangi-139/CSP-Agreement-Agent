@@ -257,6 +257,10 @@ def test_slab_lists_can_show_only_csps_with_an_expired_document(client, monkeypa
     assert summary["categories_with_expired"]["3"] >= 1
     rows = c.get(f"/api/hub/csps?category=3&expired=1&q={code}").json()["rows"]
     assert [r["code"] for r in rows] == [code] and rows[0]["docs"]["AGREEMENT"]["status"] == "EXPIRED"
+    assert summary["sub_slabs"]["3.1"]["count"] >= 1 and summary["sub_slabs"]["3.1"]["label"] == "Only Agreement on file"
+    rows = c.get(f"/api/hub/csps?category=3&sub=3.1&q={code}").json()["rows"]
+    assert [r["sub_slab"] for r in rows] == ["3.1"]
+    assert c.get(f"/api/hub/csps?category=3&sub=3.2&q={code}").json()["rows"] == []
 
 
 def _photo(w, h, value=200, text=True, blur=0):

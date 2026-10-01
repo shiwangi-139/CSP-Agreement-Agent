@@ -24,7 +24,7 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 
 from . import vault
-from .compliance import DOC_LABELS, REQUIRED_TYPES, SLAB_NAMES, evaluate, slab_label
+from .compliance import DOC_LABELS, REQUIRED_TYPES, SLAB_NAMES, evaluate, slab_label, sub_slab, sub_slab_label
 from .models import CSP, ContactChangeRequest, InternalUser, OutboundMessage, OutboundStatus
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,7 @@ def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
     csps = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).order_by(CSP.current_code).all()
 
     head = ["CSP code", "CSP name", "State", "Branch", "Phone", "Email", "RM", "DC", "Slab", "Slab name",
-            "Reason"]
+            "Sub-group", "Reason"]
     for t in REQUIRED_TYPES:
         head += [f"{SHORT[t]} status", f"{SHORT[t]} issued", f"{SHORT[t]} expires", f"{SHORT[t]} days left"]
     head += ["Next action", "Folder"]
@@ -100,7 +100,7 @@ def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
         st = evaluate(db, c, today)
         rm, dc = staff.get(c.rm_id), staff.get(c.dc_id)
         row = [c.current_code, c.name, c.state, c.branch, c.phone, c.email, rm.name if rm else None,
-               dc.name if dc else None, st.category, SLAB_NAMES[st.category], st.reason]
+               dc.name if dc else None, st.category, SLAB_NAMES[st.category], sub_slab_label(sub_slab(st)), st.reason]
         fill = {}
         for t in REQUIRED_TYPES:
             s = st.docs[t]

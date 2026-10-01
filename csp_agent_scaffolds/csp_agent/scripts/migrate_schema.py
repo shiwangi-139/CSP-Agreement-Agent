@@ -22,6 +22,8 @@ MIGRATIONS = [
     # CSP table enhancements
     "ALTER TABLE csp ADD COLUMN IF NOT EXISTS is_active_in_calling_sheet BOOLEAN DEFAULT TRUE;",
     "ALTER TABLE csp ADD COLUMN IF NOT EXISTS has_missing_contact BOOLEAN DEFAULT FALSE;",
+    "ALTER TABLE csp ADD COLUMN IF NOT EXISTS sub_slab VARCHAR;",
+    "CREATE INDEX IF NOT EXISTS ix_csp_sub_slab ON csp (sub_slab);",
     "CREATE INDEX IF NOT EXISTS ix_csp_is_active_in_calling_sheet ON csp (is_active_in_calling_sheet);",
 
     # Document table enhancements

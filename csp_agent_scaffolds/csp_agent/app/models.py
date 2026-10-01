@@ -105,6 +105,7 @@ class CSP(Base):
     # 2 PARTIAL, 3 EXPIRED, 4 NONE.
     category = Column(Integer, index=True)
     category_reason = Column(String)
+    sub_slab = Column(String, index=True)   # e.g. "2.3" = slab 2, IIBF missing (app/compliance.py: SUB_SLABS)
     category_updated_at = Column(DateTime)
     next_action_at = Column(Date, index=True)
 

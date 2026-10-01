@@ -267,3 +267,18 @@ def test_templates_are_hindi_first_then_english():
         hi, en = body.index("नमस्ते"), body.index("Hello")
         assert hi < en and "https://x/u" in body
     assert "Google Drive" in render("UPLOAD_MISSING", "EMAIL", ctx)["body"]
+
+
+def test_sub_slabs_say_exactly_what_is_on_file(db_session):
+    from app.compliance import sub_slab
+    db = db_session
+    full = _csp(db); _all_valid(db, full, TODAY + timedelta(days=400))
+    soon = _csp(db); _all_valid(db, soon, TODAY + timedelta(days=400), pvr_expiry=TODAY + timedelta(days=20))
+    overdue = _csp(db); _all_valid(db, overdue, TODAY - timedelta(days=5))
+    no_iibf = _csp(db); _doc(db, no_iibf, "AGREEMENT", date(2026, 1, 1), date(2029, 1, 1))
+    _doc(db, no_iibf, "POLICE_VERIFICATION", TODAY - timedelta(days=30), TODAY + timedelta(days=335), months=12)
+    only_pvr = _csp(db); _doc(db, only_pvr, "POLICE_VERIFICATION", TODAY - timedelta(days=30), TODAY + timedelta(days=335), months=12)
+    blurry = _csp(db); _doc(db, blurry, "AGREEMENT", None, None, status=DocumentStatus.UNREADABLE, readability="UNREADABLE")
+    nothing = _csp(db)
+    got = [sub_slab(evaluate(db, c, TODAY)) for c in (full, soon, overdue, no_iibf, only_pvr, blurry, nothing)]
+    assert got == ["1.1", "1.2", "1.3", "2.3", "3.2", "4.2", "4.1"]

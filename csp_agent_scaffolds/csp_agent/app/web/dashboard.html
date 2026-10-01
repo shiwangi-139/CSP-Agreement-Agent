@@ -105,6 +105,7 @@
       <div class="grid k4">${[1,2,3,4].map((k) => `
         <div class="card kpi c${k}" data-cat="${k}"><div class="label">${slab(k)}</div>
           <div class="n">${c[k] ?? 0}</div><div class="small muted">${CAT[k][1]}</div>
+          <div class="small" style="margin-top:6px">${Object.entries(s.sub_slabs || {}).filter(([x]) => x.startsWith(k + ".")).map(([x, v]) => `${x} ${esc(v.label)}: <b>${v.count}</b>`).join("<br>")}</div>
           ${k < 4 ? `<div class="small" style="margin-top:6px">${badge("EXPIRED", (s.categories_with_expired?.[k] ?? 0) + " with an expired document")}</div>` : ""}</div>`).join("")}
       </div>
       <div class="grid k3" style="margin-top:14px">
@@ -138,17 +139,21 @@
     },
 
     async categories() {
-      const d = await api(`/api/hub/csps?category=${state.cat}&q=${encodeURIComponent(state.q)}&expired=${state.expiredOnly ? 1 : 0}&page=${state.page}&size=50`);
+      const d = await api(`/api/hub/csps?category=${state.cat}&q=${encodeURIComponent(state.q)}&expired=${state.expiredOnly ? 1 : 0}&sub=${state.sub || ""}&tag=${state.tag || ""}&page=${state.page}&size=50`);
+      const subs = Object.entries(state.summary.sub_slabs || {}).filter(([k]) => k.startsWith(state.cat + "."));
+      const tags = [["", "All"], ["expired", "Has an expired document"], ["unreachable", "Can't be reached (no phone or email)"], ["no_rm", "No RM assigned"]];
       const pages = Math.max(1, Math.ceil(d.total / d.size));
       return `
       <div class="tabs">${[1,2,3,4].map((k) => `<button data-cat="${k}" class="${state.cat === k ? "active" : ""}">${slab(k)} (${state.summary.categories[k] ?? 0})</button>`).join("")}</div>
+      <div class="tabs"><button data-sub="" class="${!state.sub ? "active" : ""}">All in this slab</button>${subs.map(([k, v]) => `<button data-sub="${k}" class="${state.sub === k ? "active" : ""}">${k} · ${esc(v.label)} (${v.count})</button>`).join("")}</div>
+      <div class="tabs small">${tags.map(([k, l]) => `<button data-tag="${k}" class="${(state.tag || "") === k ? "active" : ""}">${l}${k ? ` (${state.summary.tags?.[k] ?? 0} overall)` : ""}</button>`).join("")}</div>
       <div class="toolbar"><input type="search" id="q" placeholder="Search code, name or phone" value="${esc(state.q)}">
         ${state.cat < 4 ? `<label class="small"><input type="checkbox" id="expiredonly" ${state.expiredOnly ? "checked" : ""}> only with an expired document (${state.summary.categories_with_expired?.[state.cat] ?? 0})</label>` : ""}
         <span class="muted small">${d.total} CSPs · ${CAT[state.cat][1]}</span>
         <a class="btn" href="#" data-xlsx="csp">Download CSP report (.xlsx)</a></div>
       <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>CSP</th><th>Agreement</th><th>PVR</th><th>IIBF</th><th>RM / DC</th><th>Next action</th></tr></thead><tbody>
         ${d.rows.map((r) => `<tr class="click" data-csp="${r.id}">
-          <td><div class="mono">${esc(r.code)}</div><div>${esc(r.name)}</div><div class="small muted">${esc(r.reason)}</div></td>
+          <td><div class="mono">${esc(r.code)}</div><div>${esc(r.name)}</div><div class="small">${badge("c" + r.category, r.sub_slab_label)}</div><div class="small muted">${esc(r.reason)}</div></td>
           <td>${docCell(r.docs.AGREEMENT)}</td><td>${docCell(r.docs.POLICE_VERIFICATION)}</td><td>${docCell(r.docs.IIBF_CERTIFICATE)}</td>
           <td class="small">${esc(r.rm || "—")}<br><span class="muted">${esc(r.dc || "no DC")}</span></td>
           <td class="small mono">${fmt(r.next_action_at)}</td></tr>`).join("")}
@@ -367,14 +372,16 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-doctype],[data-approve],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
       if (t.id === "closedrawer") return closeDrawer();
       if (t.id === "refresh") return render();
       if (ds.view || ds.go) { e.preventDefault(); state.view = ds.view || ds.go; state.page = 1; return render(); }
-      if (ds.cat) { state.view = "categories"; state.cat = +ds.cat; state.expiredOnly = false; state.page = 1; return render(); }
+      if (ds.cat) { state.view = "categories"; state.cat = +ds.cat; state.expiredOnly = false; state.sub = ""; state.tag = ""; state.page = 1; return render(); }
+      if (ds.sub !== undefined) { state.sub = ds.sub; state.page = 1; return render(); }
+      if (ds.tag !== undefined) { state.tag = ds.tag; state.page = 1; return render(); }
       if (ds.page) { state.page = +ds.page; return render(); }
       if (ds.channel) { state.channel = ds.channel; return render(); }
       if (ds.mstatus) { state.msgStatus = ds.mstatus; return render(); }

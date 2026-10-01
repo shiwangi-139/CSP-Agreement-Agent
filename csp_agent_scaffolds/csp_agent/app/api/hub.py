@@ -16,7 +16,8 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ..auth import require_admin
-from ..compliance import CATEGORY_NAMES, DOC_LABELS, REQUIRED_TYPES, canonical_type, evaluate
+from ..compliance import (CATEGORY_NAMES, DOC_LABELS, REQUIRED_TYPES, SUB_SLABS, canonical_type, evaluate,
+                          sub_slab, sub_slab_label)
 from ..comms import outbound
 from ..config import OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE, CALLING_SHEET_SOURCE, CALLING_SHEET_TAB
 from ..db import get_db, SessionLocal
@@ -73,6 +74,7 @@ def summary(db: Session = Depends(get_db)):
     # Within each slab: CSPs with at least one expired document (renewal due).
     expired_in = dict(active.filter(CSP.category_reason.ilike("%Expired:%"))
                       .with_entities(CSP.category, func.count()).group_by(CSP.category).all())
+    subs = dict(active.with_entities(CSP.sub_slab, func.count()).group_by(CSP.sub_slab).all())
     msg_counts = dict(db.query(OutboundMessage.channel, func.count())
                       .filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW)
                       .group_by(OutboundMessage.channel).all())
@@ -92,6 +94,12 @@ def summary(db: Session = Depends(get_db)):
         "total_csps": active.count(),
         "categories": {str(k): cats.get(k, 0) for k in (1, 2, 3, 4)},
         "categories_with_expired": {str(k): expired_in.get(k, 0) for k in (1, 2, 3, 4)},
+        "sub_slabs": {code: {"label": label, "count": subs.get(code, 0)} for code, label in SUB_SLABS.items()},
+        "tags": {"expired": sum(expired_in.values()),
+                 "unreachable": active.filter(or_(CSP.phone.is_(None), CSP.phone == ""),
+                                              or_(CSP.whatsapp_number.is_(None), CSP.whatsapp_number == ""),
+                                              or_(CSP.email.is_(None), CSP.email == "")).count(),
+                 "no_rm": active.filter(CSP.rm_id.is_(None)).count()},
         "uncategorised": cats.get(None, 0),
         "drafts_pending": {"EMAIL": msg_counts.get("EMAIL", 0), "WHATSAPP": msg_counts.get("WHATSAPP", 0)},
         "expiring_60_days": soon,
@@ -108,12 +116,20 @@ def summary(db: Session = Depends(get_db)):
 # --------------------------------------------------------------------- CSPs
 @router.get("/csps")
 def list_csps(category: Optional[int] = None, q: str = "", rm: str = "", expired: bool = False,
-              page: int = 1, size: int = 50, db: Session = Depends(get_db)):
+              sub: str = "", tag: str = "", page: int = 1, size: int = 50, db: Session = Depends(get_db)):
     query = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True))
     if category:
         query = query.filter(CSP.category == category)
-    if expired:
+    if expired or tag == "expired":
         query = query.filter(CSP.category_reason.ilike("%Expired:%"))
+    if sub in SUB_SLABS:
+        query = query.filter(CSP.sub_slab == sub)
+    if tag == "unreachable":
+        query = query.filter(or_(CSP.phone.is_(None), CSP.phone == ""),
+                             or_(CSP.whatsapp_number.is_(None), CSP.whatsapp_number == ""),
+                             or_(CSP.email.is_(None), CSP.email == ""))
+    if tag == "no_rm":
+        query = query.filter(CSP.rm_id.is_(None))
     if q:
         like = f"%{q.strip()}%"
         query = query.filter(or_(CSP.current_code.ilike(like), CSP.name.ilike(like), CSP.phone.ilike(like)))
@@ -129,6 +145,7 @@ def list_csps(category: Optional[int] = None, q: str = "", rm: str = "", expired
         out.append({
             "id": c.id, "code": c.current_code, "name": c.name, "phone": c.phone, "email": c.email,
             "category": st.category, "category_name": CATEGORY_NAMES[st.category], "reason": st.reason,
+            "sub_slab": sub_slab(st), "sub_slab_label": sub_slab_label(sub_slab(st)),
             "rm": staff[c.rm_id].name if c.rm_id in staff else None,
             "dc": staff[c.dc_id].name if c.dc_id in staff else None,
             "next_action_at": _iso(c.next_action_at), "terminal_status": c.terminal_status,
