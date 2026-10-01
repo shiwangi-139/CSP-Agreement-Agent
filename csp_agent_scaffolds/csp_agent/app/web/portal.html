@@ -154,6 +154,48 @@
   }
   docsEl.addEventListener("change", checkDates);
 
+  // Photo check in the browser, before uploading (same limits as the server,
+  // app/ocr_service.py: photo_problem), so a bad photo is retaken at once
+  // instead of being sent over a slow connection and rejected.
+  const PHOTO_MSG = {
+    too_small: "फोटो बहुत छोटी है। पूरा पन्ना फ्रेम में रखें और कैमरे से सीधे फोटो लें। / The photo is too small. Keep the whole page in the frame and take it with the camera (not a screenshot or forwarded photo).",
+    too_dark: "फोटो बहुत अंधेरी है। दिन की रोशनी में, बिना परछाईं के फोटो लें। / The photo is too dark. Take it in daylight, without shadows.",
+    washed_out: "अक्षर दिखाई नहीं दे रहे। फ्लैश बंद करके दोबारा फोटो लें। / The text is not visible. Turn the flash off and take it again.",
+    blurry: "फोटो धुंधली है। फोन स्थिर रखें, अक्षरों पर टैप करके फोकस करें। / The photo is blurry. Hold the phone still and tap on the text to focus.",
+  };
+  function photoProblem(img) {
+    if (Math.min(img.naturalWidth, img.naturalHeight) < 500) return "too_small";
+    const w = Math.min(1000, img.naturalWidth), h = Math.round(img.naturalHeight * w / img.naturalWidth);
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const g = c.getContext("2d"); g.drawImage(img, 0, 0, w, h);
+    const px = g.getImageData(0, 0, w, h).data, grey = new Float32Array(w * h);
+    let sum = 0;
+    for (let i = 0; i < w * h; i++) { grey[i] = 0.299 * px[4 * i] + 0.587 * px[4 * i + 1] + 0.114 * px[4 * i + 2]; sum += grey[i]; }
+    const mean = sum / (w * h);
+    let sq = 0;
+    for (let i = 0; i < w * h; i++) sq += (grey[i] - mean) ** 2;
+    const std = Math.sqrt(sq / (w * h));
+    if (mean < 55) return "too_dark";
+    if (mean > 235 && std < 20) return "washed_out";
+    let ls = 0, ls2 = 0, n = 0;                        // Laplacian variance = sharpness
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x, v = grey[i - w] + grey[i + w] + grey[i - 1] + grey[i + 1] - 4 * grey[i];
+      ls += v; ls2 += v * v; n++;
+    }
+    return ls2 / n - (ls / n) ** 2 < 25 ? "blurry" : null;
+  }
+  docsEl.addEventListener("change", (e) => {
+    const input = e.target;
+    if (input.type !== "file" || !input.files[0] || !/^image\/(jpeg|png)$/.test(input.files[0].type)) return;
+    const err = $(input.id.replace(/_file$/, "_err")), url = URL.createObjectURL(input.files[0]), img = new Image();
+    img.onload = () => {
+      const p = photoProblem(img);
+      URL.revokeObjectURL(url);
+      if (p) { err.textContent = PHOTO_MSG[p]; input.value = ""; }   // cleared: please retake
+    };
+    img.src = url;
+  });
+
   $("f").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("formerr").textContent = "";

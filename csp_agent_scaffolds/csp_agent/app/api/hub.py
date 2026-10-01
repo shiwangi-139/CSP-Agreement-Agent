@@ -70,6 +70,9 @@ def _msg_json(m: OutboundMessage, csp: Optional[CSP]) -> dict:
 def summary(db: Session = Depends(get_db)):
     active = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True))
     cats = dict(active.with_entities(CSP.category, func.count()).group_by(CSP.category).all())
+    # Within each slab: CSPs with at least one expired document (renewal due).
+    expired_in = dict(active.filter(CSP.category_reason.ilike("%Expired:%"))
+                      .with_entities(CSP.category, func.count()).group_by(CSP.category).all())
     msg_counts = dict(db.query(OutboundMessage.channel, func.count())
                       .filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW)
                       .group_by(OutboundMessage.channel).all())
@@ -88,6 +91,7 @@ def summary(db: Session = Depends(get_db)):
     return {
         "total_csps": active.count(),
         "categories": {str(k): cats.get(k, 0) for k in (1, 2, 3, 4)},
+        "categories_with_expired": {str(k): expired_in.get(k, 0) for k in (1, 2, 3, 4)},
         "uncategorised": cats.get(None, 0),
         "drafts_pending": {"EMAIL": msg_counts.get("EMAIL", 0), "WHATSAPP": msg_counts.get("WHATSAPP", 0)},
         "expiring_60_days": soon,
@@ -103,11 +107,13 @@ def summary(db: Session = Depends(get_db)):
 
 # --------------------------------------------------------------------- CSPs
 @router.get("/csps")
-def list_csps(category: Optional[int] = None, q: str = "", rm: str = "", page: int = 1, size: int = 50,
-              db: Session = Depends(get_db)):
+def list_csps(category: Optional[int] = None, q: str = "", rm: str = "", expired: bool = False,
+              page: int = 1, size: int = 50, db: Session = Depends(get_db)):
     query = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True))
     if category:
         query = query.filter(CSP.category == category)
+    if expired:
+        query = query.filter(CSP.category_reason.ilike("%Expired:%"))
     if q:
         like = f"%{q.strip()}%"
         query = query.filter(or_(CSP.current_code.ilike(like), CSP.name.ilike(like), CSP.phone.ilike(like)))
@@ -197,9 +203,13 @@ def csp_zip(csp_id: int, db: Session = Depends(get_db)):
 
 # ---------------------------------------------------------------- documents
 @router.get("/documents")
-def list_documents(doc_type: str = "", status: str = "", current_only: bool = True, page: int = 1, size: int = 100,
-                   db: Session = Depends(get_db)):
+def list_documents(doc_type: str = "", status: str = "", current_only: bool = True, channel: str = "",
+                   page: int = 1, size: int = 100, db: Session = Depends(get_db)):
     q = db.query(Document, CSP).join(CSP, CSP.id == Document.csp_id)
+    if channel:
+        # Recent uploads: every copy received on this channel, newest first.
+        q = q.filter(Document.upload_channel == channel)
+        current_only = False
     if current_only:
         q = q.filter(or_(Document.is_current.is_(True), Document.readability == "UNREADABLE"))
     if doc_type:
@@ -207,7 +217,8 @@ def list_documents(doc_type: str = "", status: str = "", current_only: bool = Tr
     if status:
         q = q.filter(Document.status == DocumentStatus(status))
     total = q.count()
-    rows = q.order_by(Document.expiry_date.asc().nullslast()).offset((page - 1) * size).limit(min(size, 500)).all()
+    order = Document.uploaded_at.desc().nullslast() if channel else Document.expiry_date.asc().nullslast()
+    rows = q.order_by(order).offset((page - 1) * size).limit(min(size, 500)).all()
     return {"total": total, "rows": [{**_doc_json(d), "csp_id": c.id, "csp_code": c.current_code, "csp_name": c.name}
                                      for d, c in rows]}
 
@@ -391,6 +402,12 @@ def review_queue(db: Session = Depends(get_db)):
                       "csp": {"id": c.id, "code": c.current_code, "name": c.name}} for q, d, c in rows]}
 
 
+@router.get("/accuracy")
+def accuracy_stats(days: int = 90, db: Session = Depends(get_db)):
+    from .. import accuracy
+    return {**accuracy.stats(db, days), "mistakes": accuracy.mistakes(db)}
+
+
 @router.post("/review/{item_id}/resolve")
 def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept: bool = Body(True),
                    reviewer: str = Depends(require_admin), db: Session = Depends(get_db)):
@@ -400,8 +417,11 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
     if q is None:
         raise HTTPException(404, "not found")
     d = db.get(Document, q.document_id)
+    # "Corrected" only when the reviewer actually changed the date (the field
+    # is pre-filled with the stored date): that is what accuracy counts.
+    changed = bool(issue_date) and date.fromisoformat(issue_date) != d.issue_date
     if accept:
-        if issue_date:
+        if changed:
             d.issue_date = date.fromisoformat(issue_date)
             exp = calculate_document_expiry(canonical_type(d.document_type), d.issue_date,
                                             has_explicit_3year_clause=d.has_explicit_3year_clause,
@@ -409,7 +429,7 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
             d.expiry_date = exp["calculated_expiry"]
             d.date_source = "MANUAL_REVIEW"
         d.status = DocumentStatus.MANUAL_VERIFIED
-        q.status = ReviewStatus.CORRECTED if issue_date else ReviewStatus.APPROVED
+        q.status = ReviewStatus.CORRECTED if changed else ReviewStatus.APPROVED
         seen = (d.extracted_fields or {}).get("owner_seen_name")
         if (d.extracted_fields or {}).get("owner_check") and seen:
             # Teach the owner check this spelling of the CSP's name.

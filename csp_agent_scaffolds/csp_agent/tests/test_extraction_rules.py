@@ -196,3 +196,31 @@ def test_blank_valid_upto_in_term_clause_means_default_one_year():
     assert r["issue_date"] == date(2026, 4, 8) and r["validity_years"] == 1 and r["explicit_expiry"] is None
     exp = calculate_document_expiry("AGREEMENT", r["issue_date"], has_explicit_3year_clause=False, today=TODAY)
     assert exp["calculated_expiry"] == date(2027, 4, 8)
+
+
+def test_range_in_the_effective_date_line():
+    # 1A852473 Ashish Kumar: "On this day of, 26/03/2025 to 25/03/2027 ("Effective Date")".
+    r = extract_agreement('CUSTOMER SERVICE POINT AGREEMENT\nASHISH KUMAR SO RAM JEEWAN On this day of, '
+                          '26/03/2025 to 25/03/2027 ("Effective Date"), ASHISH KUMAR an Indian national', TODAY)
+    assert r["issue_date"] == date(2025, 3, 26) and r["validity_source"] == "AGREEMENT_RANGE_FROM_TO"
+    assert r["explicit_expiry"] == date(2027, 3, 25)
+
+
+def test_valid_for_two_years_ie_range_in_the_body():
+    # 1A850476: no 3-year line; the body says "valid for two years i.e 06-06-2024 to 05-06-2026".
+    r = extract_agreement("CUSTOMER SERVICE POINT AGREEMENT\nOn this day of 06-06-2024 (Effective Date)\n"
+                          "hereby agrees to be a CSP of Eko at the said CSP Location. This agreement would be valid "
+                          "for two years i.e 06-06-2024 to 05-06-2026. Eko and CSP have recorded", TODAY)
+    assert r["validity_source"] == "AGREEMENT_RANGE_FROM_TO" and r["explicit_expiry"] == date(2026, 6, 5)
+
+
+def test_dash_range_with_two_digit_start_year():
+    r = extract_agreement("Certificate Issued Date 20-Dec-2023\nCUSTOMER SERVICE POINT AGREEMENT "
+                          "On this day of 20/12/23 - 19/12/2025 I. RELATIONSHIP DEFINITION", TODAY)
+    assert r["explicit_expiry"] == date(2025, 12, 19)
+
+
+def test_unrelated_dashes_are_not_a_range():
+    r = extract_agreement("CUSTOMER SERVICE POINT AGREEMENT\nOn this day of 12/03/2024 (Effective Date) "
+                          "CSP shall work 9-6 daily; see clauses 3-4; Rs. 5,000-10,000.", TODAY)
+    assert r["validity_source"] == "AGREEMENT_DEFAULT_1_YEAR"

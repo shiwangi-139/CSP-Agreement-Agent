@@ -1,14 +1,16 @@
 """
-Compliance categories, computed from each CSP's current documents and
-STORED on the csp row so the dashboard and the engine read the same answer.
+Compliance slabs, computed from each CSP's current documents and STORED on
+the csp row so the dashboard and the engine read the same answer. A slab says
+how many of the three documents are ON FILE (valid or expired):
 
-  1 ACTIVE   all three documents on file and none expired
-  2 PARTIAL  at least one on file and none expired, but some missing
-             (never received, or received but unreadable)
-  3 EXPIRED  at least one on file, and at least one of them expired
-             (others may be missing too)
-  4 NONE     nothing readable on file from the last 2 years
+  1 COMPLETE     all three on file
+  2 MISSING_ONE  two on file, one missing
+  3 MISSING_TWO  one on file, two missing
+  4 NONE         nothing readable on file from the last 2 years
 
+Expiry is shown inside every slab (ComplianceState.expired): a CSP in any
+slab can have expired documents, and its messages ask to renew those as well
+as to upload the missing ones. Moving between slabs needs only an upload.
 IIBF never expires. Unreadable files are kept for audit but count as missing.
 """
 from dataclasses import dataclass, field
@@ -27,9 +29,9 @@ TYPE_ALIASES = {
     "CSP_AGREEMENT": "AGREEMENT",
 }
 # Codes used by the API and the WhatsApp agent: keep them stable.
-CATEGORY_NAMES = {1: "ACTIVE", 2: "PARTIAL", 3: "EXPIRED", 4: "NONE"}
+CATEGORY_NAMES = {1: "COMPLETE", 2: "MISSING_ONE", 3: "MISSING_TWO", 4: "NONE"}
 # What people see ("Cat A/B/1/2" is already used for other things in the company).
-SLAB_NAMES = {1: "Compliant", 2: "Documents missing", 3: "Renewal due", 4: "No documents"}
+SLAB_NAMES = {1: "All documents on file", 2: "1 document missing", 3: "2 documents missing", 4: "No documents"}
 
 
 def slab_label(category: int) -> str:
@@ -118,17 +120,20 @@ def evaluate(db: Session, csp: CSP, today: Optional[date] = None) -> ComplianceS
     present = [t for t, s in docs.items() if s.status in ("VALID", "EXPIRED")]
     expired = [t for t, s in docs.items() if s.status == "EXPIRED"]
     missing = [t for t, s in docs.items() if s.status in ("MISSING", "UNREADABLE")]
-    if not present:
-        cat, reason = 4, "No readable documents on file from the last 2 years."
-    elif expired:
-        cat, reason = 3, "Expired: " + ", ".join(DOC_LABELS[t][0] for t in expired) + (
-            "; missing: " + ", ".join(DOC_LABELS[t][0] for t in missing) if missing else "")
-    elif missing:
-        cat, reason = 2, "Missing: " + ", ".join(
+    cat = {3: 1, 2: 2, 1: 3, 0: 4}[len(present)]
+    parts = []
+    if missing:
+        parts.append("Missing: " + ", ".join(
             DOC_LABELS[t][0] + (" (unreadable copy received)" if docs[t].status == "UNREADABLE" else "")
-            for t in missing)
+            for t in missing))
+    if expired:
+        parts.append("Expired: " + ", ".join(DOC_LABELS[t][0] for t in expired))
+    if not present:
+        reason = "No readable documents on file from the last 2 years."
+    elif not parts:
+        reason = "All three documents valid."
     else:
-        cat, reason = 1, "All three documents valid."
+        reason = "; ".join(parts)
     return ComplianceState(cat, reason, docs)
 
 

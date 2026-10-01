@@ -42,10 +42,15 @@ THREE_YEAR = [
     re.compile(r"(?:remain\s+)?valid\s+for\s+(?:a\s+)?period\s+of\s+(?:three|thr[e3]{2}|3)\b\s*(?:\(\s*3\s*\))?"
                r"(?!\s*(?:\(\s*3\s*\)\s*)?months?)", re.I),
 ]
+_DATE = r"\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*(?:\d{4}|\d{2})(?!\d)|\d{1,2}(?:st|nd|rd|th)?\s*[- ]?\s*[A-Za-z]{3,9}\.?\s*[- ,]?\s*\d{4}"
 RANGE = [
     re.compile(r"(?:valid\s+)?(?:from|w\.?\s?e\.?\s?f\.?)\s*[:\-]?\s*(?P<a>[^\n]{6,30}?)\s*(?:to|till|until|upto|up\s+to)\s*(?P<b>[^\n]{6,30})", re.I),
     re.compile(r"(?:for\s+the\s+)?period\s+(?:of\s+)?(?P<a>[^\n]{6,30}?)\s*(?:to|till|until)\s*(?P<b>[^\n]{6,30})", re.I),
     re.compile(r"(?P<a>[^\n]{6,30}?)\s*से\s*(?P<b>[^\n]{6,30}?)\s*तक"),
+    # Two full dates joined by to/till/a dash, anywhere: "On this day of,
+    # 26/03/2025 to 25/03/2027 (Effective Date)", "valid for two years i.e.
+    # 06-06-2024 to 05-06-2026", "20/12/23 - 19/12/2025", "24-08-2025to23-8-2028".
+    re.compile(rf"(?P<a>{_DATE})\s*(?:to|till|until|upto|up\s+to|-|–|—)\s*(?P<b>{_DATE})", re.I),
 ]
 
 
@@ -89,6 +94,21 @@ def has_three_year_clause(text: str) -> bool:
     return any(p.search(flat) for p in THREE_YEAR)
 
 
+def _short_year_date(raw: str, end_year: int) -> Optional[date]:
+    """'20/12/23' at the start of a range ending in 2025 is 20-12-2023: the
+    other date gives the century. (A two-digit year alone is too ambiguous.)"""
+    m = re.search(r"(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{2})(?!\d)\s*$", raw.strip())
+    if not m:
+        return None
+    year = (end_year // 100) * 100 + int(m.group(3))
+    if year > end_year:
+        year -= 100
+    try:
+        return date(year, int(m.group(2)), int(m.group(1)))
+    except ValueError:
+        return None
+
+
 def find_validity_range(text: str, today: Optional[date] = None) -> Optional[tuple[date, date]]:
     """(start, end) of an explicit validity range between 30 days and 6 years."""
     flat = re.sub(r"[ \t]+", " ", normalize(text))
@@ -96,9 +116,12 @@ def find_validity_range(text: str, today: Optional[date] = None) -> Optional[tup
         for m in pat.finditer(flat):
             a = find_dates(m.group("a"))
             b = find_dates(m.group("b"))
-            if not a or not b:
+            if not b:
                 continue
-            start, end = a[-1].value, b[0].value
+            start = a[-1].value if a else _short_year_date(m.group("a"), b[0].value.year)
+            if start is None:
+                continue
+            end = b[0].value
             if start.year >= 2010 and 30 <= (end - start).days <= 6 * 366:
                 return start, end
     return None

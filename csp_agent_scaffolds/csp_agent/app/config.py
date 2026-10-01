@@ -119,6 +119,9 @@ OCR_CACHE = os.getenv("OCR_CACHE", "on").strip().lower() not in ("0", "off", "fa
 # Tesseract reads with low confidence: phone photos, stamps, faint print.
 # "off" disables it; it is skipped automatically when not installed.
 OCR_SECOND_ENGINE = os.getenv("OCR_SECOND_ENGINE", "rapidocr").strip().lower()
+# Share of automatically accepted documents sent to the Review queue as a
+# spot check, to measure real accuracy (app/accuracy.py). 0 turns it off.
+SPOT_CHECK_RATE = float(os.getenv("SPOT_CHECK_RATE", "0.05"))
 OCR_SECOND_ENGINE_BELOW = float(os.getenv("OCR_SECOND_ENGINE_BELOW", "80"))
 
 # Gmail

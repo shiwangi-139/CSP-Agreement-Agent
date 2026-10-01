@@ -414,7 +414,7 @@ def send_csp_upload_link(csp_code: str, db: Session = Depends(get_db)):
     from ..renewal_engine import _ctx
     state = evaluate(db, csp)
     link = issue_upload_link(db, csp, state.needs_upload or list(REQUIRED_TYPES))
-    template = {4: "ONBOARD_ALL", 3: "UPLOAD_EXPIRED"}.get(state.category, "UPLOAD_MISSING")
+    template = "ONBOARD_ALL" if state.category == 4 else ("UPLOAD_EXPIRED" if state.expired else "UPLOAD_MISSING")
     msgs = draft(db, csp=csp, role="CSP", template_key=template, ctx=_ctx(db, csp, state, link),
                  key_base=f"manual:{csp.id}:{datetime.now().strftime('%Y%m%d%H%M%S')}", stage="MANUAL")
     db.commit()

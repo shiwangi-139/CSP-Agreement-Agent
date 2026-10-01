@@ -71,9 +71,15 @@ def test_categories(db_session):
     c = _csp(db); _doc(db, c, "AGREEMENT", date(2023, 1, 1), date(2026, 1, 1), status=DocumentStatus.EXPIRED)
     d = _csp(db)
     e = _csp(db); _doc(db, e, "AGREEMENT", None, None, status=DocumentStatus.UNREADABLE, readability="UNREADABLE")
+    f = _csp(db); _all_valid(db, f, TODAY - timedelta(days=5))            # all three on file, all expired
+    g = _csp(db); _doc(db, g, "AGREEMENT", date(2026, 1, 1), date(2029, 1, 1))
+    _doc(db, g, "IIBF_CERTIFICATE", date(2020, 1, 1), None)               # two on file, one missing
     assert evaluate(db, a, TODAY).category == 1
-    assert evaluate(db, b, TODAY).category == 2
-    assert evaluate(db, c, TODAY).category == 3
+    assert evaluate(db, f, TODAY).category == 1 and len(evaluate(db, f, TODAY).expired) >= 1
+    assert evaluate(db, g, TODAY).category == 2
+    assert evaluate(db, b, TODAY).category == 3                           # one on file, two missing
+    sc = evaluate(db, c, TODAY)
+    assert sc.category == 3 and sc.expired == ["AGREEMENT"]               # expired counts as on file
     assert evaluate(db, d, TODAY).category == 4
     st = evaluate(db, e, TODAY)
     assert st.category == 4 and st.docs["AGREEMENT"].status == "UNREADABLE"

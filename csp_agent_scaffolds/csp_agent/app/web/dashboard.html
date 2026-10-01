@@ -26,6 +26,7 @@
     <button data-view="contacts">Contacts &amp; gaps</button>
     <button data-view="ingestion">Gmail ingestion</button>
     <button data-view="review">Review queue <span class="count" id="n-review"></span></button>
+    <button data-view="accuracy">Accuracy</button>
     <div class="foot" id="modes"></div>
   </nav>
   <main>
@@ -53,12 +54,12 @@
   const fmt = (iso) => iso ? iso.slice(0, 10).split("-").reverse().join("-") : "—";
   const when = (iso) => iso ? new Date(iso).toLocaleString("en-IN", {dateStyle: "medium", timeStyle: "short"}) : "—";
   const DOC = {AGREEMENT: "Agreement", POLICE_VERIFICATION: "PVR / Character", IIBF_CERTIFICATE: "IIBF"};
-  const CAT = {1: ["Compliant", "All three documents on file and valid"],
-               2: ["Documents missing", "Nothing expired, but a document is missing or unreadable"],
-               3: ["Renewal due", "At least one document expired (others may also be missing)"],
+  const CAT = {1: ["All documents on file", "Agreement, PVR and IIBF all received"],
+               2: ["1 document missing", "Two received, one missing or unreadable"],
+               3: ["2 documents missing", "One received, two missing or unreadable"],
                4: ["No documents", "Nothing readable on file in 2 years"]};
   const slab = (k) => `Slab ${k} · ${CAT[k][0]}`;
-  const state = {view: "overview", cat: 1, q: "", page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
+  const state = {view: "overview", cat: 1, q: "", expiredOnly: false, page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
 
   // ---------------------------------------------------------------- api
   let KEY = "";
@@ -103,7 +104,8 @@
       return `
       <div class="grid k4">${[1,2,3,4].map((k) => `
         <div class="card kpi c${k}" data-cat="${k}"><div class="label">${slab(k)}</div>
-          <div class="n">${c[k] ?? 0}</div><div class="small muted">${CAT[k][1]}</div></div>`).join("")}
+          <div class="n">${c[k] ?? 0}</div><div class="small muted">${CAT[k][1]}</div>
+          ${k < 4 ? `<div class="small" style="margin-top:6px">${badge("EXPIRED", (s.categories_with_expired?.[k] ?? 0) + " with an expired document")}</div>` : ""}</div>`).join("")}
       </div>
       <div class="grid k3" style="margin-top:14px">
         <div class="card"><h2>Waiting for your approval</h2>
@@ -136,11 +138,12 @@
     },
 
     async categories() {
-      const d = await api(`/api/hub/csps?category=${state.cat}&q=${encodeURIComponent(state.q)}&page=${state.page}&size=50`);
+      const d = await api(`/api/hub/csps?category=${state.cat}&q=${encodeURIComponent(state.q)}&expired=${state.expiredOnly ? 1 : 0}&page=${state.page}&size=50`);
       const pages = Math.max(1, Math.ceil(d.total / d.size));
       return `
       <div class="tabs">${[1,2,3,4].map((k) => `<button data-cat="${k}" class="${state.cat === k ? "active" : ""}">${slab(k)} (${state.summary.categories[k] ?? 0})</button>`).join("")}</div>
       <div class="toolbar"><input type="search" id="q" placeholder="Search code, name or phone" value="${esc(state.q)}">
+        ${state.cat < 4 ? `<label class="small"><input type="checkbox" id="expiredonly" ${state.expiredOnly ? "checked" : ""}> only with an expired document (${state.summary.categories_with_expired?.[state.cat] ?? 0})</label>` : ""}
         <span class="muted small">${d.total} CSPs · ${CAT[state.cat][1]}</span>
         <a class="btn" href="#" data-xlsx="csp">Download CSP report (.xlsx)</a></div>
       <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>CSP</th><th>Agreement</th><th>PVR</th><th>IIBF</th><th>RM / DC</th><th>Next action</th></tr></thead><tbody>
@@ -149,16 +152,19 @@
           <td>${docCell(r.docs.AGREEMENT)}</td><td>${docCell(r.docs.POLICE_VERIFICATION)}</td><td>${docCell(r.docs.IIBF_CERTIFICATE)}</td>
           <td class="small">${esc(r.rm || "—")}<br><span class="muted">${esc(r.dc || "no DC")}</span></td>
           <td class="small mono">${fmt(r.next_action_at)}</td></tr>`).join("")}
-        </tbody></table>` : `<div class="empty">No CSPs in this category.</div>`}</div>
+        </tbody></table>` : `<div class="empty">No CSPs in this slab.</div>`}</div>
       ${pager(pages)}`;
     },
 
     async documents() {
-      const d = await api(`/api/hub/documents?doc_type=${state.docType}&size=300`);
+      const uploads = state.docType === "UPLOADS";
+      const d = await api(uploads ? `/api/hub/documents?channel=CSP_UPLOAD_PORTAL&size=300`
+                                  : `/api/hub/documents?doc_type=${state.docType}&size=300`);
       return `
-      <div class="tabs">${[["", "All"], ["AGREEMENT", "Agreements"], ["POLICE_VERIFICATION", "PVR / Character"], ["IIBF_CERTIFICATE", "IIBF"]]
+      <div class="tabs">${[["", "All"], ["AGREEMENT", "Agreements"], ["POLICE_VERIFICATION", "PVR / Character"], ["IIBF_CERTIFICATE", "IIBF"], ["UPLOADS", "Recent uploads by CSPs"]]
         .map(([k, l]) => `<button data-doctype="${k}" class="${state.docType === k ? "active" : ""}">${l}</button>`).join("")}</div>
-      <p class="small muted">Current documents per CSP, soonest expiry first. Expired ones stay listed in red with their dates. Unreadable files are kept for audit only and count as missing.</p>
+      <p class="small muted">${uploads ? "Every file CSPs uploaded through their link, newest first, with what the agent read from it."
+        : "Current documents per CSP, soonest expiry first. Expired ones stay listed in red with their dates. Unreadable files are kept for audit only and count as missing."}</p>
       <div class="card tablewrap"><table><thead><tr><th>CSP</th><th>Type</th><th>Status</th><th>Issued</th><th>Expires</th><th>Rule</th><th>Read by</th><th>Source</th><th></th></tr></thead><tbody>
       ${d.rows.map((r) => `<tr>
         <td class="click" data-csp="${r.csp_id}"><div class="mono">${esc(r.csp_code)}</div><div class="small">${esc(r.csp_name)}</div></td>
@@ -241,11 +247,45 @@
       </tbody></table></div>`;
     },
 
+    async accuracy() {
+      const a = await api("/api/hub/accuracy");
+      const pct = (v) => v == null ? "—" : v + "%";
+      const row = (label, r) => `<tr><td>${esc(label)}</td><td class="num">${r.checked}</td><td class="num">${r.correct}</td>
+        <td class="num">${r.date_wrong}</td><td class="num">${r.wrong_document}</td><td class="num"><b>${pct(r.accuracy)}</b></td></tr>`;
+      const head = `<thead><tr><th></th><th>Checked</th><th>Correct</th><th>Date wrong</th><th>Wrong document / CSP</th><th>Accuracy</th></tr></thead>`;
+      const T = {AGREEMENT: "CSP Agreement", POLICE_VERIFICATION: "PVR / Character certificate", IIBF_CERTIFICATE: "IIBF certificate"};
+      return `
+      <div class="grid k4">
+        <div class="card kpi"><div class="label">Measured accuracy</div><div class="n">${pct(a.overall.accuracy)}</div>
+          <div class="small muted">from ${a.overall.checked} checked documents</div></div>
+        <div class="card kpi"><div class="label">Checks waiting</div><div class="n">${a.overall.pending}</div>
+          <div class="small muted"><a href="#" data-go="review">Open the Review queue</a></div></div>
+        <div class="card kpi"><div class="label">Accepted automatically</div><div class="n">${pct(a.recent_outcome["accepted automatically"]?.share)}</div>
+          <div class="small muted">of ${a.recent_documents} documents in ${a.recent_days} days</div></div>
+        <div class="card kpi"><div class="label">Spot-check rate</div><div class="n">${Math.round(a.spot_check_rate * 100)}%</div>
+          <div class="small muted">of documents accepted automatically</div></div>
+      </div>
+      <p class="small muted" style="margin-top:10px">Accuracy is measured only from documents a person checked in the Review queue (spot checks and reference checks): Accept = read correctly, a changed date = date wrong, Reject = wrong document or CSP. The more checks, the more reliable the figure; aim for at least 100.</p>
+      <div class="grid k3" style="margin-top:14px">
+        <div class="card tablewrap"><h2>By document</h2><table>${head}<tbody>${Object.entries(a.by_type).map(([k, r]) => row(T[k] || k, r)).join("")}</tbody></table></div>
+        <div class="card tablewrap"><h2>By how it was read</h2><table>${head}<tbody>${Object.entries(a.by_route).map(([k, r]) => row(k, r)).join("") || `<tr><td colspan="6" class="empty">No checks yet.</td></tr>`}</tbody></table></div>
+        <div class="card"><h2>Last ${a.recent_days} days</h2><dl class="kv">
+          ${Object.entries(a.recent_outcome).map(([k, v]) => `<dt>${esc(k)}</dt><dd class="num">${v.count} (${v.share}%)</dd>`).join("") || "<dt>No documents</dt><dd></dd>"}
+          ${Object.entries(a.recent_reading).map(([k, v]) => `<dt>read from ${esc(k)}</dt><dd class="num">${v}</dd>`).join("")}</dl></div>
+      </div>
+      <div class="card tablewrap" style="margin-top:14px"><h2>Latest mistakes found</h2>${a.mistakes.length ? `<table><thead><tr><th>CSP</th><th>Document</th><th>Found</th><th>Read from</th><th></th></tr></thead><tbody>
+        ${a.mistakes.map((m) => `<tr><td class="mono">${esc(m.csp)}</td><td>${esc(T[m.type] || m.type)}<div class="small muted">${esc(m.file || "")}</div></td>
+          <td>${badge("EXPIRED", m.verdict)}</td><td class="small">${esc(m.how_read)}</td><td><a href="#" data-file="${m.document_id}">view</a></td></tr>`).join("")}</tbody></table>`
+        : `<div class="empty">No mistakes found in the checks so far.</div>`}</div>`;
+    },
+
     async review() {
       const d = await api("/api/hub/review");
-      return `<p class="small muted">Only genuine conflicts land here — e.g. the date a CSP typed differs from the date the vision model read. Blurry documents never come here; they count as missing and the CSP is asked for a scanned PDF.</p>
+      const kind = (reason) => /^Spot check/.test(reason) ? ["APPROVAL", "spot check"] : /^Reference check/.test(reason) ? ["APPROVAL", "reference check"] : ["REVIEW", "needs a decision"];
+      return `<p class="small muted">Conflicts the agent can't decide (a different CSP's name on the document, a typed date that differs from the one read…), plus <b>spot checks</b> (5% of documents the agent accepted on its own) and <b>reference checks</b>. Open the document, then <b>Accept</b> if the type, the CSP and the issue date are right, correct the date if it's wrong, or <b>Reject</b> if it's the wrong document or CSP. Your answers measure the agent's accuracy (see Accuracy).</p>
       ${d.rows.map((r) => `<div class="card" style="margin-bottom:10px">
-        <div class="meta"><b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)} · ${esc(DOC[r.document.type] || r.document.type)}</div>
+        <div class="meta">${badge(kind(r.reason)[0], kind(r.reason)[1])} <b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)} · ${esc(DOC[r.document.type] || r.document.type)}
+          · issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : ""}</div>
         <p>${esc(r.reason)}</p>
         <div class="toolbar"><a href="#" data-file="${r.document.id}">View document</a>
           <label>Correct issue date <input type="date" id="rv${r.id}" value="${esc(r.document.issue_date || "")}"></label>
@@ -328,7 +368,7 @@
       if (t.id === "closedrawer") return closeDrawer();
       if (t.id === "refresh") return render();
       if (ds.view || ds.go) { e.preventDefault(); state.view = ds.view || ds.go; state.page = 1; return render(); }
-      if (ds.cat) { state.view = "categories"; state.cat = +ds.cat; state.page = 1; return render(); }
+      if (ds.cat) { state.view = "categories"; state.cat = +ds.cat; state.expiredOnly = false; state.page = 1; return render(); }
       if (ds.page) { state.page = +ds.page; return render(); }
       if (ds.channel) { state.channel = ds.channel; return render(); }
       if (ds.mstatus) { state.msgStatus = ds.mstatus; return render(); }
@@ -379,11 +419,14 @@
     if (e.key === "Escape") closeDrawer();
     if (e.key === "Enter" && e.target.id === "q") { state.q = e.target.value; state.page = 1; render(); }
   });
+  document.addEventListener("change", (e) => {
+    if (e.target.id === "expiredonly") { state.expiredOnly = e.target.checked; state.page = 1; render(); }
+  });
   async function refreshAfterAction() { if ($("#drawer").classList.contains("open")) closeDrawer(); render(); }
 
   // ------------------------------------------------------------ render
   const TITLES = {overview: "Overview", categories: "Slabs", documents: "Latest documents", comms: "Communication Hub",
-                  contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue"};
+                  contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy"};
   async function render() {
     try {
       state.summary = await api("/api/hub/summary");

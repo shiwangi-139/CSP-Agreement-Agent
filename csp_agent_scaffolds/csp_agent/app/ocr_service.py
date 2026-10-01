@@ -421,6 +421,39 @@ def detect_mime(data: bytes) -> Optional[str]:
     return None
 
 
+def photo_problem(file_bytes: bytes) -> Optional[str]:
+    """Quick check of a PHOTO before any OCR, so the CSP can retake it at
+    once: "too_small", "too_dark", "washed_out" or "blurry" (clearly, not
+    borderline: borderline photos still go through OCR). None for PDFs and
+    usable photos. The same limits are checked in the portal page's browser
+    code (app/web/portal.html) before uploading."""
+    if detect_mime(file_bytes) not in ("image/jpeg", "image/png"):
+        return None
+    gray = _gray_from_png(file_bytes)
+    if gray is None:
+        return None
+    h, w = gray.shape[:2]
+    if min(h, w) < PHOTO_MIN_SIDE_PX:
+        return "too_small"
+    mean, std = float(gray.mean()), float(gray.std())
+    if mean < PHOTO_MIN_BRIGHTNESS:
+        return "too_dark"
+    if mean > PHOTO_MAX_BRIGHTNESS and std < PHOTO_MIN_CONTRAST:
+        return "washed_out"
+    import cv2
+    small = cv2.resize(gray, (1000, int(1000 * h / w))) if w > 1000 else gray
+    if _blur_score(small) < PHOTO_MIN_SHARPNESS:
+        return "blurry"
+    return None
+
+
+PHOTO_MIN_SIDE_PX = 500          # shorter side; smallest photo read correctly so far: 508 px (2026-10-01)
+PHOTO_MIN_BRIGHTNESS = 55        # mean grey level 0-255
+PHOTO_MAX_BRIGHTNESS = 235
+PHOTO_MIN_CONTRAST = 20          # std of grey levels (blank / overexposed page)
+PHOTO_MIN_SHARPNESS = 25         # Laplacian variance at 1000 px wide (BLUR_THRESHOLD is 60)
+
+
 def _blur_score(gray) -> float:
     import cv2
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())

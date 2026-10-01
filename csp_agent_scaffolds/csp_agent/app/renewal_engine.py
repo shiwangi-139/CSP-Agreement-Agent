@@ -146,7 +146,8 @@ def _run_renewals(db: Session, csp: CSP, state: ComplianceState, today: date) ->
 def _upload_template(state: ComplianceState) -> str:
     if state.category == 4:
         return "ONBOARD_ALL"
-    if state.category == 3:
+    if state.expired:
+        # Lists every document; asks to renew the expired and upload the missing.
         return "UPLOAD_EXPIRED"
     if state.missing and all(state.docs[t].status == "UNREADABLE" for t in state.missing):
         return "UNREADABLE_REUPLOAD" if len(state.missing) == 1 else "UPLOAD_MISSING"

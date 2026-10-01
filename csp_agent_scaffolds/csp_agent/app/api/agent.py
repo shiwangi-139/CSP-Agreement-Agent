@@ -117,6 +117,7 @@ def csp_status(code: str, db: Session = Depends(get_db)):
     st = evaluate(db, csp)
     return {"code": csp.current_code, "name": csp.name, "category": st.category,
             "category_name": CATEGORY_NAMES[st.category], "reason": st.reason,
+            "missing": st.missing, "expired": st.expired,
             "documents": {t: {"status": s.status,
                               "issue_date": s.issue_date.isoformat() if s.issue_date else None,
                               "expiry_date": s.expiry_date.isoformat() if s.expiry_date else None,

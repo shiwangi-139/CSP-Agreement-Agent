@@ -12,7 +12,7 @@ from app import vault
 from app import auth
 from app.db import get_db
 from app.main import app
-from app.models import CSP, Document, InternalUser, PortalToken
+from app.models import CSP, Document, DocumentStatus, InternalUser, PortalToken
 from app.portal_tokens import issue_upload_link, resolve_token
 
 
@@ -137,11 +137,10 @@ def test_blurry_photo_is_rejected_and_counts_as_missing(client, monkeypatch):
     r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=date.today().isoformat()),
                files={"pvr_file": ("pvr.png", _blurry_png(), "image/png")})
     res = r.json()["results"][0]
-    assert not res["ok"] and "scanned pdf" in res["message"]["en"].lower()
+    # Told at once what to fix; nothing stored, so it still counts as missing.
+    assert not res["ok"] and ("blurry" in res["message"]["en"] or "not visible" in res["message"]["en"])
     s = Session()
-    d = s.query(Document).filter_by(csp_id=cid).one()
-    assert d.readability == "UNREADABLE" and not d.is_current and "/unreadable/" in d.storage_path
-    assert "_PVR_UNREADABLE_received_" in d.storage_path or "_UNKNOWN_UNREADABLE_received_" in d.storage_path
+    assert s.query(Document).filter_by(csp_id=cid).count() == 0
     s.close()
 
 
@@ -234,3 +233,50 @@ def test_agent_api_needs_its_own_key(client, monkeypatch):
     monkeypatch.setattr(auth, "AGENT_API_KEY", "agent-key")
     assert c.get("/api/agent/outbox").status_code == 401
     assert c.get("/api/agent/outbox", headers={"X-Agent-Key": "agent-key"}).status_code == 200
+
+
+def test_slab_lists_can_show_only_csps_with_an_expired_document(client, monkeypatch):
+    from app.compliance import refresh_category
+    c, Session = client
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "")
+    s = Session()
+    tag = uuid.uuid4().hex[:6]
+    code = f"8Z{int(tag, 16) % 1000000:06d}"
+    csp = CSP(name=f"Slab CSP {tag}", current_code=code, lookup_code=code, is_active_in_calling_sheet=True)
+    s.add(csp)
+    s.flush()
+    s.add(Document(csp_id=csp.id, document_type="AGREEMENT", sha256=uuid.uuid4().hex, readability="READABLE",
+                   status=DocumentStatus.EXPIRED, is_current=True,
+                   issue_date=date.today() - timedelta(days=800), expiry_date=date.today() - timedelta(days=10)))
+    s.flush()
+    refresh_category(s, csp)
+    s.commit()
+    assert csp.category == 3                       # one document on file
+    s.close()
+    summary = c.get("/api/hub/summary").json()
+    assert summary["categories_with_expired"]["3"] >= 1
+    rows = c.get(f"/api/hub/csps?category=3&expired=1&q={code}").json()["rows"]
+    assert [r["code"] for r in rows] == [code] and rows[0]["docs"]["AGREEMENT"]["status"] == "EXPIRED"
+
+
+def _photo(w, h, value=200, text=True, blur=0):
+    import numpy as np
+    import cv2
+    img = np.full((h, w), value, np.uint8)
+    if text:
+        for i in range(25):
+            cv2.putText(img, "CHARACTER CERTIFICATE Date 12/05/2025 no adverse entry", (30, 60 + i * 50),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, 20 if value > 100 else 60, 2)
+    if blur:
+        img = cv2.GaussianBlur(img, (blur, blur), 0)
+    return cv2.imencode(".jpg", img)[1].tobytes()
+
+
+def test_photo_check_names_the_problem():
+    from app.ocr_service import photo_problem
+    assert photo_problem(_photo(400, 560)) == "too_small"           # forwarded thumbnail / screenshot
+    assert photo_problem(_photo(1000, 1400, value=25)) == "too_dark"
+    assert photo_problem(_photo(1000, 1400, value=250, text=False)) == "washed_out"
+    assert photo_problem(_photo(1000, 1400, blur=41)) == "blurry"
+    assert photo_problem(_photo(1000, 1400)) is None                 # a usable photo goes on to OCR
+    assert photo_problem(b"%PDF-1.4 ...") is None                    # PDFs are never pre-rejected

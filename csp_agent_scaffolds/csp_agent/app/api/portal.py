@@ -39,7 +39,7 @@ from ..document_service import store_extracted_document
 from ..expiry_engine import add_years
 from ..models import (AgreementEvent, ContactChangeRequest, CSP, DocumentStatus, InternalUser,
                       ManualReviewQueue, ReviewStatus)
-from ..ocr_service import detect_mime
+from ..ocr_service import detect_mime, photo_problem
 from ..portal_tokens import resolve_token, revoke_if_complete
 
 logger = logging.getLogger(__name__)
@@ -65,6 +65,16 @@ MSG = {
     "wrong_doc": ("यह सही दस्तावेज़ नहीं है। कृपया इस भाग में सही दस्तावेज़ अपलोड करें।",
                   "This is not the right document for this section. Please upload the correct document."),
     "duplicate": ("यह फ़ाइल पहले से हमारे पास है।", "We already have this file."),
+    # Photo checks (app/ocr_service.py: photo_problem): tell the CSP exactly what to fix.
+    "too_small": ("फोटो बहुत छोटी है। पूरा पन्ना फ्रेम में रखें और कैमरे से सीधे फोटो लें (स्क्रीनशॉट या फॉरवर्ड की हुई फोटो नहीं)।",
+                  "The photo is too small. Keep the whole page in the frame and take the photo with the camera "
+                  "(not a screenshot or a forwarded photo)."),
+    "too_dark": ("फोटो बहुत अंधेरी है। दिन की रोशनी में या बल्ब के पास, बिना परछाईं के फोटो लें।",
+                 "The photo is too dark. Take it in daylight or under a light, without shadows."),
+    "washed_out": ("फोटो में अक्षर दिखाई नहीं दे रहे (बहुत ज़्यादा रोशनी या फ्लैश)। फ्लैश बंद करके दोबारा फोटो लें।",
+                   "The text is not visible (too much light or flash). Turn the flash off and take the photo again."),
+    "blurry": ("फोटो धुंधली है। फोन को स्थिर रखें, अक्षरों पर टैप करके फोकस करें, फिर फोटो लें।",
+               "The photo is blurry. Hold the phone still, tap on the text to focus, then take the photo."),
     "accepted": ("दस्तावेज़ स्वीकार किया गया। धन्यवाद!", "Document accepted. Thank you!"),
     "review": ("दस्तावेज़ मिल गया। आपकी भरी गई तारीख और दस्तावेज़ की तारीख अलग है, हमारी टीम इसे जाँचेगी।",
                "Document received. The date you entered differs from the document, so our team will check it."),
@@ -204,6 +214,11 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
             res["message"] = _msg("file_type")
             continue
 
+        problem = photo_problem(data)
+        if problem:
+            # Not stored: the CSP retakes the photo right away.
+            res["message"] = _msg(problem)
+            continue
         ex = await run_in_threadpool(extract_document_fields_deterministic, data, upload.filename)
         if ex["readability"] == "UNREADABLE":
             ex["document_type"] = ex.get("document_type") if ex.get("document_type") != "UNKNOWN" else doc_type

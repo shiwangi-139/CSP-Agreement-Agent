@@ -151,6 +151,9 @@ def store_extracted_document(
     db.flush()
     if owner_review:
         db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=owner_review[:500]))
+    else:
+        from .accuracy import maybe_spot_check
+        maybe_spot_check(db, doc)
     if decision == "READABLE":
         recompute_current(db, csp, doc_type)
         sync_agreement_row(db, csp)

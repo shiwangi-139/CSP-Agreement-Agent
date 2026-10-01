@@ -94,7 +94,7 @@ def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
         head += [f"{SHORT[t]} status", f"{SHORT[t]} issued", f"{SHORT[t]} expires", f"{SHORT[t]} days left"]
     head += ["Next action", "Folder"]
 
-    rows, fills, by_cat, expiring = [], [], {1: [], 2: [], 3: [], 4: []}, []
+    rows, fills, by_cat, expiring, renewal = [], [], {1: [], 2: [], 3: [], 4: []}, [], []
     missing = {t: 0 for t in REQUIRED_TYPES}
     for c in csps:
         st = evaluate(db, c, today)
@@ -118,10 +118,13 @@ def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
         rows.append(row)
         fills.append(fill)
         by_cat[st.category].append((row, fill))
+        if st.expired:
+            renewal.append((row, fill))
 
     queued = db.query(OutboundMessage).filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW).count()
     summary = [["Generated", datetime.now().strftime("%d-%m-%Y %H:%M")], ["Active CSPs (calling sheet)", len(csps)]]
     summary += [[slab_label(k), len(v)] for k, v in by_cat.items()]
+    summary += [["CSPs with an expired document (any slab)", len(renewal)]]
     summary += [[f"{DOC_LABELS[t][0]} missing or unreadable", missing[t]] for t in REQUIRED_TYPES]
     summary += [[f"Documents expiring within {EXPIRING_WITHIN_DAYS} days", len(expiring)],
                 ["Messages waiting for approval", queued]]
@@ -131,6 +134,7 @@ def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
     _sheet(wb, "All CSPs", head, rows, fills=fills)
     for k, items in by_cat.items():
         _sheet(wb, f"Slab {k} {SLAB_NAMES[k]}", head, [r for r, _ in items], fills=[f for _, f in items])
+    _sheet(wb, "Renewal due", head, [r for r, _ in renewal], fills=[f for _, f in renewal])
     expiring.sort(key=lambda r: r[-1])
     _sheet(wb, f"Expiring {EXPIRING_WITHIN_DAYS} days",
            ["CSP code", "CSP name", "RM", "DC", "Document", "Issued", "Expires", "Days left"], expiring,
