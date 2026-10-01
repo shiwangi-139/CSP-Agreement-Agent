@@ -8,8 +8,10 @@ place. Use after a rule is improved. Gmail is not read again.
 
 Only changes to issue date, expiry, validity rule or status are written;
 everything is printed first (and saved to logs/reextract_*.csv) so you can
-check it. Documents a reviewer accepted, corrected or rejected, and copies
-held because their owner is unconfirmed, are left alone.
+check it. Documents a reviewer accepted, corrected or rejected are left alone.
+Copies held in Review because their owner is unconfirmed keep their dates,
+but are still rejected if they turn out not to be the document itself (a
+PVR application receipt or fee challan).
 """
 import argparse
 import csv
@@ -22,11 +24,12 @@ from app.compliance import refresh_category
 from app.db import SessionLocal
 from app import vault
 from app.document_service import _d, _status_for, recompute_current, sync_agreement_row
-from app.models import CSP, Document, DocumentStatus
+from app.models import CSP, Document, DocumentStatus, ManualReviewQueue, ReviewStatus
 
 KEEP = {DocumentStatus.MANUAL_VERIFIED, DocumentStatus.REJECTED}
 # Re-read as "not the document itself": the stored copy is rejected.
-NOT_THE_DOCUMENT = {"PVR_APPLICATION_ONLY"}
+NOT_THE_DOCUMENT = {"PVR_APPLICATION_ONLY", "NOT_A_PVR"}
+TYPES = {"AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"}
 
 
 def main():
@@ -49,9 +52,10 @@ def main():
         print(f"{len(rows)} documents to re-check" + ("" if args.apply else " (dry run)"))
         report = []
         for d, csp in rows:
-            if d.status in KEEP or (d.extracted_fields or {}).get("owner_check"):
+            if d.status in KEEP:            # a person already decided: never overridden
                 skipped += 1
                 continue
+            held = bool((d.extracted_fields or {}).get("owner_check"))
             path = vault.abs_path(d.storage_path)
             if path is None or not path.exists():
                 skipped += 1
@@ -66,6 +70,10 @@ def main():
                 report.append({"document_id": d.id, "csp_code": csp.current_code, "csp_name": csp.name,
                                "type": d.document_type, "change": f"REJECT: {reason}", "file": d.storage_path})
                 if args.apply:
+                    # Its open Review item (owner check, spot check) has nothing left to decide.
+                    for item in db.query(ManualReviewQueue).filter(ManualReviewQueue.document_id == d.id,
+                                                                   ManualReviewQueue.status == ReviewStatus.PENDING):
+                        item.status, item.correction_notes = ReviewStatus.REJECTED, f"re-read: {reason}"[:500]
                     d.status = DocumentStatus.REJECTED
                     d.extracted_fields = {**(d.extracted_fields or {}), "rejection_reason": reason,
                                           "reextracted_on": date.today().isoformat()}
@@ -75,11 +83,18 @@ def main():
                     vault.place_csp(db, csp)  # moves it into rejected/
                     db.commit()
                 continue
-            if ex["readability"] != "READABLE" or ex["document_type"] != d.document_type:
+            if held:
+                # Held because its owner is unconfirmed: dates wait for the reviewer.
+                skipped += 1
+                continue
+            retyped = (ex["readability"] == "READABLE" and ex["document_type"] in TYPES
+                       and ex["document_type"] != d.document_type)
+            if ex["readability"] != "READABLE" or (ex["document_type"] != d.document_type and not retyped):
                 print(f"  {csp.current_code} {d.document_type}: now {ex['readability']} {ex['document_type']} — left unchanged")
                 skipped += 1
                 continue
-            new = {"issue_date": _d(ex.get("start_date")), "expiry_date": _d(ex.get("expiry_date")),
+            new = {"document_type": ex["document_type"],
+                   "issue_date": _d(ex.get("start_date")), "expiry_date": _d(ex.get("expiry_date")),
                    "validity_rule_used": ex.get("validity_rule_used"), "status": _status_for(ex)}
             old = {k: getattr(d, k) for k in new}
             if old == new:
@@ -98,6 +113,9 @@ def main():
                 d.validity_months = ex.get("validity_months")
                 d.date_source = ex.get("date_source")
                 d.extracted_fields = {**(d.extracted_fields or {}), "reextracted_on": date.today().isoformat()}
+                if retyped:
+                    # e.g. a 13-page agreement filed as a PVR: both sections change.
+                    recompute_current(db, csp, old["document_type"])
                 recompute_current(db, csp, d.document_type)
                 sync_agreement_row(db, csp)
                 refresh_category(db, csp)

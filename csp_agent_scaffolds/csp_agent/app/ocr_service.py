@@ -213,6 +213,25 @@ PVR_APPLICATION = [
     r"service\s+request(?:ed)?\s+(?:no|for)",
     # the application form itself: Haryana "CHARACTER VERIFICATION REQUEST"
     r"verification\s+request", r"purpose\s+(?:for|of)\s+applying", r"applicant\s+name", r"आवेदक\s*का\s*नाम",
+    # more application forms / receipts seen in CSP mail (Delhi PCC, Haryana,
+    # UP, Maharashtra): "PCC APPLICATION FORM ... STATUS: UNDER", "Character
+    # Certificate APPLICATION RECEIPE" (sic), "Receiving Receipt ... REQUEST
+    # Form No. ... Apply Date", "Application cum Personal Particulars Form"
+    r"application\s+form", r"application\s+rece\w*", r"receiving\s+receipt", r"request\s+form",
+    r"apply\s+date", r"reason\s+for\s+application", r"personal\s+particulars\s+form",
+    r"status\s*:?\s*under\b",
+]
+# Forms that are not a police verification at all (but mention one).
+NOT_A_PVR = [
+    r"due\s+diligence\s+report", r"kyc\s+verification\s+engagement", r"format\s+for\s+due\s+diligence",
+]
+# The agreement's structure. Its clauses mention "police verification" (of the
+# CSP's staff), and OCR often garbles the heading on stamp paper, so 3 or more
+# of these mean AGREEMENT whatever else the text mentions.
+AGREEMENT_MARKERS = [
+    r"non\s*-?\s*judicial", r"e\s*-?\s*stamp", r"stamp\s+duty", r"on\s+this\s+day\s+of", r"effective\s+date",
+    r"hereby\s+appoints", r"initials\s+of\s+(?:eko|csp)", r"relationship\s+definition", r"security\s+deposit",
+    r"annexure\s*[123]", r"witness\s+whereof", r"customer\s+service\s+point", r"terms\s+of\s+their\s+relationship",
 ]
 PVR_ISSUED = [
     r"(?:it\s+is|is\s+hereby|this\s+is\s+to)\s+certif", r"no\s+adverse", r"nothing\s+adverse",
@@ -239,9 +258,15 @@ def classify_allowlist_gate(text: str, filename: str = "") -> Tuple[bool, str, s
     combined = f"{filename} {text}".lower()
     body = (text or "").lower()
 
+    structure = _matches(AGREEMENT_MARKERS, body)
+    if len(structure) >= 3:
+        return True, "AGREEMENT", f"Agreement structure: {len(structure)} markers", 0.9
     for doc_type, patterns in (("AGREEMENT", STRONG_AGREEMENT), ("POLICE_VERIFICATION", STRONG_PVR),
                                ("IIBF_CERTIFICATE", STRONG_IIBF)):
         hits = _matches(patterns, body)
+        if hits and doc_type == "POLICE_VERIFICATION" and _matches(NOT_A_PVR, body):
+            return (False, "NOT_A_PVR", "This is a bank due-diligence / KYC form, not a police verification "
+                    "or character certificate.", 0.9)
         if hits and doc_type == "POLICE_VERIFICATION" and _matches(PVR_APPLICATION, body) \
                 and not _matches(PVR_ISSUED, body):
             return (False, "PVR_APPLICATION_ONLY",

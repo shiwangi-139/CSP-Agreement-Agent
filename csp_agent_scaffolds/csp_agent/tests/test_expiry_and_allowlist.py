@@ -153,3 +153,52 @@ def test_haryana_character_verification_request_form_is_not_a_pvr():
             "Appplicant Name (आवेदक का नाम): Chander pal Purpose for Applying: for SBI CSP Mode of Receiving: Wireless")
     ok, doc_type, _, _ = classify_allowlist_gate(form)
     assert not ok and doc_type == "PVR_APPLICATION_ONLY"
+
+
+def _gate(text):
+    from app.ocr_service import classify_allowlist_gate
+    return classify_allowlist_gate(text)[1]
+
+
+def test_agreement_with_garbled_heading_is_not_a_pvr():
+    # 13-page agreements on stamp paper, heading garbled by OCR; the body's
+    # "obtain their police verification" clause made them look like a PVR.
+    text = ("IR he Rs100 HUND INDIA NON JUDICIALTS UTTAR PRADESH STOMER ERVICE OINT GREEMENT On this day of, "
+            "10/08/2023 (Effective Date) Eko hereby appoints ... I. RELATIONSHIP DEFINITION ... CSP shall ensure "
+            "that due diligence is done on employees and also obtain their police verification before their "
+            "appointment. ... (Initials of Eko) (Initials of CSP) ... 5. SECURITY DEPOSIT ... Annexure 2")
+    assert _gate(text) == "AGREEMENT"
+
+
+def test_real_certificates_from_several_states_stay_pvr():
+    up = ("Character Certificate Certificate No. - 316542516797 Date- 29/05/2025 It is certified that Mr. Sohit Kumar "
+          "no adverse entry was found ... valid only for one year. Crime and Criminal Tracking Network and Systems (CCTNS)")
+    bihar = ("Government of Bihar Office of Superintendent of Police District : NAWADA Character Certificate "
+             "Date: 15/12/2025 This is to certify that ... nothing adverse ... police records")
+    delhi = ("OFFICE OF THE DEPUTY COMMISSIONER OF POLICE: SPECIAL BRANCH DELHI POLICE BHAWAN "
+             "POLICE CLEARANCE CERTIFICATE This is to certify that no adverse report ... Date 02/06/2026")
+    assert _gate(up) == _gate(bihar) == _gate(delhi) == "POLICE_VERIFICATION"
+
+
+def test_application_forms_and_receipts_from_several_states_are_rejected():
+    forms = [
+        # Delhi Police PCC application (still under verification)
+        "SPECIAL BRANCH DELHI POLICE BHAWAN POLICE CLEARANCE CERTIFICATE (PCC) APPLICATION FORM APPLICATION "
+        "NUMBER :: DLSB- PCC/202606020019 STATUS: UNDER MODE OF VERIFICATION : ADDRESS AND VERIFICATION",
+        # Haryana (OCR wrote RECEIPE)
+        "HARYANA POLICE VERI FIC ATION SERVICES Character Certificate APPLICATION RECEIPE Name: REETU KAMBOI "
+        "Application No.: 1323126608742",
+        # UP online request
+        "Receiving Receipt CHARACTER CERTIFICATE REQUEST Form No. 202503277853 Apply Date 27-03-2025 Apply Time "
+        "09:28:37 District Lucknow Reason for Application CSP CENTER HETU",
+        # Maharashtra
+        "OFFICE OF THE COMMISSIONER OF POLICE,THANE Application cum Personal Particulars Form for Character & "
+        "Antecedents Verification Applicant's Name SONAWANE PRAKASH Application ID NDBR01261000709",
+    ]
+    assert [_gate(f) for f in forms] == ["PVR_APPLICATION_ONLY"] * 4
+
+
+def test_bank_due_diligence_form_is_not_a_pvr():
+    text = ("Branch Name & Code: SBI FORMAT FOR DUE DILIGENCE REPORT AND KYC VERIFICATION ENGAGEMENT OF CSP/SUB AGENT "
+            "Name of proposed CSP RAJNI DEVI ... Verification Details: Police verification done")
+    assert _gate(text) == "NOT_A_PVR"
