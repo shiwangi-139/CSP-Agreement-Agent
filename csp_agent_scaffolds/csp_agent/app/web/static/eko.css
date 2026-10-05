@@ -52,7 +52,7 @@ h1, h2, h3 { font-family: var(--font-heading); margin: 0; letter-spacing: -.01em
 /* layout */
 .shell { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
 nav.side { background: var(--forest); color: #fff; padding: 18px 12px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
-nav.side .brand { font: 800 1.1rem var(--font-heading); padding: 0 10px 4px; }
+nav.side .brand { font: 800 1.25rem var(--font-heading); padding: 0 10px 4px; }
 nav.side .brand span { color: var(--saffron); }
 /* Logo: app/web/static/logo.png (falls back to the "eko." text if missing). */
 nav.side .brand { display: flex; align-items: center; gap: 8px; }
