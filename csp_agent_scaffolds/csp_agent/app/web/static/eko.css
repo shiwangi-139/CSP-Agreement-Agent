@@ -54,6 +54,9 @@ h1, h2, h3 { font-family: var(--font-heading); margin: 0; letter-spacing: -.01em
 nav.side { background: var(--forest); color: #fff; padding: 18px 12px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
 nav.side .brand { font: 800 1.1rem var(--font-heading); padding: 0 10px 4px; }
 nav.side .brand span { color: var(--saffron); }
+/* Logo: app/web/static/logo.png (falls back to the "eko." text if missing). */
+nav.side .brand { display: flex; align-items: center; gap: 8px; }
+nav.side .brand .logo-img { height: 28px; width: auto; max-width: 120px; object-fit: contain; }
 nav.side .sub { font-size: .78rem; opacity: .75; padding: 0 10px 16px; }
 nav.side button { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left;
   background: none; border: 0; color: #fff; padding: 9px 10px; border-radius: .6rem; font: 500 .92rem var(--font-body); cursor: pointer; }
