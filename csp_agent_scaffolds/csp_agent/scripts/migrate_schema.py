@@ -23,6 +23,10 @@ MIGRATIONS = [
     "ALTER TABLE csp ADD COLUMN IF NOT EXISTS is_active_in_calling_sheet BOOLEAN DEFAULT TRUE;",
     "ALTER TABLE csp ADD COLUMN IF NOT EXISTS has_missing_contact BOOLEAN DEFAULT FALSE;",
     "ALTER TABLE csp ADD COLUMN IF NOT EXISTS sub_slab VARCHAR;",
+    "ALTER TABLE internal_users ADD COLUMN IF NOT EXISTS login_enabled BOOLEAN DEFAULT FALSE;",
+    "ALTER TABLE internal_users ADD COLUMN IF NOT EXISTS failed_logins INTEGER DEFAULT 0;",
+    "ALTER TABLE internal_users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;",
+    "ALTER TABLE internal_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP;",
     "CREATE INDEX IF NOT EXISTS ix_csp_sub_slab ON csp (sub_slab);",
     "CREATE INDEX IF NOT EXISTS ix_csp_is_active_in_calling_sheet ON csp (is_active_in_calling_sheet);",
 

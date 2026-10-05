@@ -16,13 +16,18 @@ from .auth import require_admin, warn_if_open
 from .db import engine
 from .logging_config import configure_logging
 from .scheduler import get_scheduler_status
-from .api import agent, csp, agreements, documents, ingest, review, campaigns, dashboard, hub, portal
+from .api import agent, csp, agreements, documents, ingest, review, campaigns, dashboard, hub, login, portal
 
 configure_logging()
 logger = logging.getLogger(__name__)
 WEB = Path(__file__).resolve().parent / "web"
 
-app = FastAPI(title="Eko CSP Renewal Agent")
+import os
+# The interactive API docs list every endpoint: off unless asked for (API_DOCS=on),
+# because the app is reachable from the internet through Nginx.
+_docs = os.getenv("API_DOCS", "off").strip().lower() in ("1", "on", "true", "yes")
+app = FastAPI(title="Eko CSP Renewal Agent", docs_url="/docs" if _docs else None,
+              redoc_url="/redoc" if _docs else None, openapi_url="/openapi.json" if _docs else None)
 warn_if_open()
 
 admin = [Depends(require_admin)]
@@ -31,7 +36,9 @@ admin = [Depends(require_admin)]
 app.include_router(portal.router, tags=["portal"])
 # The WhatsApp agent's own API (X-Agent-Key).
 app.include_router(agent.router, prefix="/api/agent", tags=["whatsapp-agent"])
-# Everything else needs X-API-Key.
+# Dashboard login (email + password -> session cookie).
+app.include_router(login.router, tags=["login"])
+# Everything else needs a logged-in user (or X-API-Key from the server itself).
 app.include_router(hub.router, prefix="/api/hub", tags=["dashboard"])
 app.include_router(dashboard.router, tags=["legacy-dashboard"], dependencies=admin)
 app.include_router(csp.router, prefix="/api/csp", tags=["csp"], dependencies=admin)
@@ -47,7 +54,7 @@ app.mount("/static", StaticFiles(directory=str(WEB / "static")), name="static")
 @app.get("/", include_in_schema=False)
 @app.get("/dashboard", include_in_schema=False)
 def dashboard_page():
-    # The page holds no data; it asks for the API key and calls /api/hub/*.
+    # The page holds no data; it shows the login form and calls api/hub/*.
     return FileResponse(WEB / "dashboard.html", media_type="text/html")
 
 

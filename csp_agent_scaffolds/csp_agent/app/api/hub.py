@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from ..auth import require_admin
+from ..auth import Principal, require_admin, require_user
 from ..compliance import (CATEGORY_NAMES, DOC_LABELS, REQUIRED_TYPES, SUB_SLABS, canonical_type, evaluate,
                           sub_slab, sub_slab_label)
 from ..comms import outbound
@@ -28,9 +28,22 @@ from .. import vault
 from ..vault import csp_folder
 
 logger = logging.getLogger(__name__)
-router = APIRouter(dependencies=[Depends(require_admin)])
+router = APIRouter(dependencies=[Depends(require_user)])
 
 _jobs: dict[str, dict] = {}
+
+
+def _mine(query, me: Principal):
+    """An RM sees only their own CSPs; an admin sees all. `query` must
+    involve the CSP table."""
+    return query if me.is_admin else query.filter(CSP.rm_id == me.user_id)
+
+
+def _own_csp(db: Session, csp_id: Optional[int], me: Principal) -> CSP:
+    c = db.get(CSP, csp_id) if csp_id else None
+    if c is None or not (me.is_admin or c.rm_id == me.user_id):
+        raise HTTPException(404, "CSP not found")      # never confirm another RM's CSP exists
+    return c
 
 
 def _iso(v):
@@ -68,14 +81,15 @@ def _msg_json(m: OutboundMessage, csp: Optional[CSP]) -> dict:
 
 # ------------------------------------------------------------------ summary
 @router.get("/summary")
-def summary(db: Session = Depends(get_db)):
-    active = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True))
+def summary(me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    active = _mine(db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)), me)
     cats = dict(active.with_entities(CSP.category, func.count()).group_by(CSP.category).all())
     # Within each slab: CSPs with at least one expired document (renewal due).
     expired_in = dict(active.filter(CSP.category_reason.ilike("%Expired:%"))
                       .with_entities(CSP.category, func.count()).group_by(CSP.category).all())
     subs = dict(active.with_entities(CSP.sub_slab, func.count()).group_by(CSP.sub_slab).all())
-    msg_counts = dict(db.query(OutboundMessage.channel, func.count())
+    msg_counts = dict(_mine(db.query(OutboundMessage.channel, func.count())
+                            .join(CSP, CSP.id == OutboundMessage.csp_id), me)
                       .filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW)
                       .group_by(OutboundMessage.channel).all())
     gaps = {"csp_phone": 0, "csp_email": 0, "rm_unassigned": 0, "dc_unassigned": 0}
@@ -85,7 +99,7 @@ def summary(db: Session = Depends(get_db)):
         gaps["csp_email"] += "email_missing" in g.get("csp", [])
         gaps["rm_unassigned"] += "not_assigned" in g.get("rm", [])
         gaps["dc_unassigned"] += "not_assigned" in g.get("dc", [])
-    soon = (db.query(func.count(Document.id))
+    soon = (_mine(db.query(func.count(Document.id)).join(CSP, CSP.id == Document.csp_id), me)
             .filter(Document.is_current.is_(True), Document.expiry_date.isnot(None),
                     Document.expiry_date >= date.today(),
                     Document.expiry_date <= date.fromordinal(date.today().toordinal() + 60)).scalar())
@@ -104,20 +118,24 @@ def summary(db: Session = Depends(get_db)):
         "drafts_pending": {"EMAIL": msg_counts.get("EMAIL", 0), "WHATSAPP": msg_counts.get("WHATSAPP", 0)},
         "expiring_60_days": soon,
         "contact_gaps": gaps,
-        "review_pending": db.query(ManualReviewQueue).filter_by(status=ReviewStatus.PENDING).count(),
-        "contact_changes_pending": db.query(ContactChangeRequest).filter_by(status="PENDING").count(),
+        "review_pending": _mine(db.query(ManualReviewQueue).join(Document, Document.id == ManualReviewQueue.document_id)
+                                .join(CSP, CSP.id == Document.csp_id), me)
+                          .filter(ManualReviewQueue.status == ReviewStatus.PENDING).count(),
+        "contact_changes_pending": db.query(ContactChangeRequest).filter_by(status="PENDING").count() if me.is_admin else 0,
+        "me": {"name": me.name, "role": me.role},
         "modes": {"outbound": OUTBOUND_COMMUNICATION_MODE, "whatsapp": WHATSAPP_MODE,
                   "calling_sheet": f"{CALLING_SHEET_SOURCE} · {CALLING_SHEET_TAB}"},
         "ingestion": ingestion_status(db),
-        "jobs": _jobs,
+        "jobs": _jobs if me.is_admin else {},
     }
 
 
 # --------------------------------------------------------------------- CSPs
 @router.get("/csps")
 def list_csps(category: Optional[int] = None, q: str = "", rm: str = "", expired: bool = False,
-              sub: str = "", tag: str = "", page: int = 1, size: int = 50, db: Session = Depends(get_db)):
-    query = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True))
+              sub: str = "", tag: str = "", page: int = 1, size: int = 50,
+              me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    query = _mine(db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)), me)
     if category:
         query = query.filter(CSP.category == category)
     if expired or tag == "expired":
@@ -157,10 +175,8 @@ def list_csps(category: Optional[int] = None, q: str = "", rm: str = "", expired
 
 
 @router.get("/csp/{csp_id}")
-def csp_detail(csp_id: int, db: Session = Depends(get_db)):
-    c = db.get(CSP, csp_id)
-    if c is None:
-        raise HTTPException(404, "CSP not found")
+def csp_detail(csp_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    c = _own_csp(db, csp_id, me)
     staff = _staff_map(db)
     st = evaluate(db, c)
     docs = db.query(Document).filter_by(csp_id=c.id).order_by(Document.uploaded_at.desc()).all()
@@ -191,10 +207,8 @@ def csp_detail(csp_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/csp/{csp_id}/upload-link")
-def make_upload_link(csp_id: int, db: Session = Depends(get_db)):
-    c = db.get(CSP, csp_id)
-    if c is None:
-        raise HTTPException(404, "CSP not found")
+def make_upload_link(csp_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    c = _own_csp(db, csp_id, me)
     st = evaluate(db, c)
     link = issue_upload_link(db, c, st.needs_upload or list(REQUIRED_TYPES))
     db.commit()
@@ -202,10 +216,8 @@ def make_upload_link(csp_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/csp/{csp_id}/zip")
-def csp_zip(csp_id: int, db: Session = Depends(get_db)):
-    c = db.get(CSP, csp_id)
-    if c is None:
-        raise HTTPException(404, "CSP not found")
+def csp_zip(csp_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    c = _own_csp(db, csp_id, me)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for d in db.query(Document).filter_by(csp_id=c.id, is_current=True):
@@ -221,8 +233,9 @@ def csp_zip(csp_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------- documents
 @router.get("/documents")
 def list_documents(doc_type: str = "", status: str = "", current_only: bool = True, channel: str = "",
-                   page: int = 1, size: int = 100, db: Session = Depends(get_db)):
-    q = db.query(Document, CSP).join(CSP, CSP.id == Document.csp_id)
+                   page: int = 1, size: int = 100, me: Principal = Depends(require_user),
+                   db: Session = Depends(get_db)):
+    q = _mine(db.query(Document, CSP).join(CSP, CSP.id == Document.csp_id), me)
     if channel:
         # Recent uploads: every copy received on this channel, newest first.
         q = q.filter(Document.upload_channel == channel)
@@ -241,8 +254,11 @@ def list_documents(doc_type: str = "", status: str = "", current_only: bool = Tr
 
 
 @router.get("/documents/{doc_id}/file")
-def document_file(doc_id: int, download: bool = False, db: Session = Depends(get_db)):
+def document_file(doc_id: int, download: bool = False, me: Principal = Depends(require_user),
+                  db: Session = Depends(get_db)):
     d = db.get(Document, doc_id)
+    if d is not None:
+        _own_csp(db, d.csp_id, me)
     path = vault.abs_path(d.storage_path) if d is not None else None
     if path is None or not path.exists():
         raise HTTPException(404, "file not found")
@@ -268,9 +284,12 @@ MESSAGE_KINDS = {
 
 @router.get("/messages")
 def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = None, slab: str = "",
-                  kind: str = "", page: int = 1, size: int = 50, db: Session = Depends(get_db)):
+                  kind: str = "", page: int = 1, size: int = 50, me: Principal = Depends(require_user),
+                  db: Session = Depends(get_db)):
     slab = int(slab) if slab.strip().isdigit() else None   # "" (All slabs) or a slab number
-    base = db.query(OutboundMessage)
+    base = db.query(OutboundMessage).outerjoin(CSP, CSP.id == OutboundMessage.csp_id)
+    if not me.is_admin:
+        base = base.filter(CSP.rm_id == me.user_id)
     if channel:
         base = base.filter(OutboundMessage.channel == channel.upper())
     if status:
@@ -278,19 +297,19 @@ def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = N
     if csp_id:
         base = base.filter(OutboundMessage.csp_id == csp_id)
     # Counts per slab and per message type, for the tabs (within channel + status).
-    by_slab = dict(base.join(CSP, CSP.id == OutboundMessage.csp_id)
-                   .with_entities(CSP.category, func.count()).group_by(CSP.category).all())
+    by_slab = dict(base.with_entities(CSP.category, func.count()).group_by(CSP.category).all())
     by_template = dict(base.with_entities(OutboundMessage.template_name, func.count())
                        .group_by(OutboundMessage.template_name).all())
     q = base
     if slab:
-        q = q.join(CSP, CSP.id == OutboundMessage.csp_id).filter(CSP.category == slab)
+        q = q.filter(CSP.category == slab)
     if kind in MESSAGE_KINDS:
         q = q.filter(OutboundMessage.template_name.in_(MESSAGE_KINDS[kind]))
     total = q.count()
     rows = q.order_by(OutboundMessage.created_at.desc()).offset((page - 1) * size).limit(min(size, 200)).all()
     csps = {c.id: c for c in db.query(CSP).filter(CSP.id.in_({m.csp_id for m in rows} or {-1}))}
-    counts = dict(db.query(OutboundMessage.status, func.count())
+    counts = dict(_mine(db.query(OutboundMessage.status, func.count())
+                        .outerjoin(CSP, CSP.id == OutboundMessage.csp_id), me)
                   .filter(OutboundMessage.channel == channel.upper() if channel else True)
                   .group_by(OutboundMessage.status).all())
     return {"total": total, "counts": {k.value: v for k, v in counts.items()},
@@ -299,16 +318,17 @@ def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = N
             "rows": [_msg_json(m, csps.get(m.csp_id)) for m in rows]}
 
 
-def _get_msg(db: Session, message_id: int) -> OutboundMessage:
+def _get_msg(db: Session, message_id: int, me: Principal) -> OutboundMessage:
     m = db.get(OutboundMessage, message_id)
-    if m is None:
+    if m is None or not (me.is_admin or (m.csp_id and db.get(CSP, m.csp_id).rm_id == me.user_id)):
         raise HTTPException(404, "message not found")
     return m
 
 
 @router.post("/messages/{message_id}/approve")
-def approve_message(message_id: int, reviewer: str = Depends(require_admin), db: Session = Depends(get_db)):
-    m = _get_msg(db, message_id)
+def approve_message(message_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    m = _get_msg(db, message_id, me)
+    reviewer = me.name
     try:
         outbound.approve(db, m, reviewer)
     except ValueError as e:
@@ -319,12 +339,14 @@ def approve_message(message_id: int, reviewer: str = Depends(require_admin), db:
 
 
 @router.post("/messages/approve-bulk")
-def approve_bulk(ids: list[int] = Body(..., embed=True), reviewer: str = Depends(require_admin),
+def approve_bulk(ids: list[int] = Body(..., embed=True), me: Principal = Depends(require_user),
                  db: Session = Depends(get_db)):
-    done = {}
+    done, reviewer = {}, me.name
     for mid in ids[:200]:
         m = db.get(OutboundMessage, mid)
         if m is None or m.status != OutboundStatus.QUEUED_FOR_REVIEW:
+            continue
+        if not me.is_admin and (m.csp_id is None or db.get(CSP, m.csp_id).rm_id != me.user_id):
             continue
         outbound.approve(db, m, reviewer)
         outbound.send(db, m)
@@ -334,9 +356,10 @@ def approve_bulk(ids: list[int] = Body(..., embed=True), reviewer: str = Depends
 
 
 @router.post("/messages/{message_id}/reject")
-def reject_message(message_id: int, reason: str = Body("", embed=True), reviewer: str = Depends(require_admin),
+def reject_message(message_id: int, reason: str = Body("", embed=True), me: Principal = Depends(require_user),
                    db: Session = Depends(get_db)):
-    m = _get_msg(db, message_id)
+    m = _get_msg(db, message_id, me)
+    reviewer = me.name
     try:
         outbound.reject(db, m, reviewer, reason)
     except ValueError as e:
@@ -347,9 +370,9 @@ def reject_message(message_id: int, reason: str = Body("", embed=True), reviewer
 
 @router.post("/messages/{message_id}/edit")
 def edit_message(message_id: int, subject: Optional[str] = Body(None), body: Optional[str] = Body(None),
-                 db: Session = Depends(get_db)):
+                 me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     """Text only: the recipient can never be changed from the dashboard."""
-    m = _get_msg(db, message_id)
+    m = _get_msg(db, message_id, me)
     try:
         outbound.edit_text(m, subject, body)
     except ValueError as e:
@@ -359,7 +382,7 @@ def edit_message(message_id: int, subject: Optional[str] = Body(None), body: Opt
 
 
 # ------------------------------------------------------------------ reports
-@router.get("/reports/{kind}.xlsx")
+@router.get("/reports/{kind}.xlsx", dependencies=[Depends(require_admin)])
 def report_xlsx(kind: str, db: Session = Depends(get_db)):
     """Live Excel: kind = csp (categories, documents, expiring), contacts (every
     CSP / RM / DC contact) or gaps (only what is missing)."""
@@ -377,7 +400,7 @@ def report_xlsx(kind: str, db: Session = Depends(get_db)):
 
 
 # ------------------------------------------------------------------ contacts
-@router.get("/contacts")
+@router.get("/contacts", dependencies=[Depends(require_admin)])
 def contacts(db: Session = Depends(get_db)):
     staff = _staff_map(db)
     csp_rows, rm_rows, dc_rows = [], [], []
@@ -399,7 +422,7 @@ def contacts(db: Session = Depends(get_db)):
     return {"csp": csp_rows, "rm": rm_rows, "dc": dc_rows, "staff": people, "change_requests": changes}
 
 
-@router.post("/staff/{user_id}")
+@router.post("/staff/{user_id}", dependencies=[Depends(require_admin)])
 def update_staff(user_id: int, phone: Optional[str] = Body(None), email: Optional[str] = Body(None),
                  db: Session = Depends(get_db)):
     """RM contact details aren't in the calling-sheet tab, so they're entered
@@ -423,7 +446,7 @@ def update_staff(user_id: int, phone: Optional[str] = Body(None), email: Optiona
     return {"id": u.id, "name": u.name, "phone": u.phone, "email": u.email}
 
 
-@router.post("/contact-changes/{req_id}/{action}")
+@router.post("/contact-changes/{req_id}/{action}", dependencies=[Depends(require_admin)])
 def resolve_contact_change(req_id: int, action: str, db: Session = Depends(get_db)):
     r = db.get(ContactChangeRequest, req_id)
     if r is None or action not in ("done", "dismiss"):
@@ -435,15 +458,15 @@ def resolve_contact_change(req_id: int, action: str, db: Session = Depends(get_d
 
 # ----------------------------------------------------------- review, inbound
 @router.get("/review")
-def review_queue(db: Session = Depends(get_db)):
-    rows = (db.query(ManualReviewQueue, Document, CSP).join(Document, Document.id == ManualReviewQueue.document_id)
-            .join(CSP, CSP.id == Document.csp_id).filter(ManualReviewQueue.status == ReviewStatus.PENDING)
+def review_queue(me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    rows = (_mine(db.query(ManualReviewQueue, Document, CSP).join(Document, Document.id == ManualReviewQueue.document_id)
+                  .join(CSP, CSP.id == Document.csp_id), me).filter(ManualReviewQueue.status == ReviewStatus.PENDING)
             .order_by(ManualReviewQueue.created_at).all())
     return {"rows": [{"id": q.id, "reason": q.reason, "created_at": _iso(q.created_at), "document": _doc_json(d),
                       "csp": {"id": c.id, "code": c.current_code, "name": c.name}} for q, d, c in rows]}
 
 
-@router.get("/accuracy")
+@router.get("/accuracy", dependencies=[Depends(require_admin)])
 def accuracy_stats(days: int = 90, db: Session = Depends(get_db)):
     from .. import accuracy
     return {**accuracy.stats(db, days), "mistakes": accuracy.mistakes(db)}
@@ -451,13 +474,15 @@ def accuracy_stats(days: int = 90, db: Session = Depends(get_db)):
 
 @router.post("/review/{item_id}/resolve")
 def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept: bool = Body(True),
-                   reviewer: str = Depends(require_admin), db: Session = Depends(get_db)):
+                   me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     from ..compliance import refresh_category
     from ..expiry_engine import calculate_document_expiry
+    reviewer = me.name
     q = db.get(ManualReviewQueue, item_id)
     if q is None:
         raise HTTPException(404, "not found")
     d = db.get(Document, q.document_id)
+    _own_csp(db, d.csp_id, me)
     # "Corrected" only when the reviewer actually changed the date (the field
     # is pre-filled with the stored date): that is what accuracy counts.
     changed = bool(issue_date) and date.fromisoformat(issue_date) != d.issue_date
@@ -497,14 +522,14 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
     return {"id": q.id, "status": q.status.value}
 
 
-@router.get("/unmatched")
+@router.get("/unmatched", dependencies=[Depends(require_admin)])
 def unmatched(db: Session = Depends(get_db)):
     """Emails no CSP on the calling sheet matched, with the codes they mention."""
     from .. import reports
     return reports.unmatched_emails(db)
 
 
-@router.get("/inbound")
+@router.get("/inbound", dependencies=[Depends(require_admin)])
 def inbound(status: str = "", page: int = 1, size: int = 50, db: Session = Depends(get_db)):
     q = db.query(InboundMessage)
     if status:
@@ -533,7 +558,7 @@ def _run_job(name: str, fn):
     threading.Thread(target=target, daemon=True).start()
 
 
-@router.post("/run/{job}")
+@router.post("/run/{job}", dependencies=[Depends(require_admin)])
 def run_job(job: str):
     from .. import worker
     jobs = {"sheet": worker.job_sheet, "engine": worker.job_engine, "gmail": worker.job_gmail,

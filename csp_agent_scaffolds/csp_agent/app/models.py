@@ -121,6 +121,23 @@ class InternalUser(Base):
     role = Column(String)  # RM, DC, LHO, ADMIN
     phone = Column(String)
     password_hash = Column(String)
+    # Dashboard login (app/auth.py). Only ADMIN and RM users with a password can log in.
+    login_enabled = Column(Boolean, default=False)
+    failed_logins = Column(Integer, default=0)
+    locked_until = Column(DateTime)
+    last_login_at = Column(DateTime)
+
+
+class AdminSession(Base):
+    """A logged-in dashboard session. Only the SHA-256 of the cookie value is
+    stored, so a database leak does not hand out live sessions."""
+    __tablename__ = "admin_sessions"
+    token_hash = Column(String, primary_key=True)
+    user_id = Column(Integer, ForeignKey("internal_users.id"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False)
+    last_seen_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    ip = Column(String)
 
 
 class Agreement(Base):

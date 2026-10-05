@@ -6,13 +6,17 @@
 <title>Eko CSP Renewals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
-<link rel="stylesheet" href="/static/eko.css">
+<link rel="stylesheet" href="static/eko.css">
 </head>
 <body>
 <div id="login" class="login card" style="display:none">
   <h2>Eko CSP Renewals</h2>
-  <p class="muted">Enter the dashboard API key (ADMIN_API_KEY).</p>
-  <form id="loginf"><input type="text" id="key" autocomplete="off" style="width:100%"><p><button class="btn primary">Open dashboard</button></p></form>
+  <p class="muted">Sign in with your Eko email and password.</p>
+  <form id="loginf">
+    <label>Email <input type="email" id="lemail" autocomplete="username" required style="width:100%"></label>
+    <label>Password <input type="password" id="lpass" autocomplete="current-password" required style="width:100%"></label>
+    <p class="small" id="lerr" style="color:#b42318"></p>
+    <p><button class="btn primary">Sign in</button></p></form>
 </div>
 
 <div class="shell" id="app" style="display:none">
@@ -28,6 +32,7 @@
     <button data-view="review">Review queue <span class="count" id="n-review"></span></button>
     <button data-view="accuracy">Accuracy</button>
     <div class="foot" id="modes"></div>
+    <div class="foot" id="whoami"></div>
   </nav>
   <main>
     <div class="topbar">
@@ -62,10 +67,13 @@
   const state = {view: "overview", cat: 1, q: "", expiredOnly: false, page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
 
   // ---------------------------------------------------------------- api
-  let KEY = "";
-  try { KEY = sessionStorage.getItem("eko_key") || ""; } catch (e) {}
+  // Paths are relative (no leading "/"): the page is served at "/" on the
+  // server and at /csp-agreement-agent/admin/ through Nginx. The session is a
+  // cookie; X-Requested-With proves the request comes from this page.
+  const H = {"X-Requested-With": "csp-dashboard"};
+  const rel = (path) => path.replace(/^\//, "");
   async function api(path, opts = {}) {
-    const r = await fetch(path, {...opts, headers: {"Content-Type": "application/json", "X-API-Key": KEY, ...(opts.headers || {})}});
+    const r = await fetch(rel(path), {...opts, credentials: "same-origin", headers: {"Content-Type": "application/json", ...H, ...(opts.headers || {})}});
     if (r.status === 401) { showLogin(); throw new Error("Unauthorised"); }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail?.en || j.detail || r.statusText);
@@ -74,7 +82,15 @@
   const post = (path, body) => api(path, {method: "POST", body: JSON.stringify(body || {})});
   function toast(t) { const el = $("#toast"); el.textContent = t; el.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(() => el.style.display = "none", 3200); }
   function showLogin() { $("#app").style.display = "none"; $("#login").style.display = "block"; }
-  $("#loginf").onsubmit = (e) => { e.preventDefault(); KEY = $("#key").value.trim(); try { sessionStorage.setItem("eko_key", KEY); } catch (e) {} boot(); };
+  $("#loginf").onsubmit = async (e) => {
+    e.preventDefault(); $("#lerr").textContent = "";
+    const r = await fetch("auth/login", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json", ...H},
+      body: JSON.stringify({email: $("#lemail").value.trim(), password: $("#lpass").value})});
+    $("#lpass").value = "";
+    if (!r.ok) { const j = await r.json().catch(() => ({})); $("#lerr").textContent = j.detail || "Sign-in failed."; return; }
+    boot();
+  };
+  async function logout() { await fetch("auth/logout", {method: "POST", credentials: "same-origin", headers: H}); location.reload(); }
 
   // --------------------------------------------------------------- theme
   $("#theme").onclick = () => {
@@ -374,7 +390,7 @@
     // download finishes is blocked as a pop-up.
     const tab = window.open("", "_blank");
     if (tab) tab.document.write("<p style='font-family:sans-serif'>Loading document…</p>");
-    const r = await fetch(`/api/hub/documents/${id}/file${download ? "?download=1" : ""}`, {headers: {"X-API-Key": KEY}});
+    const r = await fetch(`api/hub/documents/${id}/file${download ? "?download=1" : ""}`, {credentials: "same-origin", headers: H});
     if (!r.ok) { if (tab) tab.close(); return toast(r.status === 401 ? "Wrong API key." : "File not found."); }
     const url = URL.createObjectURL(await r.blob());
     if (tab) tab.location.href = url;
@@ -403,14 +419,14 @@
       if (ds.file) { e.preventDefault(); return openFile(ds.file); }
       if (ds.xlsx) {
         e.preventDefault();
-        const r = await fetch(`/api/hub/reports/${ds.xlsx}.xlsx`, {headers: {"X-API-Key": KEY}});
+        const r = await fetch(`api/hub/reports/${ds.xlsx}.xlsx`, {credentials: "same-origin", headers: H});
         if (!r.ok) return alert("Report failed: " + r.status);
         const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
         a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "report.xlsx"; a.click(); return;
       }
       if (ds.zip) {
         e.preventDefault();
-        const r = await fetch(`/api/hub/csp/${ds.zip}/zip`, {headers: {"X-API-Key": KEY}});
+        const r = await fetch(`api/hub/csp/${ds.zip}/zip`, {credentials: "same-origin", headers: H});
         const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
         a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "documents.zip"; a.click(); return;
       }
@@ -462,6 +478,11 @@
       $("#n-drafts").textContent = drafts || ""; $("#n-review").textContent = s.review_pending || "";
       $("#n-cat").textContent = (s.categories[2] + s.categories[3] + s.categories[4]) || "";
       $("#modepill").textContent = s.modes.outbound === "review" ? "Review mode: nothing is sent without approval" : "Auto mode: approved messages send automatically";
+      const me = s.me || {};
+      $("#whoami").innerHTML = `${esc(me.name || "")} · <b>${esc(me.role || "")}</b><br><a href="#" id="logout">Sign out</a>`;
+      $("#logout").onclick = (e) => { e.preventDefault(); logout(); };
+      document.querySelectorAll('#nav [data-view="contacts"],#nav [data-view="ingestion"],#nav [data-view="accuracy"]')
+        .forEach((b) => b.style.display = me.role === "ADMIN" ? "" : "none");
       $("#modes").innerHTML = `Outbound: <b>${esc(s.modes.outbound)}</b><br>WhatsApp: <b>${esc(s.modes.whatsapp)}</b><br>Sheet: ${esc(s.modes.calling_sheet)}`;
       document.querySelectorAll("#nav [data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
       $("#title").textContent = TITLES[state.view];
