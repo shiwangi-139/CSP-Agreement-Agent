@@ -237,6 +237,18 @@
       const s = state.summary.ingestion;
       const st = s.state || {};
       const d = await api("/api/hub/inbound?size=100");
+      const u = await api("/api/hub/unmatched");
+      const unmatchedCard = `<div class="card" style="margin-top:14px"><h2>Emails not matched to a CSP (${u.total})</h2>
+        <p class="small muted">${u.counts.code_not_on_sheet} mention a CSP code that is not on the calling sheet · ${u.counts.report} are bulk reports (not about one CSP) · ${u.counts.no_code} have no CSP code at all.
+          Add the missing codes to the calling sheet and the agent picks them up on the next scan.</p>
+        <div class="toolbar"><a class="btn" href="#" data-xlsx="unmatched">Download list (.xlsx)</a></div>
+        <div class="tablewrap">${u.codes.length ? `<table><thead><tr><th>CSP code not on sheet</th><th>Emails</th><th>Latest</th><th>Name in email</th><th>Subject</th></tr></thead><tbody>
+          ${u.codes.map((e) => `<tr><td class="mono">${esc(e.code)}</td><td class="num">${e.emails}</td><td class="mono">${fmt(e.latest)}</td>
+            <td>${esc(e.names.join(", ") || "—")}</td><td class="small">${esc(e.subjects[0] || "")}</td></tr>`).join("")}</tbody></table>` : `<div class="empty">None.</div>`}</div>
+        <details style="margin-top:8px"><summary>Emails without a CSP code (${u.counts.no_code + u.counts.report})</summary>
+          <div class="tablewrap"><table><thead><tr><th>Received</th><th>Subject</th><th>Sender</th></tr></thead><tbody>
+          ${u.emails.filter((i) => i.kind !== "code_not_on_sheet").map((i) => `<tr><td class="mono">${fmt(i.received_at)}</td><td>${esc(i.subject || "")}${i.kind === "report" ? " " + badge("APPROVAL", "report") : ""}</td><td class="small">${esc(i.sender || "")}</td></tr>`).join("")}
+          </tbody></table></div></details></div>`;
       return `
       <div class="grid k3">
         <div class="card"><h2>Gmail read-once status</h2><div class="kv">
@@ -255,7 +267,7 @@
         <td><div>${esc(i.subject)}</div><div class="small muted">${esc(i.sender)}${i.sender_on_sheet === false ? " · " + badge("PENDING", "not on sheet") : ""}</div></td>
         <td>${badge(i.status)}<div class="small muted">${esc(i.note || "")}</div></td>
         <td class="small">${(i.decisions || []).map((a) => `<div>${badge(a.decision)} ${esc(a.filename)}${a.issue_date ? ` · <span class="mono">${fmt(a.issue_date)}</span>` : ""}</div>`).join("") || "—"}</td></tr>`).join("") || `<tr><td colspan="4" class="empty">No emails processed yet.</td></tr>`}
-      </tbody></table></div>`;
+      </tbody></table></div>${unmatchedCard}`;
     },
 
     async accuracy() {

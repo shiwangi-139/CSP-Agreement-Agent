@@ -366,7 +366,8 @@ def report_xlsx(kind: str, db: Session = Depends(get_db)):
     from .. import reports
     builders = {"csp": ("CSP_Report", lambda: reports.csp_report(db)),
                 "contacts": ("Contacts", lambda: reports.contacts_report(db)),
-                "gaps": ("Contact_Gaps", lambda: reports.gaps_report(db))}
+                "gaps": ("Contact_Gaps", lambda: reports.gaps_report(db)),
+                "unmatched": ("Unmatched_Emails", lambda: reports.unmatched_report(db))}
     if kind not in builders:
         raise HTTPException(404, "unknown report")
     prefix, build = builders[kind]
@@ -494,6 +495,13 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
         run_for_csp(db, c)
     db.commit()
     return {"id": q.id, "status": q.status.value}
+
+
+@router.get("/unmatched")
+def unmatched(db: Session = Depends(get_db)):
+    """Emails no CSP on the calling sheet matched, with the codes they mention."""
+    from .. import reports
+    return reports.unmatched_emails(db)
 
 
 @router.get("/inbound")

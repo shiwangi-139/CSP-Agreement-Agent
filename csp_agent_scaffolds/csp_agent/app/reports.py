@@ -14,6 +14,7 @@ REPORTS_KEEP_DAYS days are kept); the dashboard can also download them live.
 """
 import io
 import logging
+import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -25,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from . import vault
 from .compliance import DOC_LABELS, REQUIRED_TYPES, SLAB_NAMES, evaluate, slab_label, sub_slab, sub_slab_label
-from .models import CSP, ContactChangeRequest, InternalUser, OutboundMessage, OutboundStatus
+from .models import CSP, ContactChangeRequest, InboundMessage, InternalUser, OutboundMessage, OutboundStatus
 
 logger = logging.getLogger(__name__)
 
@@ -254,3 +255,57 @@ def write_daily(db: Session, today: Optional[date] = None) -> dict:
         except ValueError:
             continue
     return {"written": written, "folder": str(d), "removed_old": removed}
+
+
+# --------------------------------------------------- unmatched emails
+_CODE = re.compile(r"\b\d[A-Z]\d{6}\b")
+_REPORT_SUBJECT = re.compile(r"pendency\s+report|report\s+as\s+on|\bmis\b|summary\s+report", re.I)
+
+
+def unmatched_emails(db: Session) -> dict:
+    """Emails that no CSP on the calling sheet matched, sorted into: a CSP
+    code that is not on the sheet, a bulk report, or no CSP code at all."""
+    rows = db.query(InboundMessage).filter(InboundMessage.status == "UNMATCHED_NO_CSP") \
+        .order_by(InboundMessage.received_at.desc().nullslast()).all()
+    by_code: dict[str, dict] = {}
+    items = []
+    for m in rows:
+        note = m.error_message or ""
+        seen = re.search(r"code seen: ([^,)]+(?:,\s*\d[A-Z]\d{6})*)", note)
+        name = re.search(r"name seen: ([^)]+)\)", note)
+        codes = list(dict.fromkeys(_CODE.findall(((seen.group(1) if seen else "") + " " + (m.subject or "")).upper())))
+        kind = "code_not_on_sheet" if codes else ("report" if _REPORT_SUBJECT.search(m.subject or "") else "no_code")
+        item = {"id": m.id, "received_at": m.received_at.isoformat() if m.received_at else None,
+                "subject": m.subject, "sender": m.sender, "codes": codes, "kind": kind,
+                "name_seen": (name.group(1).strip() if name and name.group(1).strip() != "none" else None)}
+        items.append(item)
+        for c in codes:
+            e = by_code.setdefault(c, {"code": c, "emails": 0, "latest": None, "names": set(), "subjects": []})
+            e["emails"] += 1
+            e["latest"] = e["latest"] or item["received_at"]
+            if item["name_seen"]:
+                e["names"].add(item["name_seen"])
+            if len(e["subjects"]) < 3:
+                e["subjects"].append(m.subject)
+    codes = sorted(by_code.values(), key=lambda e: (-e["emails"], e["code"]))
+    for e in codes:
+        e["names"] = sorted(e["names"])
+    counts = {k: sum(1 for i in items if i["kind"] == k) for k in ("code_not_on_sheet", "report", "no_code")}
+    return {"total": len(items), "counts": counts, "codes": codes, "emails": items}
+
+
+def unmatched_report(db: Session) -> io.BytesIO:
+    u = unmatched_emails(db)
+    kind_text = {"code_not_on_sheet": "CSP code not on calling sheet", "report": "Bulk report (not one CSP)",
+                 "no_code": "No CSP code in the email"}
+    wb = Workbook()
+    _sheet(wb, "Summary", ["Item", "Count"], [["Emails not matched to a CSP", u["total"]]]
+           + [[kind_text[k], v] for k, v in u["counts"].items()] + [["Different CSP codes not on sheet", len(u["codes"])]],
+           first=True)
+    _sheet(wb, "Codes not on calling sheet", ["CSP code", "Emails", "Latest email", "Name in email", "Subjects"],
+           [[e["code"], e["emails"], (e["latest"] or "")[:10], ", ".join(e["names"]), " | ".join(s or "" for s in e["subjects"])]
+            for e in u["codes"]])
+    _sheet(wb, "All unmatched emails", ["Received", "Type", "CSP codes", "Name in email", "Subject", "Sender"],
+           [[(i["received_at"] or "")[:10], kind_text[i["kind"]], ", ".join(i["codes"]), i["name_seen"], i["subject"],
+             i["sender"]] for i in u["emails"]])
+    return _save(wb)

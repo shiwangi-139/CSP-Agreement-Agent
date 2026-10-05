@@ -89,3 +89,27 @@ def test_contacts_report_lists_every_csp_with_rm_and_dc(db_session):
     assert row[head.index("Phone")] == "9876500000" and row[head.index("Email")] is None
     r = next(i for i, x in enumerate(ws.iter_rows(values_only=True), 1) if x[0] == c.current_code)
     assert ws.cell(row=r, column=head.index("Email") + 1).fill.fgColor.rgb.endswith("FDE2E2")   # empty = red
+
+
+def test_unmatched_emails_are_sorted_and_list_their_codes(db_session):
+    from app.models import InboundMessage
+    db = db_session
+    tag = uuid.uuid4().hex[:6]
+    rows = [("Request to terminal extension for KO 1A859991", "code seen: 1A859991, name seen: Mubeen Nasir"),
+            ("Request for terminal extension 1A859992", "code seen: none, name seen: none"),     # code only in subject
+            ("BC-CSP AGREEMENT & PVR PENDENCY REPORT AS ON 21.06.2026", "code seen: none, name seen: none"),
+            ("Issue in Uploading CSP PVR and Agreement", "code seen: none, name seen: none")]
+    for subject, note in rows:
+        db.add(InboundMessage(external_message_id=f"u{tag}{len(subject)}", subject=subject, sender="x@eko.co.in",
+                              status="UNMATCHED_NO_CSP", error_message=f"No CSP on the calling sheet matches this email ({note})."))
+    db.flush()
+    u = reports.unmatched_emails(db)
+    codes = {e["code"]: e for e in u["codes"]}
+    assert "1A859991" in codes and codes["1A859991"]["names"] == ["Mubeen Nasir"]
+    assert "1A859992" in codes                                    # found in the subject
+    kinds = {e["subject"]: e["kind"] for e in u["emails"]}
+    assert kinds["BC-CSP AGREEMENT & PVR PENDENCY REPORT AS ON 21.06.2026"] == "report"
+    assert kinds["Issue in Uploading CSP PVR and Agreement"] == "no_code"
+    from openpyxl import load_workbook
+    assert load_workbook(reports.unmatched_report(db)).sheetnames == ["Summary", "Codes not on calling sheet",
+                                                                      "All unmatched emails"]

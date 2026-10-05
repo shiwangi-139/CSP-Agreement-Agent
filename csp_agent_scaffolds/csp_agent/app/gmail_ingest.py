@@ -343,9 +343,11 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
     if csp is None:
         inbound.status = "UNMATCHED_NO_CSP"
         body_name = BODY_NAME.search(item["body"] or "")
-        code = BODY_CODE.search(item["body"] or "") or SUBJECT_KO.search(item["subject"] or "")
+        names = [a["filename"] for a in attachments]
+        codes = list(dict.fromkeys(normalize_csp_code(c) for c in
+                                   ANY_CODE.findall(f"{item['subject']}\n{item['body']}\n" + "\n".join(names).upper())))
         inbound.error_message = (f"No CSP on the calling sheet matches this email "
-                                 f"(code seen: {code.group(1) if code else 'none'}, "
+                                 f"(code seen: {', '.join(codes) if codes else 'none'}, "
                                  f"name seen: {body_name.group(1).strip() if body_name else 'none'}).")[:500]
         inbound.processed_at = _now()
         return inbound.status
