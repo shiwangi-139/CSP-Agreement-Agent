@@ -40,3 +40,9 @@ def test_import_adds_new_numbers_skips_known_shared_and_ignores_email(test_engin
     s.close()
     report = next((tmp_path / "logs").glob("contact_import_*.csv")).read_text()
     assert "SHARED" in report and "CSP_NOT_FOUND" in report and "INVALID" in report and "@" not in report
+
+
+def test_a_csv_named_xlsx_is_read_as_csv(tmp_path):
+    f = tmp_path / "contacts.xlsx"
+    f.write_text("﻿CSP Code,Mobile Number\n1A850004,7838243641\n", encoding="utf-8")
+    assert imp._rows(f) == [{"CSP Code": "1A850004", "Mobile Number": "7838243641"}]

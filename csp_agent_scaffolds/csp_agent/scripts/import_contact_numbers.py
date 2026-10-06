@@ -36,7 +36,11 @@ PHONE_HEADERS = ("mobile number", "mobile", "mobile no", "mobile no.", "phone", 
 
 
 def _rows(path: Path) -> list[dict]:
-    if path.suffix.lower() in (".xlsx", ".xlsm"):
+    # Decide by content, not by name: a CSV saved as ".xlsx" is still a CSV
+    # (real .xlsx files are zip archives and start with "PK").
+    with open(path, "rb") as f:
+        is_xlsx = f.read(2) == b"PK"
+    if is_xlsx:
         from openpyxl import load_workbook
         ws = load_workbook(path, read_only=True, data_only=True).active
         it = ws.iter_rows(values_only=True)
