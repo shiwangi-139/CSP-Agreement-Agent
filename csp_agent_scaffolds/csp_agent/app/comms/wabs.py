@@ -69,8 +69,11 @@ def send_clean(kind: str, contacts: list[dict], source_name: str, force: bool = 
     the CLEAN_MAP columns). Returns the Bulk Sender's answer; its "action" is
     sent, created/pending (Meta still reviewing) or rejected."""
     job = call("upload_contacts", {"contacts": contacts, "source_name": source_name})
-    return call("smart_send_template", {"job_id": job["job_id"], "phone_column": "phone", "body": CLEAN[kind],
-                                        "mapping": {n: {"type": "column", "value": col}
-                                                    for n, col in CLEAN_MAP[kind].items()},
-                                        "category": "UTILITY", "language": "hi",
-                                        **({"force": True} if force else {})})
+    r = call("smart_send_template", {"job_id": job["job_id"], "phone_column": "phone", "body": CLEAN[kind],
+                                     "mapping": {n: {"type": "column", "value": col}
+                                                 for n, col in CLEAN_MAP[kind].items()},
+                                     "category": "UTILITY", "language": "hi",
+                                     **({"force": True} if force else {})})
+    if isinstance(r, dict):
+        r.setdefault("job_id", job["job_id"])    # for get_delivery_status later
+    return r
