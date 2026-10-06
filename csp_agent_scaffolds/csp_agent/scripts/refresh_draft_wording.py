@@ -13,6 +13,7 @@ Sent messages are never touched.
 import argparse
 import re
 
+from app.comms.templates import EARLIER_EN, EARLIER_HI, FORM_EN, FORM_HI
 from app.db import SessionLocal
 from app.models import OutboundMessage
 from scripts.refresh_draft_links import UNSENT
@@ -44,6 +45,15 @@ PHRASES = [
     ("समाप्त (Expired)", "रिन्यू करना है (Expired)"),
     ("पढ़ने योग्य नहीं (धुंधला)", "फोटो साफ़ नहीं है"),
     ("आईआईबीएफ प्रमाण पत्र", "आईआईबीएफ सर्टिफिकेट"),
+    # 2026-10-06: no "last 2 years" (new CSPs), "given to your RM earlier", "mandatory"
+    ("हमारे पास पिछले 2 साल का आपका कोई डॉक्यूमेंट नहीं है।\n",
+     f"हमारे रिकॉर्ड में अभी आपके सीएसपी डॉक्यूमेंट जमा नहीं हैं। {EARLIER_HI}\n"),
+    ("कृपया ये तीनों डॉक्यूमेंट अपलोड करें:", "ये तीनों डॉक्यूमेंट जमा करना ज़रूरी है:"),
+    ("We have no documents on record for you from the last 2 years.\n",
+     f"We don't have your CSP documents on record yet. {EARLIER_EN}\n"),
+    ("\nPlease upload all three:", "\nAll three are mandatory:"),
+    ("\nकृपया ये डॉक्यूमेंट अपलोड करें: ", f"\n{EARLIER_HI}\nये डॉक्यूमेंट जमा करना ज़रूरी है, कृपया अपलोड करें: "),
+    ("\nPlease upload: ", f"\n{EARLIER_EN}\nThese documents are mandatory, please upload: "),
 ]
 PATTERNS = [
     (re.compile(r"को समाप्त हो रहा है \((\d+) दिन बाकी\)।"), r"तक ही मान्य है (\1 दिन बाकी)।"),
@@ -53,6 +63,17 @@ PATTERNS = [
     (re.compile(r"^(• [^\n]*?): प्राप्त नहीं$", re.M), r"\1: अभी जमा नहीं हुआ"),
     (re.compile(r"\(Expired\) \(समाप्ति: ([^)\n]+)\)"), r"(Expired) (तारीख निकल गई: \1)"),
     (re.compile(r"\(समाप्ति: ([^)\n]+)\)"), r"(मान्य: \1 तक)"),
+    (re.compile(r"आपका भेजा हुआ (.+?) हम पढ़ नहीं पाए \(फोटो साफ़ नहीं है या धुंधली है\)। "
+                r"कृपया स्कैन की हुई PDF फिर से अपलोड करें।"),
+     r"आपका \1 जो हमें मिला था (आपसे या आपके RM से), वो साफ़ पढ़ा नहीं जा सका (फोटो धुंधली है या पूरी नहीं है), "
+     r"इसलिए वो हमारे रिकॉर्ड में नहीं आ पाया।\nये डॉक्यूमेंट जमा करना ज़रूरी है। कृपया स्कैन की हुई साफ़ PDF फिर से अपलोड करें।"),
+    (re.compile(r"The (.+?) you sent could not be read \(the photo is unclear or blurry\)\. "
+                r"Please upload a scanned PDF again\."),
+     r"The \1 we received (from you or your RM) could not be read (the photo is blurry or incomplete), "
+     r"so it is not on our records.\nThis document is mandatory. Please upload a clear scanned PDF again."),
+    # the form line after the upload link (once)
+    (re.compile(r"^(यहाँ अपलोड करें: \S+)$(?!\nफॉर्म में)", re.M), r"\1\n" + FORM_HI),
+    (re.compile(r"^(Upload here: \S+)$(?!\nIf any of your details)", re.M), r"\1\n" + FORM_EN),
 ]
 
 

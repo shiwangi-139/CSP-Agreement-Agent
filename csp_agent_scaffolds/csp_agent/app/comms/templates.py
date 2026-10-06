@@ -62,6 +62,13 @@ def _contact(ctx: dict, lang: str) -> str:
             else f"For help, contact your RM {ctx['rm_name']}{phone}.")
 
 
+# Documents a CSP gave to the RM earlier may never have reached us.
+EARLIER_HI = "अगर आपने ये डॉक्यूमेंट पहले अपने RM को दिए थे, तो हो सकता है वो हमारे रिकॉर्ड में नहीं आए।"
+EARLIER_EN = "If you gave them to your RM earlier, they may not have reached our records."
+FORM_HI = "फॉर्म में आपकी कोई जानकारी खाली या गलत हो तो सही भर दें। हमारी टीम पूरी जाँच के बाद ही उसे बदलेगी।"
+FORM_EN = "If any of your details in the form are missing or wrong, please correct them. Our team checks every change before it is applied."
+
+
 def _link(ctx: dict, lang: str) -> str:
     if not ctx.get("upload_link"):
         return ""
@@ -100,9 +107,9 @@ def _renewal_final(c):
 def _upload_missing(c):
     return (f"Documents needed: {_needed(c, 'en')} | KO {c['csp_code']}",
             f"नमस्ते {c['csp_name']} (KO {c['csp_code']}),\nआपके डॉक्यूमेंट की जानकारी:\n{_doc_lines(c, 'hi')}\n"
-            f"कृपया ये डॉक्यूमेंट अपलोड करें: {_needed(c, 'hi')}।",
+            f"{EARLIER_HI}\nये डॉक्यूमेंट जमा करना ज़रूरी है, कृपया अपलोड करें: {_needed(c, 'hi')}।",
             f"Hello {c['csp_name']} (KO {c['csp_code']}),\nYour document status:\n{_doc_lines(c, 'en')}\n"
-            f"Please upload: {_needed(c, 'en')}.")
+            f"{EARLIER_EN}\nThese documents are mandatory, please upload: {_needed(c, 'en')}.")
 
 
 def _upload_expired(c):
@@ -116,18 +123,20 @@ def _upload_expired(c):
 
 def _onboard_all(c):
     return (f"Please upload your CSP documents | KO {c['csp_code']}",
-            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}),\nहमारे पास पिछले 2 साल का आपका कोई डॉक्यूमेंट नहीं है।\n"
-            f"कृपया ये तीनों डॉक्यूमेंट अपलोड करें: सीएसपी एग्रीमेंट, पुलिस वेरिफिकेशन / चरित्र प्रमाण पत्र, और आईआईबीएफ सर्टिफिकेट।",
-            f"Hello {c['csp_name']} (KO {c['csp_code']}),\nWe have no documents on record for you from the last 2 years.\n"
-            f"Please upload all three: CSP Agreement, Police Verification / Character Certificate, and IIBF Certificate.")
+            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}),\nहमारे रिकॉर्ड में अभी आपके सीएसपी डॉक्यूमेंट जमा नहीं हैं। {EARLIER_HI}\n"
+            f"ये तीनों डॉक्यूमेंट जमा करना ज़रूरी है: सीएसपी एग्रीमेंट, पुलिस वेरिफिकेशन / चरित्र प्रमाण पत्र, और आईआईबीएफ सर्टिफिकेट।",
+            f"Hello {c['csp_name']} (KO {c['csp_code']}),\nWe don't have your CSP documents on record yet. {EARLIER_EN}\n"
+            f"All three are mandatory: CSP Agreement, Police Verification / Character Certificate, and IIBF Certificate.")
 
 
 def _unreadable_reupload(c):
     return (f"Document not readable: please upload a scanned PDF | KO {c['csp_code']}",
-            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}),\nआपका भेजा हुआ {c.get('doc_label_hi', 'डॉक्यूमेंट')} हम पढ़ नहीं पाए "
-            f"(फोटो साफ़ नहीं है या धुंधली है)। कृपया स्कैन की हुई PDF फिर से अपलोड करें।",
-            f"Hello {c['csp_name']} (KO {c['csp_code']}),\nThe {c.get('doc_label_en', 'document')} you sent could not be read "
-            f"(the photo is unclear or blurry). Please upload a scanned PDF again.")
+            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}),\nआपका {c.get('doc_label_hi', 'डॉक्यूमेंट')} जो हमें मिला था "
+            f"(आपसे या आपके RM से), वो साफ़ पढ़ा नहीं जा सका (फोटो धुंधली है या पूरी नहीं है), इसलिए वो हमारे रिकॉर्ड में नहीं आ पाया।\n"
+            f"ये डॉक्यूमेंट जमा करना ज़रूरी है। कृपया स्कैन की हुई साफ़ PDF फिर से अपलोड करें।",
+            f"Hello {c['csp_name']} (KO {c['csp_code']}),\nThe {c.get('doc_label_en', 'document')} we received "
+            f"(from you or your RM) could not be read (the photo is blurry or incomplete), so it is not on our records.\n"
+            f"This document is mandatory. Please upload a clear scanned PDF again.")
 
 
 def _escalation(role):
@@ -163,8 +172,11 @@ def render(key: str, channel: str, ctx: dict[str, Any]) -> dict[str, str]:
         raise KeyError(f"unknown template {key}")
     subject, hi, en = TEMPLATES[key](ctx)
     csp_facing = key in CSP_FACING
-    hi_parts = [hi, _link(ctx, "hi") if csp_facing else "", _contact(ctx, "hi") if csp_facing else ""]
-    en_parts = [en, _link(ctx, "en") if csp_facing else "", _contact(ctx, "en") if csp_facing else ""]
+    form = csp_facing and bool(ctx.get("upload_link"))
+    hi_parts = [hi, _link(ctx, "hi") if csp_facing else "", FORM_HI if form else "",
+                _contact(ctx, "hi") if csp_facing else ""]
+    en_parts = [en, _link(ctx, "en") if csp_facing else "", FORM_EN if form else "",
+                _contact(ctx, "en") if csp_facing else ""]
     if csp_facing and channel == "EMAIL":
         hi_parts.append(SCAN_RULES_HI)
         en_parts.append(SCAN_RULES_EN)
