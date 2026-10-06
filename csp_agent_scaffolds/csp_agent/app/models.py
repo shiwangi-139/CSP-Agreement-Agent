@@ -128,6 +128,20 @@ class InternalUser(Base):
     last_login_at = Column(DateTime)
 
 
+class CspExtraPhone(Base):
+    """Extra contact numbers for a CSP from a separate contact sheet
+    (scripts/import_contact_numbers.py). Kept apart from the calling sheet,
+    which seniors maintain and which stays the main source."""
+    __tablename__ = "csp_extra_phones"
+    __table_args__ = (UniqueConstraint("csp_id", "phone", name="uq_csp_extra_phone"),)
+    id = Column(Integer, primary_key=True)
+    csp_id = Column(Integer, ForeignKey("csp.id"), nullable=False, index=True)
+    phone = Column(String, nullable=False, index=True)        # 10 digits
+    source_column = Column(String)                             # Mobile Number / Home Phone / Work Phone
+    source_file = Column(String)
+    added_at = Column(DateTime, server_default=func.now())
+
+
 class AdminSession(Base):
     """A logged-in dashboard session. Only the SHA-256 of the cookie value is
     stored, so a database leak does not hand out live sessions."""

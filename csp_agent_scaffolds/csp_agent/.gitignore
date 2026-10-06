@@ -17,3 +17,6 @@ __pycache__/
 .pytest_cache/
 logs/
 venv/
+
+# Uploaded spreadsheets (contacts etc.): never in Git
+data/
