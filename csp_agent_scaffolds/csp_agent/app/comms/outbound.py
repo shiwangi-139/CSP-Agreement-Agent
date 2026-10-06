@@ -115,6 +115,26 @@ def draft(db: Session, *, csp: CSP, role: str, template_key: str, ctx: dict, key
 def approve(db: Session, msg: OutboundMessage, reviewer: str) -> OutboundMessage:
     if msg.status != OutboundStatus.QUEUED_FOR_REVIEW:
         raise ValueError(f"Only drafts awaiting review can be approved (this one is {msg.status.value}).")
+    _check_whatsapp_send(db, msg)
+    msg.status = OutboundStatus.APPROVED
+    msg.reviewed_by, msg.reviewed_at = reviewer, _now()
+    return msg
+
+
+def send_parked(db: Session, msg: OutboundMessage, reviewer: str) -> OutboundMessage:
+    """Send a WhatsApp message that was approved while WhatsApp was in stub
+    mode (READY_NOT_SENT), now that it is connected. Same checks as approve."""
+    if msg.channel != "WHATSAPP" or msg.status != OutboundStatus.READY_NOT_SENT:
+        raise ValueError("Only WhatsApp messages approved while WhatsApp was not connected can be sent this way.")
+    if WHATSAPP_MODE not in ("wabs", "push"):
+        raise ValueError("WhatsApp is still not connected (WHATSAPP_MODE is stub).")
+    _check_whatsapp_send(db, msg)
+    msg.status, msg.error_log, msg.delivery_status = OutboundStatus.APPROVED, None, None
+    msg.reviewed_by, msg.reviewed_at = reviewer, _now()
+    return send(db, msg)
+
+
+def _check_whatsapp_send(db: Session, msg: OutboundMessage) -> None:
     if msg.channel == "WHATSAPP" and WHATSAPP_MODE == "wabs":
         from .wabs import KIND_FOR_TEMPLATE
         if msg.template_name not in KIND_FOR_TEMPLATE:
@@ -130,13 +150,11 @@ def approve(db: Session, msg: OutboundMessage, reviewer: str) -> OutboundMessage
         if today >= WHATSAPP_DAILY_LIMIT:
             raise ValueError(f"Daily WhatsApp limit reached ({WHATSAPP_DAILY_LIMIT} today). "
                              "Raise WHATSAPP_DAILY_LIMIT in .env to send more.")
-    msg.status = OutboundStatus.APPROVED
-    msg.reviewed_by, msg.reviewed_at = reviewer, _now()
-    return msg
 
 
 def reject(db: Session, msg: OutboundMessage, reviewer: str, reason: str) -> OutboundMessage:
-    if msg.status not in (OutboundStatus.QUEUED_FOR_REVIEW, OutboundStatus.APPROVED):
+    if msg.status not in (OutboundStatus.QUEUED_FOR_REVIEW, OutboundStatus.APPROVED,
+                          OutboundStatus.READY_NOT_SENT):
         raise ValueError(f"This message can no longer be rejected ({msg.status.value}).")
     msg.status = OutboundStatus.REJECTED
     msg.reviewed_by, msg.reviewed_at = reviewer, _now()

@@ -355,6 +355,9 @@
       ${m.reviewed_by ? `<div class="small muted">Reviewed by ${esc(m.reviewed_by)} · ${when(m.reviewed_at)}</div>` : ""}
       ${draft ? `<div class="actions"><button class="btn primary" data-approve="${m.id}">Approve${m.channel === "WHATSAPP" && !["wabs", "push"].includes(window.WA_MODE) ? "" : " & send"}</button>
         <button class="btn" data-edit="${m.id}">Edit text</button><button class="btn danger" data-reject="${m.id}">Reject</button></div>` : ""}
+      ${m.status === "READY_NOT_SENT" && m.channel === "WHATSAPP" && ["wabs", "push"].includes(window.WA_MODE)
+        ? `<div class="actions"><button class="btn primary" data-sendnow="${m.id}">Send now</button>
+           <button class="btn danger" data-reject="${m.id}">Reject</button></div>` : ""}
     </div>`;
   }
 
@@ -403,7 +406,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -435,6 +438,7 @@
       }
       if (ds.csp) return openCsp(ds.csp);
       if (ds.approve) { const m = await post(`/api/hub/messages/${ds.approve}/approve`); toast(`Approved → ${m.status.replaceAll("_", " ").toLowerCase()}`); return refreshAfterAction(); }
+      if (ds.sendnow) { if (!confirm("Send this WhatsApp message to the CSP now?")) return; const m = await post(`/api/hub/messages/${ds.sendnow}/send-now`); toast(`→ ${m.status.replaceAll("_", " ").toLowerCase()}${m.error ? ": " + m.error : ""}`); return refreshAfterAction(); }
       if (ds.reject) { const why = prompt("Reason for rejecting (optional)") ?? null; if (why === null) return; await post(`/api/hub/messages/${ds.reject}/reject`, {reason: why}); toast("Rejected."); return refreshAfterAction(); }
       if (ds.edit) {
         const card = t.closest("[data-msg]"); const pre = $("pre", card);

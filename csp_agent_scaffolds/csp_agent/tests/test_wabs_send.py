@@ -82,3 +82,27 @@ def test_waiting_for_meta_is_retried_not_lost(db_session, monkeypatch):
     outbound.approve(db_session, m, "tester")
     outbound.send(db_session, m)
     assert m.status == OutboundStatus.APPROVED and m.next_retry_at is not None and "Meta" in m.error_log
+
+
+def test_messages_approved_in_stub_mode_can_be_sent_once_connected(db_session, wabs_mode, monkeypatch):
+    _, m = _draft(db_session)
+    m.status, m.error_log = OutboundStatus.READY_NOT_SENT, "WhatsApp agent not connected yet (stub mode)."
+    _allow_more(db_session, monkeypatch)
+    outbound.send_parked(db_session, m, "tester")
+    assert m.status == OutboundStatus.SENT and m.error_log is None and len(wabs_mode) == 1
+    with pytest.raises(ValueError):                     # only once
+        outbound.send_parked(db_session, m, "tester")
+
+
+def test_parked_messages_still_obey_the_rules(db_session, wabs_mode, monkeypatch):
+    _allow_more(db_session, monkeypatch, 5)
+    _, m = _draft(db_session, template="UPLOAD_EXPIRED")
+    m.status = OutboundStatus.READY_NOT_SENT
+    with pytest.raises(ValueError, match="no WhatsApp layout"):
+        outbound.send_parked(db_session, m, "tester")
+    monkeypatch.setattr(outbound, "WHATSAPP_MODE", "stub")
+    _, s = _draft(db_session)
+    s.status = OutboundStatus.READY_NOT_SENT
+    with pytest.raises(ValueError, match="not connected"):
+        outbound.send_parked(db_session, s, "tester")
+    assert not wabs_mode

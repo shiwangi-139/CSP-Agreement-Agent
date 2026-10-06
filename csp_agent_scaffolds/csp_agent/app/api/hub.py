@@ -338,6 +338,17 @@ def approve_message(message_id: int, me: Principal = Depends(require_user), db: 
     return _msg_json(m, db.get(CSP, m.csp_id))
 
 
+@router.post("/messages/{message_id}/send-now")
+def send_parked_message(message_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    m = _get_msg(db, message_id, me)
+    try:
+        outbound.send_parked(db, m, me.name)
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    db.commit()
+    return _msg_json(m, db.get(CSP, m.csp_id))
+
+
 @router.post("/messages/approve-bulk")
 def approve_bulk(ids: list[int] = Body(..., embed=True), me: Principal = Depends(require_user),
                  db: Session = Depends(get_db)):
