@@ -17,7 +17,8 @@
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--cream); color: var(--ink);
          font: 16px/1.5 Inter, "Noto Sans Devanagari", system-ui, sans-serif; }
-  header { background: var(--forest); color: #fff; padding: 18px 16px; }
+  header { background: var(--forest); color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 14px; }
+  header .logo { height: 36px; width: auto; flex: none; }
   header h1 { font: 800 1.25rem/1.2 "Plus Jakarta Sans", Inter, sans-serif; margin: 0 0 2px; }
   header p { margin: 0; opacity: .85; font-size: .9rem; }
   main { max-width: 640px; margin: 0 auto; padding: 16px; }
@@ -52,8 +53,11 @@
 </head>
 <body>
 <header>
+  <img class="logo" src="__LOGO__" alt="Eko">
+  <div>
   <h1>डॉक्यूमेंट अपलोड करें <span style="font-weight:600;opacity:.8">/ Upload documents</span></h1>
   <p id="who"></p>
+  </div>
 </header>
 <main>
   <section class="card rules">

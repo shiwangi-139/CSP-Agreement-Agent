@@ -19,6 +19,7 @@ Server-side rules (the page enforces the same, but the server decides):
     by the vision model and disagrees, it goes to the review queue
   - contact edits never overwrite calling-sheet data; they're queued
 """
+import base64
 import html
 import json
 import logging
@@ -46,6 +47,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PAGE = Path(__file__).resolve().parent.parent / "web" / "portal.html"
+# Inlined: only the upload routes are public, so the page can't fetch /static.
+LOGO = "data:image/png;base64," + base64.b64encode(
+    (PAGE.parent / "static" / "logo.png").read_bytes()).decode()
 SECTIONS = {"agreement": "AGREEMENT", "pvr": "POLICE_VERIFICATION", "iibf": "IIBF_CERTIFICATE"}
 # Most lenient validity per type, for rejecting an obviously expired typed
 # date before OCR. The document's own validity is applied after reading it.
@@ -122,7 +126,7 @@ def upload_page(token: str = Query(""), db: Session = Depends(get_db)):
     # JSON inside <script type="application/json">: escape "<" so a name
     # like "</script>" can't break out of the tag.
     blob = json.dumps(ctx, ensure_ascii=False).replace("<", "\\u003c")
-    return HTMLResponse(PAGE.read_text(encoding="utf-8").replace("__CONTEXT_JSON__", blob))
+    return HTMLResponse(PAGE.read_text(encoding="utf-8").replace("__LOGO__", LOGO).replace("__CONTEXT_JSON__", blob))
 
 
 @router.get("/api/portal/context")
