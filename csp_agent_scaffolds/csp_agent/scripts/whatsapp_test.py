@@ -6,6 +6,7 @@ the queue untouched.
     python -m scripts.whatsapp_test whoami
     python -m scripts.whatsapp_test send --to 9198XXXXXXXX --kind onboard --count 2
     python -m scripts.whatsapp_test send --to 9198XXXXXXXX,9197XXXXXXXX --kind missing
+    python -m scripts.whatsapp_test send --to 9198XXXXXXXX --kind onboard --force   # resend within 15 min
     python -m scripts.whatsapp_test template                 # has Meta approved our test wording?
     python -m scripts.whatsapp_test history                  # only this tool's sends (the account is shared)
     python -m scripts.whatsapp_test status --job JOB_ID
@@ -103,7 +104,7 @@ def _flat(text: str) -> str:
     return re.sub(r"\s*\n+\s*", " · ", text.strip())
 
 
-def send(to: list[str], kind: str, count: int, style: str = "clean") -> None:
+def send(to: list[str], kind: str, count: int, style: str = "clean", force: bool = False) -> None:
     db = SessionLocal()
     try:
         drafts = (db.query(OutboundMessage).filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW,
@@ -130,17 +131,20 @@ def send(to: list[str], kind: str, count: int, style: str = "clean") -> None:
     finally:
         db.close()
     print(f"Sending {len(contacts)} TEST message(s) to {', '.join(sorted(set(to)))} (never to the CSPs)...")
+    # The Bulk Sender refuses the same message to the same number within 15
+    # minutes; --force overrides that (only ever for these test numbers).
+    extra = {"force": True} if force else {}
     if style == "clean" and kind in CLEAN:
         job = call("upload_contacts", {"contacts": [{k: v for k, v in c.items() if k != "message"} for c in contacts],
                                        "source_name": f"csp-agent-test-{kind}-clean"})
         r = call("smart_send_template", {"job_id": job["job_id"], "phone_column": "phone", "body": CLEAN[kind],
                                          "mapping": {n: {"type": "column", "value": col}
                                                      for n, col in CLEAN_MAP[kind].items()},
-                                         "category": "UTILITY", "language": "hi"})
+                                         "category": "UTILITY", "language": "hi", **extra})
         return _report(r)
     r = call("smart_send_from_messages", {"contacts": contacts, "message_column": "message", "phone_column": "phone",
                                           "category": "UTILITY", "language": "en_US",
-                                          "source_name": f"csp-agent-test-{kind}"})
+                                          "source_name": f"csp-agent-test-{kind}", **extra})
     _report(r)
 
 
@@ -164,6 +168,8 @@ def main():
     ap.add_argument("--job")
     ap.add_argument("--style", choices=["clean", "plain"], default="clean",
                     help="clean: fixed template with line breaks (onboard); plain: the draft text as one block")
+    ap.add_argument("--force", action="store_true",
+                    help="send even if the same message went to this number in the last 15 minutes")
     a = ap.parse_args()
     if a.action == "whoami":
         print(json.dumps(call("whoami", {}), indent=2))
@@ -191,7 +197,7 @@ def main():
     else:
         if not a.to:
             sys.exit("--to is required: the test number(s), never a CSP's")
-        send(_numbers(a.to), a.kind, max(1, min(a.count, 10)), a.style)
+        send(_numbers(a.to), a.kind, max(1, min(a.count, 10)), a.style, a.force)
 
 
 if __name__ == "__main__":
