@@ -260,7 +260,7 @@ def test_edit_cannot_change_recipient(db_session):
 # ---------------------------------------------------------------- templates
 def test_templates_are_hindi_first_then_english():
     ctx = {"csp_name": "Kaushar Jahan", "csp_code": "1A850004", "upload_link": "https://x/u",
-           "docs": [{"label_en": "IIBF Certificate", "label_hi": "आईआईबीएफ प्रमाण पत्र", "status": "MISSING"}],
+           "docs": [{"label_en": "IIBF Certificate", "label_hi": "आईआईबीएफ सर्टिफिकेट", "status": "MISSING"}],
            "rm_name": "Vandana", "rm_phone": "9000000001"}
     for channel in ("WHATSAPP", "EMAIL"):
         body = render("UPLOAD_MISSING", channel, ctx)["body"]

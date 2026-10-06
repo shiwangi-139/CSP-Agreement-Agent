@@ -72,14 +72,14 @@ def call(tool: str, args: dict) -> dict:
 CLEAN = {
     "onboard": (
         "नमस्ते {{1}} (KO {{2}}) 🙏\n\n"
-        "हमारे रिकॉर्ड में आपके सीएसपी दस्तावेज़ अभी जमा नहीं हैं। कृपया ये तीनों दस्तावेज़ अपलोड करें:\n"
+        "हमारे पास अभी आपके सीएसपी डॉक्यूमेंट जमा नहीं हैं। कृपया ये तीनों डॉक्यूमेंट अपलोड करें:\n"
         "• सीएसपी एग्रीमेंट\n"
         "• पुलिस वेरिफिकेशन / चरित्र प्रमाण पत्र\n"
-        "• आईआईबीएफ प्रमाण पत्र\n\n"
+        "• आईआईबीएफ सर्टिफिकेट\n\n"
         "Hello {{3}}, please upload your CSP Agreement, Police Verification / Character Certificate "
         "and IIBF Certificate.\n\n"
         "📎 अपलोड करें / Upload here:\n{{4}}\n\n"
-        "सहायता / Help: {{5}}\n"
+        "मदद / Help: {{5}}\n"
         "कृपया साफ़ स्कैन की हुई PDF भेजें / Please send a clear scanned PDF.\n"
         "— Eko"),
 }

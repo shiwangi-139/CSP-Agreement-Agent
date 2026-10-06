@@ -79,7 +79,7 @@ def sub_slab_label(code: Optional[str]) -> str:
 DOC_LABELS = {
     "AGREEMENT": ("CSP Agreement", "सीएसपी एग्रीमेंट"),
     "POLICE_VERIFICATION": ("Police Verification / Character Certificate", "पुलिस वेरिफिकेशन / चरित्र प्रमाण पत्र"),
-    "IIBF_CERTIFICATE": ("IIBF Certificate", "आईआईबीएफ प्रमाण पत्र"),
+    "IIBF_CERTIFICATE": ("IIBF Certificate", "आईआईबीएफ सर्टिफिकेट"),
 }
 # Statuses that mean "we have a usable copy of this document".
 USABLE = {DocumentStatus.VALID, DocumentStatus.NEEDS_APPROVAL, DocumentStatus.MANUAL_VERIFIED,

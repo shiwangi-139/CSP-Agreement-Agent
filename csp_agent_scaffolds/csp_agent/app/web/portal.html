@@ -52,18 +52,18 @@
 </head>
 <body>
 <header>
-  <h1>दस्तावेज़ अपलोड करें <span style="font-weight:600;opacity:.8">/ Upload documents</span></h1>
+  <h1>डॉक्यूमेंट अपलोड करें <span style="font-weight:600;opacity:.8">/ Upload documents</span></h1>
   <p id="who"></p>
 </header>
 <main>
   <section class="card rules">
     <h2>अपलोड के नियम <span class="en">/ Upload rules</span></h2>
     <ul>
-      <li>केवल <b>स्कैन की हुई PDF</b> अपलोड करें। मोबाइल पर: Google Drive → <b>Scan</b>, या <b>Adobe Scan</b> ऐप, या कैमरा का “Document” मोड।
+      <li>सिर्फ़ <b>स्कैन की हुई PDF</b> अपलोड करें। मोबाइल पर: Google Drive → <b>Scan</b>, या <b>Adobe Scan</b> ऐप, या कैमरा का “Document” मोड।
         <div class="en">Upload a <b>scanned PDF</b>. On a phone: Google Drive → Scan, the Adobe Scan app, or the camera's Document mode.</div></li>
-      <li>सभी पेज पूरे और सीधे हों, कोई हिस्सा कटा न हो। <div class="en">All pages, complete and straight, nothing cut off.</div></li>
+      <li>सारे पेज पूरे और सीधे हों, कोई हिस्सा कटा न हो। <div class="en">All pages, complete and straight, nothing cut off.</div></li>
       <li>अच्छी रोशनी में, धुंधला न हो। स्क्रीन की फोटो न लें। <div class="en">Good light, not blurry. Don't photograph a screen.</div></li>
-      <li>समाप्त (expired) दस्तावेज़ स्वीकार नहीं होंगे। <div class="en">Expired documents are not accepted.</div></li>
+      <li>जिन डॉक्यूमेंट की तारीख निकल चुकी है (expired), वे नहीं लिए जाएँगे। <div class="en">Expired documents are not accepted.</div></li>
     </ul>
   </section>
 
@@ -82,7 +82,7 @@
       <input type="text" id="rm" name="rm">
       <label for="dc">आपके DC <span class="en">/ Assigned DC</span></label>
       <input type="text" id="dc" name="dc">
-      <div class="hint">बदलाव हमारी टीम जाँचेगी। <span class="en">Changes are checked by our team before they're applied.</span></div>
+      <div class="hint">बदलाव हमारी टीम चेक करेगी। <span class="en">Changes are checked by our team before they're applied.</span></div>
     </section>
 
     <div id="docs"></div>
@@ -103,7 +103,7 @@
   const token = new URLSearchParams(location.search).get("token") || "";
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-  const STATUS = {VALID:["मान्य","Valid"], EXPIRED:["समाप्त","Expired"], MISSING:["प्राप्त नहीं","Not received"], UNREADABLE:["पढ़ने योग्य नहीं","Not readable"]};
+  const STATUS = {VALID:["ठीक है","Valid"], EXPIRED:["रिन्यू करना है","Expired"], MISSING:["अभी जमा नहीं हुआ","Not received"], UNREADABLE:["फोटो साफ़ नहीं है","Not readable"]};
   const fmt = (iso) => iso ? iso.split("-").reverse().join("-") : "";
 
   $("who").textContent = `${ctx.csp.name} · KO ${ctx.csp.code}`;
@@ -113,7 +113,7 @@
   const docsEl = $("docs");
   for (const d of ctx.docs) {
     const st = STATUS[d.status] || [d.status, d.status];
-    const current = d.issue_date ? `<div class="hint">अभी दर्ज: जारी ${fmt(d.issue_date)}${d.expiry_date ? " · समाप्ति " + fmt(d.expiry_date) : ""}
+    const current = d.issue_date ? `<div class="hint">हमारे पास: बना ${fmt(d.issue_date)}${d.expiry_date ? " · मान्य " + fmt(d.expiry_date) + " तक" : ""}
         <span class="en">On record: issued ${fmt(d.issue_date)}${d.expiry_date ? " · expires " + fmt(d.expiry_date) : ""}</span></div>` : "";
     const sec = document.createElement("section");
     sec.className = "card";
@@ -121,10 +121,10 @@
       <h2>${esc(d.label_hi)} <span class="en">/ ${esc(d.label_en)}</span></h2>
       <span class="badge ${esc(d.status)}">${esc(st[0])} / ${esc(st[1])}</span>
       ${current}
-      ${d.requested ? "" : `<details><summary>नया दस्तावेज़ अपलोड करें <span class="en">/ Upload a newer copy</span></summary>`}
+      ${d.requested ? "" : `<details><summary>नया डॉक्यूमेंट अपलोड करें <span class="en">/ Upload a newer copy</span></summary>`}
       <label for="${d.section}_file">फ़ाइल चुनें <span class="en">/ Choose file (PDF, max ${ctx.max_upload_mb} MB)</span></label>
       <input type="file" id="${d.section}_file" name="${d.section}_file" accept="application/pdf,image/jpeg,image/png">
-      <label for="${d.section}_issue_date">जारी होने की तारीख <span class="en">/ Issue date</span></label>
+      <label for="${d.section}_issue_date">डॉक्यूमेंट बनने की तारीख <span class="en">/ Issue date</span></label>
       <input type="date" id="${d.section}_issue_date" name="${d.section}_issue_date" max="${ctx.today}">
       <div class="err" id="${d.section}_err"></div><div class="ok" id="${d.section}_ok"></div>
       ${d.requested ? "" : "</details>"}`;
@@ -144,9 +144,9 @@
       err.textContent = "";
       if (!file) continue;
       if (!v) { err.textContent = "कृपया तारीख भरें / Please enter the issue date."; ok = false; continue; }
-      if (v > ctx.today) { err.textContent = "तारीख भविष्य की नहीं हो सकती / The date can't be in the future."; ok = false; continue; }
+      if (v > ctx.today) { err.textContent = "तारीख आज के बाद की नहीं हो सकती / The date can't be in the future."; ok = false; continue; }
       if (d.max_validity_years && addYears(v, d.max_validity_years) < ctx.today) {
-        err.textContent = "यह दस्तावेज़ समाप्त हो चुका है, कृपया नवीनीकृत दस्तावेज़ अपलोड करें / This document has expired; please upload the renewed one.";
+        err.textContent = "इस डॉक्यूमेंट की तारीख निकल चुकी है, कृपया रिन्यू किया हुआ नया डॉक्यूमेंट अपलोड करें / This document has expired; please upload the renewed one.";
         ok = false;
       }
     }
@@ -204,14 +204,14 @@
       return;
     }
     if (!ctx.docs.some((d) => $(d.section + "_file").files[0])) {
-      $("formerr").textContent = "कम से कम एक दस्तावेज़ चुनें / Choose at least one document.";
+      $("formerr").textContent = "कम से कम एक डॉक्यूमेंट चुनें / Choose at least one document.";
       return;
     }
     if (!checkDates()) return;
     const fd = new FormData($("f"));
     fd.append("token", token);
     $("send").disabled = true;
-    $("send").textContent = "जाँच हो रही है… / Checking… (1–2 min)";
+    $("send").textContent = "चेक हो रहा है… / Checking… (1–2 min)";
     try {
       // Relative on purpose: the page is served at /upload locally and at
       // /<public-path>/upload behind Nginx; both post next to the page.
@@ -229,7 +229,7 @@
         $("done").style.display = "block";
         $("summary").innerHTML = j.still_needed.length
           ? `<p>अभी भी चाहिए: ${esc(j.still_needed.join(", "))}</p><p class="en">Still needed: ${esc(j.still_needed.join(", "))}</p>`
-          : `<p>आपके सभी दस्तावेज़ मिल गए हैं।</p><p class="en">We have all your documents.</p>`;
+          : `<p>आपके सारे डॉक्यूमेंट मिल गए हैं।</p><p class="en">We have all your documents.</p>`;
       }
     } catch (err) {
       $("formerr").textContent = "नेटवर्क समस्या, दोबारा कोशिश करें / Network problem, please try again.";

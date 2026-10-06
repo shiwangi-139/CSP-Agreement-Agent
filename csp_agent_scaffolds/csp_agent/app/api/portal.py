@@ -52,17 +52,17 @@ SECTIONS = {"agreement": "AGREEMENT", "pvr": "POLICE_VERIFICATION", "iibf": "IIB
 MAX_VALIDITY_YEARS = {"AGREEMENT": 3, "POLICE_VERIFICATION": 1, "IIBF_CERTIFICATE": None}
 
 MSG = {
-    "bad_link": ("यह लिंक अमान्य है या इसकी समय-सीमा समाप्त हो चुकी है। नए लिंक के लिए अपने RM से संपर्क करें।",
+    "bad_link": ("यह लिंक अब नहीं चल रहा है। नए लिंक के लिए अपने RM से बात करें।",
                  "This link is invalid or has expired. Please contact your RM for a new link."),
-    "file_type": ("केवल PDF, JPG या PNG फ़ाइल अपलोड करें।", "Please upload a PDF, JPG or PNG file only."),
+    "file_type": ("सिर्फ़ PDF, JPG या PNG फ़ाइल अपलोड करें।", "Please upload a PDF, JPG or PNG file only."),
     "too_big": ("फ़ाइल बहुत बड़ी है।", "The file is too large."),
-    "no_date": ("कृपया दस्तावेज़ की जारी होने की तारीख (issue date) भरें।", "Please enter the document's issue date."),
-    "future": ("जारी होने की तारीख भविष्य की नहीं हो सकती।", "The issue date cannot be in the future."),
-    "expired": ("यह दस्तावेज़ समाप्त (expired) हो चुका है। कृपया नवीनीकरण (renewal) कराकर नया दस्तावेज़ अपलोड करें।",
+    "no_date": ("कृपया डॉक्यूमेंट बनने की तारीख (issue date) भरें।", "Please enter the document's issue date."),
+    "future": ("यह तारीख आज के बाद की नहीं हो सकती।", "The issue date cannot be in the future."),
+    "expired": ("इस डॉक्यूमेंट की तारीख निकल चुकी है (expired)। कृपया इसे रिन्यू करवाकर नया डॉक्यूमेंट अपलोड करें।",
                 "This document has expired. Please renew it and upload the new document."),
-    "unreadable": ("फोटो सही से नहीं ली गई है — कृपया स्कैन की हुई PDF अपलोड करें (Google Drive → Scan या Adobe Scan)।",
+    "unreadable": ("फोटो साफ़ नहीं है — कृपया स्कैन की हुई PDF अपलोड करें (Google Drive → Scan या Adobe Scan)।",
                    "Photo not taken properly — please upload a scanned PDF (Google Drive → Scan, or Adobe Scan)."),
-    "wrong_doc": ("यह सही दस्तावेज़ नहीं है। कृपया इस भाग में सही दस्तावेज़ अपलोड करें।",
+    "wrong_doc": ("यह सही डॉक्यूमेंट नहीं है। कृपया यहाँ सही डॉक्यूमेंट अपलोड करें।",
                   "This is not the right document for this section. Please upload the correct document."),
     "duplicate": ("यह फ़ाइल पहले से हमारे पास है।", "We already have this file."),
     # Photo checks (app/ocr_service.py: photo_problem): tell the CSP exactly what to fix.
@@ -75,8 +75,8 @@ MSG = {
                    "The text is not visible (too much light or flash). Turn the flash off and take the photo again."),
     "blurry": ("फोटो धुंधली है। फोन को स्थिर रखें, अक्षरों पर टैप करके फोकस करें, फिर फोटो लें।",
                "The photo is blurry. Hold the phone still, tap on the text to focus, then take the photo."),
-    "accepted": ("दस्तावेज़ स्वीकार किया गया। धन्यवाद!", "Document accepted. Thank you!"),
-    "review": ("दस्तावेज़ मिल गया। आपकी भरी गई तारीख और दस्तावेज़ की तारीख अलग है, हमारी टीम इसे जाँचेगी।",
+    "accepted": ("डॉक्यूमेंट मिल गया और ठीक है। धन्यवाद!", "Document accepted. Thank you!"),
+    "review": ("डॉक्यूमेंट मिल गया। आपकी भरी हुई तारीख और डॉक्यूमेंट पर लिखी तारीख अलग है, हमारी टीम इसे चेक करेगी।",
                "Document received. The date you entered differs from the document, so our team will check it."),
 }
 
@@ -254,7 +254,7 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
                    issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))
 
     if not results:
-        raise HTTPException(422, detail={"hi": "कम से कम एक दस्तावेज़ चुनें।", "en": "Please choose at least one document."})
+        raise HTTPException(422, detail={"hi": "कम से कम एक डॉक्यूमेंट चुनें।", "en": "Please choose at least one document."})
 
     changes = _record_contact_changes(db, csp, {k: form.get(k) for k in ("name", "email", "mobile", "rm", "dc")})
     db.add(AgreementEvent(csp_id=csp.id, event_type="PORTAL_UPLOAD", source="CSP_UPLOAD_PORTAL", channel="WEB",
