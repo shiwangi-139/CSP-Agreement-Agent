@@ -6,7 +6,8 @@ the queue untouched.
     python -m scripts.whatsapp_test whoami
     python -m scripts.whatsapp_test send --to 9198XXXXXXXX --kind onboard --count 2
     python -m scripts.whatsapp_test send --to 9198XXXXXXXX,9197XXXXXXXX --kind missing
-    python -m scripts.whatsapp_test history
+    python -m scripts.whatsapp_test template                 # has Meta approved our test wording?
+    python -m scripts.whatsapp_test history                  # only this tool's sends (the account is shared)
     python -m scripts.whatsapp_test status --job JOB_ID
 
 --kind: onboard (no documents) · missing · expired · renewal · unreadable
@@ -52,13 +53,18 @@ def call(tool: str, args: dict) -> dict:
     if "error" in payload:
         raise SystemExit(f"Bulk Sender error: {payload['error']}")
     result = payload.get("result", {})
+    if isinstance(result.get("structuredContent"), dict) and "result" in result["structuredContent"]:
+        return result["structuredContent"]["result"]
+    parts = []
     for part in result.get("content", []):
         if part.get("type") == "text":
             try:
-                return json.loads(part["text"])
+                parts.append(json.loads(part["text"]))
             except ValueError:
-                return {"text": part["text"]}
-    return result
+                parts.append({"text": part["text"]})
+    if not parts:
+        return result
+    return parts[0] if len(parts) == 1 else parts
 
 
 def _numbers(raw: str) -> list[str]:
@@ -119,7 +125,7 @@ def send(to: list[str], kind: str, count: int) -> None:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=["whoami", "send", "history", "status"])
+    ap.add_argument("action", choices=["whoami", "send", "history", "status", "template"])
     ap.add_argument("--to", help="your number(s), 91XXXXXXXXXX, comma-separated")
     ap.add_argument("--kind", choices=sorted(KINDS), default="onboard")
     ap.add_argument("--count", type=int, default=1)
@@ -128,7 +134,22 @@ def main():
     if a.action == "whoami":
         print(json.dumps(call("whoami", {}), indent=2))
     elif a.action == "history":
-        print(json.dumps(call("get_send_history", {}), indent=2, ensure_ascii=False)[:4000])
+        h = call("get_send_history", {})
+        rows = h if isinstance(h, list) else h.get("history") or h.get("sends") or [h]
+        ours = [r for r in rows if isinstance(r, dict) and "csp-agent" in str(r.get("sheet_name") or r.get("source_name") or "")]
+        if not ours:
+            print("No sends from this tool yet (a template still waiting for Meta has not sent anything).")
+        for r in ours:
+            print(f"  {r.get('timestamp', '')[:19]}  job {r.get('job_id')}  {r.get('template_name')}  "
+                  f"sent {r.get('sent')} · failed {r.get('failed')} · skipped {r.get('skipped')}  ({r.get('sheet_name')})")
+    elif a.action == "template":
+        t = call("list_meta_templates", {})
+        rows = t if isinstance(t, list) else t.get("templates") or t.get("data") or []
+        ours = [x for x in rows if isinstance(x, dict) and str(x.get("name", "")).startswith("auto_")]
+        for x in ours[-10:]:
+            print(f"  {x.get('name')}: {x.get('status')}  {x.get('category', '')}  {str(x.get('rejected_reason') or '')}")
+        if not ours:
+            print(json.dumps(t, indent=2)[:1500])
     elif a.action == "status":
         if not a.job:
             sys.exit("--job is required (from the send result or history)")
