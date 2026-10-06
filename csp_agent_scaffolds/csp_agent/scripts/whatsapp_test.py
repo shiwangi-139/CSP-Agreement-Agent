@@ -67,6 +67,25 @@ def call(tool: str, args: dict) -> dict:
     return parts[0] if len(parts) == 1 else parts
 
 
+# Clean layout: a fixed Meta template with real line breaks; only the values
+# in {{n}} change per CSP (Meta allows no line breaks inside a value).
+CLEAN = {
+    "onboard": (
+        "नमस्ते {{1}} (KO {{2}}) 🙏\n\n"
+        "हमारे रिकॉर्ड में आपके सीएसपी दस्तावेज़ अभी जमा नहीं हैं। कृपया ये तीनों दस्तावेज़ अपलोड करें:\n"
+        "• सीएसपी एग्रीमेंट\n"
+        "• पुलिस वेरिफिकेशन / चरित्र प्रमाण पत्र\n"
+        "• आईआईबीएफ प्रमाण पत्र\n\n"
+        "Hello {{3}}, please upload your CSP Agreement, Police Verification / Character Certificate "
+        "and IIBF Certificate.\n\n"
+        "📎 अपलोड करें / Upload here:\n{{4}}\n\n"
+        "सहायता / Help: {{5}}\n"
+        "कृपया साफ़ स्कैन की हुई PDF भेजें / Please send a clear scanned PDF.\n"
+        "— Eko"),
+}
+CLEAN_MAP = {"onboard": {"1": "name", "2": "code", "3": "name", "4": "link", "5": "rm"}}
+
+
 def _numbers(raw: str) -> list[str]:
     out = []
     for n in raw.split(","):
@@ -84,7 +103,7 @@ def _flat(text: str) -> str:
     return re.sub(r"\s*\n+\s*", " · ", text.strip())
 
 
-def send(to: list[str], kind: str, count: int) -> None:
+def send(to: list[str], kind: str, count: int, style: str = "clean") -> None:
     db = SessionLocal()
     try:
         drafts = (db.query(OutboundMessage).filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW,
@@ -101,18 +120,31 @@ def send(to: list[str], kind: str, count: int) -> None:
             body = _flat((m.payload_json or {}).get("body", ""))
             link = re.search(r"https?://\S+", body)
             rm = re.search(r"RM ([^\s(·]+)", body)
+            rm_text = f"RM {rm.group(1)}" if rm else "आपके RM / your RM"
             # The sender finds what varies per person by comparing the message
             # with these columns, so one template fits every row.
             contacts.append({"phone": number, "name": csp.name if csp else "CSP",
                              "code": csp.current_code if csp else "", "link": link.group(0) if link else "",
-                             "rm": rm.group(1) if rm else "", "message": body})
+                             "rm": rm_text, "message": body})
             print(f"  draft {m.id} ({m.template_name}, {csp.current_code if csp else '-'}) -> {number}")
     finally:
         db.close()
     print(f"Sending {len(contacts)} TEST message(s) to {', '.join(sorted(set(to)))} (never to the CSPs)...")
+    if style == "clean" and kind in CLEAN:
+        job = call("upload_contacts", {"contacts": [{k: v for k, v in c.items() if k != "message"} for c in contacts],
+                                       "source_name": f"csp-agent-test-{kind}-clean"})
+        r = call("smart_send_template", {"job_id": job["job_id"], "phone_column": "phone", "body": CLEAN[kind],
+                                         "mapping": {n: {"type": "column", "value": col}
+                                                     for n, col in CLEAN_MAP[kind].items()},
+                                         "category": "UTILITY", "language": "hi"})
+        return _report(r)
     r = call("smart_send_from_messages", {"contacts": contacts, "message_column": "message", "phone_column": "phone",
                                           "category": "UTILITY", "language": "en_US",
                                           "source_name": f"csp-agent-test-{kind}"})
+    _report(r)
+
+
+def _report(r: dict) -> None:
     print(json.dumps(r, indent=2, ensure_ascii=False)[:3000])
     action = r.get("action")
     if action == "sent":
@@ -130,6 +162,8 @@ def main():
     ap.add_argument("--kind", choices=sorted(KINDS), default="onboard")
     ap.add_argument("--count", type=int, default=1)
     ap.add_argument("--job")
+    ap.add_argument("--style", choices=["clean", "plain"], default="clean",
+                    help="clean: fixed template with line breaks (onboard); plain: the draft text as one block")
     a = ap.parse_args()
     if a.action == "whoami":
         print(json.dumps(call("whoami", {}), indent=2))
@@ -157,7 +191,7 @@ def main():
     else:
         if not a.to:
             sys.exit("--to is required: the test number(s), never a CSP's")
-        send(_numbers(a.to), a.kind, max(1, min(a.count, 10)))
+        send(_numbers(a.to), a.kind, max(1, min(a.count, 10)), a.style)
 
 
 if __name__ == "__main__":
