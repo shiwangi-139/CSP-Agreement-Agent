@@ -86,6 +86,9 @@ if OUTBOUND_COMMUNICATION_MODE not in ("review", "auto"):
 WHATSAPP_MODE = os.getenv("WHATSAPP_MODE", "stub").strip().lower()
 WHATSAPP_AGENT_URL = os.getenv("WHATSAPP_AGENT_URL", "")
 WHATSAPP_AGENT_TOKEN = os.getenv("WHATSAPP_AGENT_TOKEN", "")
+# WHATSAPP_MODE=wabs: at most this many WhatsApp messages approved per day
+# (a careless "approve all" can never become a mass send).
+WHATSAPP_DAILY_LIMIT = int(os.getenv("WHATSAPP_DAILY_LIMIT", "5") or 5)
 
 # Upload portal and public links.
 PORTAL_SECRET_KEY = os.getenv("PORTAL_SECRET_KEY", "")

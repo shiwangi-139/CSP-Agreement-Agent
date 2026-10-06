@@ -348,7 +348,11 @@ def approve_bulk(ids: list[int] = Body(..., embed=True), me: Principal = Depends
             continue
         if not me.is_admin and (m.csp_id is None or db.get(CSP, m.csp_id).rm_id != me.user_id):
             continue
-        outbound.approve(db, m, reviewer)
+        try:
+            outbound.approve(db, m, reviewer)
+        except ValueError as e:
+            done["refused: " + str(e)[:120]] = done.get("refused: " + str(e)[:120], 0) + 1
+            continue
         outbound.send(db, m)
         db.commit()
         done[m.status.value] = done.get(m.status.value, 0) + 1

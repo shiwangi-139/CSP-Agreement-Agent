@@ -26,65 +26,15 @@ WABS_API_KEY in .env.
 """
 import argparse
 import json
-import os
 import re
 import sys
-import urllib.request
 
+from app.comms.wabs import CLEAN, call, send_clean
 from app.db import SessionLocal
 from app.models import CSP, OutboundMessage, OutboundStatus
 
-URL = os.getenv("WABS_MCP_URL", "https://indev.eko.in/whatsapp/mcp")
-KEY = os.getenv("WABS_API_KEY", "")
 KINDS = {"onboard": ["ONBOARD_ALL"], "missing": ["UPLOAD_MISSING"], "expired": ["UPLOAD_EXPIRED"],
          "renewal": ["RENEWAL_NOTICE", "RENEWAL_FOLLOWUP", "RENEWAL_FINAL"], "unreadable": ["UNREADABLE_REUPLOAD"]}
-
-
-def call(tool: str, args: dict) -> dict:
-    """One MCP tool call (JSON-RPC over streamable HTTP)."""
-    headers = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
-    if KEY:
-        headers["Authorization"] = f"Bearer {KEY}"
-    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                       "params": {"name": tool, "arguments": args}}).encode()
-    with urllib.request.urlopen(urllib.request.Request(URL, data=body, headers=headers, method="POST"),
-                                timeout=180) as r:
-        raw = r.read().decode()
-    payload = json.loads(re.search(r"\{.*\}", raw.replace("data: ", ""), re.S).group(0))
-    if "error" in payload:
-        raise SystemExit(f"Bulk Sender error: {payload['error']}")
-    result = payload.get("result", {})
-    if isinstance(result.get("structuredContent"), dict) and "result" in result["structuredContent"]:
-        return result["structuredContent"]["result"]
-    parts = []
-    for part in result.get("content", []):
-        if part.get("type") == "text":
-            try:
-                parts.append(json.loads(part["text"]))
-            except ValueError:
-                parts.append({"text": part["text"]})
-    if not parts:
-        return result
-    return parts[0] if len(parts) == 1 else parts
-
-
-# Clean layout: a fixed Meta template with real line breaks; only the values
-# in {{n}} change per CSP (Meta allows no line breaks inside a value).
-CLEAN = {
-    "onboard": (
-        "नमस्ते {{1}} (KO {{2}}) 🙏\n\n"
-        "हमारे पास अभी आपके सीएसपी डॉक्यूमेंट जमा नहीं हैं। कृपया ये तीनों डॉक्यूमेंट अपलोड करें:\n"
-        "• सीएसपी एग्रीमेंट\n"
-        "• पुलिस वेरिफिकेशन / चरित्र प्रमाण पत्र\n"
-        "• आईआईबीएफ सर्टिफिकेट\n\n"
-        "Hello {{3}}, please upload your CSP Agreement, Police Verification / Character Certificate "
-        "and IIBF Certificate.\n\n"
-        "📎 अपलोड करें / Upload here:\n{{4}}\n\n"
-        "मदद / Help: {{5}}\n"
-        "कृपया साफ़ स्कैन की हुई PDF भेजें / Please send a clear scanned PDF.\n"
-        "— Eko"),
-}
-CLEAN_MAP = {"onboard": {"1": "name", "2": "code", "3": "name", "4": "link", "5": "rm"}}
 
 
 def _numbers(raw: str) -> list[str]:
@@ -135,13 +85,8 @@ def send(to: list[str], kind: str, count: int, style: str = "clean", force: bool
     # minutes; --force overrides that (only ever for these test numbers).
     extra = {"force": True} if force else {}
     if style == "clean" and kind in CLEAN:
-        job = call("upload_contacts", {"contacts": [{k: v for k, v in c.items() if k != "message"} for c in contacts],
-                                       "source_name": f"csp-agent-test-{kind}-clean"})
-        r = call("smart_send_template", {"job_id": job["job_id"], "phone_column": "phone", "body": CLEAN[kind],
-                                         "mapping": {n: {"type": "column", "value": col}
-                                                     for n, col in CLEAN_MAP[kind].items()},
-                                         "category": "UTILITY", "language": "hi", **extra})
-        return _report(r)
+        return _report(send_clean(kind, [{k: v for k, v in c.items() if k != "message"} for c in contacts],
+                                  f"csp-agent-test-{kind}-clean", force))
     r = call("smart_send_from_messages", {"contacts": contacts, "message_column": "message", "phone_column": "phone",
                                           "category": "UTILITY", "language": "en_US",
                                           "source_name": f"csp-agent-test-{kind}", **extra})

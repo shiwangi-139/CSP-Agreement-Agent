@@ -353,7 +353,7 @@
       ${m.error ? `<div class="small" style="color:var(--danger-ink);margin-top:6px">${esc(m.error)}</div>` : ""}
       ${m.sent_at ? `<div class="small muted">Sent ${when(m.sent_at)}${m.delivery_status ? " · " + esc(m.delivery_status) : ""}</div>` : ""}
       ${m.reviewed_by ? `<div class="small muted">Reviewed by ${esc(m.reviewed_by)} · ${when(m.reviewed_at)}</div>` : ""}
-      ${draft ? `<div class="actions"><button class="btn primary" data-approve="${m.id}">Approve${m.channel === "WHATSAPP" ? "" : " & send"}</button>
+      ${draft ? `<div class="actions"><button class="btn primary" data-approve="${m.id}">Approve${m.channel === "WHATSAPP" && !["wabs", "push"].includes(window.WA_MODE) ? "" : " & send"}</button>
         <button class="btn" data-edit="${m.id}">Edit text</button><button class="btn danger" data-reject="${m.id}">Reject</button></div>` : ""}
     </div>`;
   }
@@ -486,6 +486,7 @@
       $("#logout").onclick = (e) => { e.preventDefault(); logout(); };
       document.querySelectorAll('#nav [data-view="contacts"],#nav [data-view="ingestion"],#nav [data-view="accuracy"]')
         .forEach((b) => b.style.display = me.role === "ADMIN" ? "" : "none");
+      window.WA_MODE = s.modes.whatsapp;
       $("#modes").innerHTML = `Outbound: <b>${esc(s.modes.outbound)}</b><br>WhatsApp: <b>${esc(s.modes.whatsapp)}</b><br>Sheet: ${esc(s.modes.calling_sheet)}`;
       document.querySelectorAll("#nav [data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
       $("#title").textContent = TITLES[state.view];

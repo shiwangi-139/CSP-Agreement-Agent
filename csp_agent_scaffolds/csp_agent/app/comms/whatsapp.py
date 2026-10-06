@@ -9,6 +9,9 @@ WHATSAPP_MODE:
   push  - POST each message to WHATSAPP_AGENT_URL with WHATSAPP_AGENT_TOKEN.
   pull  - the WhatsApp agent polls GET /api/agent/outbox and acknowledges each
         message with POST /api/agent/outbox/{id}/ack.
+  wabs  - send through Eko's WhatsApp Bulk Sender (app/comms/wabs.py) with the
+        Meta-approved layout for the message type; at most
+        WHATSAPP_DAILY_LIMIT approvals a day (checked in outbound.approve).
 
 The destination has already passed the recipient guard in outbound.py
 before anything here runs.
@@ -31,6 +34,29 @@ class SendOutcome:
     provider_message_id: Optional[str] = None
     error: Optional[str] = None
     retryable: bool = False
+
+
+def send_wabs(message_id: int, phone10: str, template_key: str, name: str, code: str,
+              link: Optional[str], rm: str) -> SendOutcome:
+    from . import wabs
+    kind = wabs.KIND_FOR_TEMPLATE.get(template_key)
+    if kind is None:
+        return SendOutcome("FAILED", error=f"No WhatsApp layout approved for {template_key} yet.")
+    if not link:
+        return SendOutcome("FAILED", error="The message has no upload link.")
+    try:
+        r = wabs.send_clean(kind, [{"phone": f"91{phone10}", "name": name, "code": code, "link": link, "rm": rm}],
+                            f"csp-agent-{template_key}-{message_id}")
+    except Exception as e:
+        return SendOutcome("FAILED", error=f"Bulk Sender error: {e}", retryable=True)
+    action = r.get("action") if isinstance(r, dict) else None
+    if action == "sent":
+        return SendOutcome("SENT", provider_message_id=str(r.get("job_id") or ""))
+    if action in ("created", "pending"):
+        # Retried by the worker; it goes out as soon as Meta approves the layout.
+        return SendOutcome("FAILED", error="Waiting for Meta to approve the WhatsApp template.", retryable=True)
+    reason = r.get("reason") or r.get("text") or json.dumps(r, ensure_ascii=False)[:300] if isinstance(r, dict) else str(r)
+    return SendOutcome("FAILED", error=f"Bulk Sender: {reason}"[:1000])
 
 
 def send_whatsapp(message_id: int, phone10: str, text: str, idempotency_key: str,

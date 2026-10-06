@@ -22,11 +22,11 @@ from typing import Optional
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..config import OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE
+from ..config import OUTBOUND_COMMUNICATION_MODE, WHATSAPP_DAILY_LIMIT, WHATSAPP_MODE
 from ..models import CSP, InternalUser, OutboundMessage, OutboundStatus
 from ..portal_tokens import extend_for_sent_message
 from .templates import render
-from .whatsapp import send_whatsapp
+from .whatsapp import send_wabs, send_whatsapp
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +115,21 @@ def draft(db: Session, *, csp: CSP, role: str, template_key: str, ctx: dict, key
 def approve(db: Session, msg: OutboundMessage, reviewer: str) -> OutboundMessage:
     if msg.status != OutboundStatus.QUEUED_FOR_REVIEW:
         raise ValueError(f"Only drafts awaiting review can be approved (this one is {msg.status.value}).")
+    if msg.channel == "WHATSAPP" and WHATSAPP_MODE == "wabs":
+        from .wabs import KIND_FOR_TEMPLATE
+        if msg.template_name not in KIND_FOR_TEMPLATE:
+            raise ValueError("This message type has no WhatsApp layout approved by Meta yet "
+                             f"(WhatsApp can send: {', '.join(KIND_FOR_TEMPLATE)}).")
+        if (msg.payload_json or {}).get("edited"):
+            raise ValueError("Edited text can't go on WhatsApp: it always uses the Meta-approved layout.")
+        start = _now().replace(hour=0, minute=0, second=0, microsecond=0)
+        today = db.query(OutboundMessage).filter(OutboundMessage.channel == "WHATSAPP",
+                                                 OutboundMessage.reviewed_at >= start,
+                                                 OutboundMessage.status.in_([OutboundStatus.APPROVED, OutboundStatus.SENT,
+                                                                             OutboundStatus.FAILED])).count()
+        if today >= WHATSAPP_DAILY_LIMIT:
+            raise ValueError(f"Daily WhatsApp limit reached ({WHATSAPP_DAILY_LIMIT} today). "
+                             "Raise WHATSAPP_DAILY_LIMIT in .env to send more.")
     msg.status = OutboundStatus.APPROVED
     msg.reviewed_by, msg.reviewed_at = reviewer, _now()
     return msg
@@ -163,8 +178,14 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
             msg.delivery_status, msg.sent_at, msg.error_log = "SENT", _now(), None
             extend_for_sent_message(db, payload.get("link"))
         elif msg.channel == "WHATSAPP":
-            out = send_whatsapp(msg.id, _phone10(msg.destination), payload.get("body", ""),
-                                msg.idempotency_key or str(msg.id), msg.template_name, payload.get("link"))
+            if WHATSAPP_MODE == "wabs":
+                rm = _staff(db, csp, "RM")
+                rm_text = (f"RM {rm.name}" + (f" ({rm.phone})" if rm.phone else "")) if rm else "आपके RM / your RM"
+                out = send_wabs(msg.id, _phone10(msg.destination), msg.template_name, csp.name, csp.current_code,
+                                payload.get("link"), rm_text)
+            else:
+                out = send_whatsapp(msg.id, _phone10(msg.destination), payload.get("body", ""),
+                                    msg.idempotency_key or str(msg.id), msg.template_name, payload.get("link"))
             msg.delivery_status = out.status
             if out.status == "SENT":
                 msg.status, msg.sent_at, msg.provider_message_id, msg.error_log = \
