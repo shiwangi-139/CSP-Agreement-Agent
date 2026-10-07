@@ -139,6 +139,15 @@ def _unreadable_reupload(c):
             f"This document is mandatory. Please upload a clear scanned PDF again.")
 
 
+def _link_request(c):
+    # The CSP asked for their link on the public page (app/api/portal.py).
+    return (f"Your document upload link | KO {c['csp_code']}",
+            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}),\nआपने डॉक्यूमेंट अपलोड करने का लिंक माँगा था। "
+            f"यह लिंक सिर्फ़ आपके लिए है, इसे किसी और को न भेजें।",
+            f"Hello {c['csp_name']} (KO {c['csp_code']}),\nYou asked for your document upload link. "
+            f"It is only for you, please don't share it.")
+
+
 def _escalation(role):
     def build(c):
         who = c.get("rm_name") if role == "RM" else c.get("dc_name")
@@ -160,11 +169,12 @@ TEMPLATES = {
     "UPLOAD_EXPIRED": _upload_expired,
     "ONBOARD_ALL": _onboard_all,
     "UNREADABLE_REUPLOAD": _unreadable_reupload,
+    "LINK_REQUEST": _link_request,
     "ESCALATION_RM": _escalation("RM"),
     "ESCALATION_DC": _escalation("DC"),
 }
 CSP_FACING = {"RENEWAL_NOTICE", "RENEWAL_FOLLOWUP", "RENEWAL_FINAL", "UPLOAD_MISSING",
-              "UPLOAD_EXPIRED", "ONBOARD_ALL", "UNREADABLE_REUPLOAD"}
+              "UPLOAD_EXPIRED", "ONBOARD_ALL", "UNREADABLE_REUPLOAD", "LINK_REQUEST"}
 
 
 def render(key: str, channel: str, ctx: dict[str, Any]) -> dict[str, str]:

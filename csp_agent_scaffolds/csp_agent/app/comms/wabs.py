@@ -37,9 +37,18 @@ CLEAN = {
         "कृपया साफ़ स्कैन की हुई PDF भेजें / Please send a clear scanned PDF.\n"
         "— Eko"),
 }
-CLEAN_MAP = {"onboard": {"1": "name", "2": "code", "3": "name", "4": "link", "5": "rm"}}
+# The CSP asked for their link on the public page (sent only to the number on record).
+CLEAN["link"] = (
+    "नमस्ते {{1}} (KO {{2}}) 🙏\n\n"
+    "आपने डॉक्यूमेंट अपलोड करने का लिंक माँगा था। यह लिंक सिर्फ़ आपके लिए है, इसे किसी और को न भेजें।\n"
+    "You asked for your document upload link. It is only for you, please don't share it.\n\n"
+    "📎 अपलोड करें / Upload here:\n{{3}}\n\n"
+    "अगर आपने लिंक नहीं माँगा था, तो इस मैसेज को अनदेखा करें। / If you didn't ask for it, please ignore this message.\n"
+    "— Eko")
+CLEAN_MAP = {"onboard": {"1": "name", "2": "code", "3": "name", "4": "link", "5": "rm"},
+             "link": {"1": "name", "2": "code", "3": "link"}}
 # Message type (OutboundMessage.template_name) -> layout above.
-KIND_FOR_TEMPLATE = {"ONBOARD_ALL": "onboard"}
+KIND_FOR_TEMPLATE = {"ONBOARD_ALL": "onboard", "LINK_REQUEST": "link"}
 
 
 def call(tool: str, args: dict) -> dict:

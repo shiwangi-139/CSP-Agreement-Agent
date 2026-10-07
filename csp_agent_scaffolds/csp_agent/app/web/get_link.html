@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eko CSP Documents</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
+<style>
+  :root {
+    --primary: hsl(197 100% 40%); --forest: hsl(155 53% 24%); --cream: hsl(40 33% 94%);
+    --ink: hsl(210 30% 7%); --muted: hsl(210 10% 40%); --border: hsl(30 20% 85%);
+    --mist: hsl(145 25% 93%); --saffron-soft: hsl(42 85% 93%); --card: #fff; --radius: .75rem;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--cream); color: var(--ink);
+         font: 16px/1.5 Inter, "Noto Sans Devanagari", system-ui, sans-serif; }
+  header { background: var(--forest); color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 14px; }
+  header .logo { height: 36px; width: auto; flex: none; }
+  header h1 { font: 800 1.25rem/1.2 "Plus Jakarta Sans", Inter, sans-serif; margin: 0; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius);
+          padding: 16px; margin-bottom: 14px; }
+  .notice { background: var(--saffron-soft); }
+  .done { background: var(--mist); }
+  h2 { font: 700 1.05rem/1.3 "Plus Jakarta Sans", Inter, sans-serif; margin: 0 0 6px; }
+  p { margin: 0 0 6px; }
+  .en { color: var(--muted); font-size: .88rem; }
+  label { display: block; font-weight: 600; margin: 12px 0 4px; font-size: .95rem; }
+  input { width: 100%; padding: 12px; font-size: 1rem; border: 1px solid var(--border);
+          border-radius: .6rem; background: #fff; color: var(--ink); }
+  button { width: 100%; margin-top: 16px; padding: 14px; font-size: 1.05rem; font-weight: 700;
+           background: var(--primary); color: #fff; border: 0; border-radius: var(--radius); cursor: pointer; }
+  ol { margin: 6px 0 0; padding-left: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <img class="logo" src="__LOGO__" alt="Eko">
+  <h1>डॉक्यूमेंट अपलोड <span style="font-weight:600;opacity:.8">/ Upload documents</span></h1>
+</header>
+<main>
+  __NOTICE__
+  __RESULT__
+  <form class="card" method="post" action="upload" autocomplete="on">
+    <h2>अपना अपलोड लिंक पाएँ <span class="en">/ Get your upload link</span></h2>
+    <p>अपना KO कोड और वही मोबाइल नंबर भरें जो Eko के रिकॉर्ड में है। लिंक उसी नंबर पर WhatsApp से आएगा।</p>
+    <p class="en">Enter your KO code and the mobile number Eko has on record. The link is sent to that number on WhatsApp.</p>
+    <label for="code">KO कोड <span class="en">/ KO code</span></label>
+    <input id="code" name="code" required maxlength="12" placeholder="1A850684" autocapitalize="characters">
+    <label for="mobile">मोबाइल नंबर <span class="en">/ Mobile number</span></label>
+    <input id="mobile" name="mobile" type="tel" required inputmode="numeric" pattern="[6-9][0-9]{9}" maxlength="10" placeholder="98XXXXXXXX">
+    <button type="submit">लिंक भेजें / Send link</button>
+  </form>
+  <div class="card">
+    <h2>मदद <span class="en">/ Help</span></h2>
+    <ol>
+      <li>लिंक न आए तो अपने Eko RM से बात करें। <span class="en">If no link arrives, talk to your Eko RM.</span></li>
+      <li>अगर आपका WhatsApp किसी दूसरे नंबर पर है, तो RM को वो नंबर बताएँ। <span class="en">If your WhatsApp is on another number, tell your RM.</span></li>
+    </ol>
+  </div>
+</main>
+</body>
+</html>

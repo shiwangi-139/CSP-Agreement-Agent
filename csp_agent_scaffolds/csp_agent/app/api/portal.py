@@ -3,7 +3,10 @@ app/api/portal.py
 Mobile upload portal for CSPs (Hindi + English), reached from the link in
 the WhatsApp / email messages.
 
-GET  /upload?token=...          the page (app/web/portal.html)
+GET  /upload?token=...          the page (app/web/portal.html); with no token
+                                or a dead one: "get your upload link" (app/web/get_link.html)
+POST /upload                    KO code + mobile -> a fresh link by WhatsApp, only to
+                                a number on the calling sheet (never shown on screen)
 GET  /api/portal/context        what this CSP still needs, prefilled contacts
 POST /api/portal/upload         one or more documents + typed issue dates
 
@@ -23,11 +26,15 @@ import base64
 import html
 import json
 import logging
-from datetime import date
+import threading
+import time
+import uuid
+from collections import defaultdict, deque
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
@@ -35,18 +42,20 @@ from sqlalchemy.orm import Session
 from ..ai.extraction.deterministic_extractor import extract_document_fields_deterministic
 from ..compliance import DOC_LABELS, evaluate, refresh_category
 from ..config import MAX_UPLOAD_SIZE_BYTES
-from ..db import get_db
+from ..db import SessionLocal, get_db
 from ..document_service import store_extracted_document
 from ..expiry_engine import add_years
 from ..models import (AgreementEvent, ContactChangeRequest, CSP, DocumentStatus, InternalUser,
-                      ManualReviewQueue, ReviewStatus)
+                      ManualReviewQueue, OutboundMessage, OutboundStatus, ReviewStatus)
 from ..ocr_service import detect_mime, photo_problem
-from ..portal_tokens import resolve_token, revoke_if_complete
+from ..portal_tokens import issue_upload_link, resolve_token, revoke_if_complete
+from ..validation import normalize_csp_code
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 PAGE = Path(__file__).resolve().parent.parent / "web" / "portal.html"
+GET_LINK_PAGE = PAGE.parent / "get_link.html"
 # Inlined: only the upload routes are public, so the page can't fetch /static.
 LOGO = "data:image/png;base64," + base64.b64encode(
     (PAGE.parent / "static" / "logo.png").read_bytes()).decode()
@@ -79,6 +88,12 @@ MSG = {
                    "The text is not visible (too much light or flash). Turn the flash off and take the photo again."),
     "blurry": ("फोटो धुंधली है। फोन को स्थिर रखें, अक्षरों पर टैप करके फोकस करें, फिर फोटो लें।",
                "The photo is blurry. Hold the phone still, tap on the text to focus, then take the photo."),
+    "link_requested": ("अगर KO कोड और मोबाइल नंबर हमारे रिकॉर्ड से मिलते हैं, तो कुछ मिनट में उसी नंबर पर WhatsApp से "
+                       "नया लिंक आ जाएगा। न आए तो अपने RM से बात करें।",
+                       "If the KO code and mobile number match our records, a new link will reach that number on "
+                       "WhatsApp in a few minutes. If it doesn't, please talk to your RM."),
+    "too_many": ("बहुत बार कोशिश हो चुकी है। कृपया थोड़ी देर बाद फिर कोशिश करें या अपने RM से बात करें।",
+                 "Too many attempts. Please try again later or talk to your RM."),
     "accepted": ("डॉक्यूमेंट मिल गया और ठीक है। धन्यवाद!", "Document accepted. Thank you!"),
     "review": ("डॉक्यूमेंट मिल गया। आपकी भरी हुई तारीख और डॉक्यूमेंट पर लिखी तारीख अलग है, हमारी टीम इसे चेक करेगी।",
                "Document received. The date you entered differs from the document, so our team will check it."),
@@ -112,21 +127,105 @@ def _context(db: Session, csp: CSP, requested: list[str]) -> dict:
             "max_upload_mb": round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)}
 
 
+def _get_link_page(notice: str = "", result: str = "") -> HTMLResponse:
+    def card(cls: str, key: str) -> str:
+        hi, en = MSG[key]
+        return f'<div class="card {cls}"><p>{html.escape(hi)}</p><p class="en">{html.escape(en)}</p></div>'
+    return HTMLResponse(GET_LINK_PAGE.read_text(encoding="utf-8").replace("__LOGO__", LOGO)
+                        .replace("__NOTICE__", card("notice", notice) if notice else "")
+                        .replace("__RESULT__", card("done", result) if result else ""))
+
+
 @router.get("/upload", response_class=HTMLResponse)
 def upload_page(token: str = Query(""), db: Session = Depends(get_db)):
     row = resolve_token(db, token)
     if row is None:
-        hi, en = MSG["bad_link"]
-        return HTMLResponse(
-            "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'>"
-            "<body style='font-family:Inter,system-ui,sans-serif;background:#f5f1e8;color:#0c1217;padding:32px;text-align:center'>"
-            f"<h2>⚠</h2><p>{html.escape(hi)}</p><p>{html.escape(en)}</p></body>", status_code=403)
+        # No token (someone typed the address) or a dead one: let the CSP ask
+        # for a fresh link instead of a dead end.
+        return _get_link_page(notice="bad_link" if token else "")
     csp = db.get(CSP, row.csp_id)
     ctx = _context(db, csp, row.requested_types or [])
     # JSON inside <script type="application/json">: escape "<" so a name
     # like "</script>" can't break out of the tag.
     blob = json.dumps(ctx, ensure_ascii=False).replace("<", "\\u003c")
     return HTMLResponse(PAGE.read_text(encoding="utf-8").replace("__LOGO__", LOGO).replace("__CONTEXT_JSON__", blob))
+
+
+# Self-service link requests: per web address and per CSP, so the page can't
+# be used to flood anyone with messages.
+LINK_REQUESTS_PER_IP_HOUR = 10
+LINK_SENDS_PER_CSP_DAY = 3
+_ip_hits: dict[str, deque] = defaultdict(deque)
+_ip_lock = threading.Lock()
+
+
+def _ip_allowed(ip: str) -> bool:
+    now = time.monotonic()
+    with _ip_lock:
+        q = _ip_hits[ip]
+        while q and now - q[0] > 3600:
+            q.popleft()
+        if len(q) >= LINK_REQUESTS_PER_IP_HOUR:
+            return False
+        q.append(now)
+        return True
+
+
+def _send_link(csp_id: int, phone10: str) -> None:
+    """Draft and send the LINK_REQUEST message (background, own session).
+    The CSP asked for it, so it skips review; the recipient guard in
+    outbound.send still checks the number against the calling sheet."""
+    from ..comms import outbound
+    db = SessionLocal()
+    try:
+        csp = db.get(CSP, csp_id)
+        state = evaluate(db, csp)
+        link = issue_upload_link(db, csp, state.needs_upload)
+        rm = _staff(db, csp.rm_id)
+        ctx = {"csp_name": csp.name, "csp_code": csp.current_code, "docs": [], "upload_link": link,
+               "rm_name": rm.name if rm else None, "rm_phone": rm.phone if rm else None}
+        [m] = outbound.draft(db, csp=csp, role="CSP", template_key="LINK_REQUEST", ctx=ctx,
+                             key_base=f"LINK:{csp.id}:{uuid.uuid4().hex[:12]}", channels=("WHATSAPP",),
+                             stage="LINK_REQUEST")
+        if m.status != OutboundStatus.BLOCKED:
+            m.destination = phone10
+            m.status, m.reviewed_by, m.reviewed_at = OutboundStatus.APPROVED, "CSP asked on the upload page", outbound._now()
+            outbound.send(db, m)
+        db.commit()
+        logger.info("link_request_sent csp_id=%s status=%s", csp_id, m.status.value)
+    except Exception:
+        db.rollback()
+        logger.exception("link_request_failed csp_id=%s", csp_id)
+    finally:
+        db.close()
+
+
+@router.post("/upload", response_class=HTMLResponse)
+def request_link(request: Request, background: BackgroundTasks, code: str = Form(""), mobile: str = Form(""),
+                 db: Session = Depends(get_db)):
+    ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
+    if not _ip_allowed(ip):
+        return _get_link_page(result="too_many")
+    from ..comms.outbound import _phone10, allowed_destinations
+    want = normalize_csp_code(code.strip().upper()[:12])
+    phone = _phone10(mobile)
+    csp = (db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True),
+                                (CSP.current_code == want) | (CSP.lookup_code == want)).first()
+           if want and phone else None)
+    matched = bool(csp and phone in allowed_destinations(db, csp, "CSP", "WHATSAPP"))
+    sent_today = 0
+    if matched:
+        sent_today = db.query(OutboundMessage).filter(
+            OutboundMessage.csp_id == csp.id, OutboundMessage.template_name == "LINK_REQUEST",
+            OutboundMessage.created_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)).count()
+        if sent_today < LINK_SENDS_PER_CSP_DAY:
+            background.add_task(_send_link, csp.id, phone)
+    db.add(AgreementEvent(csp_id=csp.id if csp else None, event_type="LINK_REQUEST", source="CSP_UPLOAD_PORTAL",
+                          channel="WEB", payload={"code": want or code[:12], "mobile_last4": (phone or "")[-4:],
+                                                  "matched": matched, "limited": sent_today >= LINK_SENDS_PER_CSP_DAY}))
+    db.commit()
+    # Same answer whatever happened: the page never reveals who is on record.
+    return _get_link_page(result="link_requested")
 
 
 @router.get("/api/portal/context")
