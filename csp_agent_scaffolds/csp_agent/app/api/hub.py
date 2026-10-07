@@ -6,7 +6,7 @@ import io
 import logging
 import threading
 import zipfile
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -22,7 +22,7 @@ from ..comms import outbound
 from ..config import (OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE, CALLING_SHEET_LINK, CALLING_SHEET_SOURCE,
                       CALLING_SHEET_TAB)
 from ..db import get_db, SessionLocal
-from ..models import (CSP, ContactChangeRequest, CspQuestion, Document, DocumentStatus, ExtractionCorrection, InboundMessage, InternalUser,
+from ..models import (AgreementEvent, CSP, ContactChangeRequest, CspQuestion, Document, DocumentStatus, ExtractionCorrection, InboundMessage, InternalUser,
                       ManualReviewQueue, OutboundMessage, OutboundStatus, OutreachCycle, ReviewStatus)
 from ..portal_tokens import issue_upload_link
 from .. import vault
@@ -125,6 +125,7 @@ def summary(me: Principal = Depends(require_user), db: Session = Depends(get_db)
         "contact_changes_pending": db.query(ContactChangeRequest).filter_by(status="PENDING").count() if me.is_admin else 0,
         "questions_open": _mine(db.query(CspQuestion).join(CSP, CSP.id == CspQuestion.csp_id), me)
                           .filter(CspQuestion.status == "OPEN").count(),
+        "form_uploads": _form_upload_counts(db, me),
         "me": {"name": me.name, "role": me.role},
         "modes": {"outbound": OUTBOUND_COMMUNICATION_MODE, "whatsapp": WHATSAPP_MODE,
                   "calling_sheet": (f"live sheet link · {CALLING_SHEET_TAB}" if CALLING_SHEET_LINK
@@ -473,6 +474,84 @@ def resolve_contact_change(req_id: int, action: str, db: Session = Depends(get_d
     r.status = "DONE" if action == "done" else "DISMISSED"
     db.commit()
     return {"id": r.id, "status": r.status}
+
+
+# ------------------------------------------------- "Slab 5": form uploads
+# Everyone who used the upload page, on top of their slab 1-4. One row per
+# submission (AgreementEvent PORTAL_UPLOAD, written by app/api/portal.py).
+REASON_TEXT = {
+    "accepted": "accepted", "review": "accepted, date checked by the team", "duplicate": "already on file",
+    "unreadable": "unreadable (counts as missing)", "wrong_doc": "wrong document", "expired": "expired",
+    "too_small": "photo too small", "too_dark": "photo too dark", "washed_out": "photo washed out",
+    "blurry": "photo blurry", "no_date": "no issue date", "future": "date in the future",
+    "too_big": "file too large", "file_type": "not a PDF/JPG/PNG",
+}
+SECTION_TYPE = {"agreement": "AGREEMENT", "pvr": "POLICE_VERIFICATION", "iibf": "IIBF_CERTIFICATE"}
+
+
+def _outcome(results: list[dict]) -> str:
+    oks = [bool(r.get("ok")) for r in results]
+    return "accepted" if oks and all(oks) else "rejected" if not any(oks) else "partly"
+
+
+def _form_events(db: Session, me: Principal, days: int = 0):
+    q = _mine(db.query(AgreementEvent, CSP).join(CSP, CSP.id == AgreementEvent.csp_id), me) \
+        .filter(AgreementEvent.event_type == "PORTAL_UPLOAD")
+    if days:
+        q = q.filter(AgreementEvent.sent_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days))
+    return q.order_by(AgreementEvent.sent_at.desc())
+
+
+def _form_upload_counts(db: Session, me: Principal) -> dict:
+    latest: dict[int, str] = {}
+    for e, c in _form_events(db, me):                         # newest first: keep each CSP's latest
+        latest.setdefault(c.id, _outcome((e.payload or {}).get("results") or []))
+    return {"csps": len(latest), "accepted": sum(v == "accepted" for v in latest.values()),
+            "partly": sum(v == "partly" for v in latest.values()),
+            "rejected": sum(v == "rejected" for v in latest.values())}
+
+
+@router.get("/form-uploads")
+def form_uploads(outcome: str = "", days: int = 0, me: Principal = Depends(require_user),
+                 db: Session = Depends(get_db)):
+    rms = {u.id: u.name for u in db.query(InternalUser).filter(InternalUser.role == "RM")}
+    rows = []
+    for e, c in _form_events(db, me, days).limit(1000):
+        p = e.payload or {}
+        results = p.get("results") or []
+        out = _outcome(results)
+        if outcome and out != outcome:
+            continue
+        rows.append({
+            "id": e.id, "at": _iso(e.sent_at), "outcome": out,
+            "csp": {"id": c.id, "code": c.current_code, "name": c.name, "slab": c.category, "sub_slab": c.sub_slab},
+            "rm": rms.get(c.rm_id), "slab_before": p.get("slab_before"), "slab_after": p.get("slab_after"),
+            "contact_changes": p.get("contact_changes") or 0,
+            "results": [{"i": i, "section": r.get("section"),
+                         "type": SECTION_TYPE.get(r.get("section"), r.get("section")), "ok": bool(r.get("ok")),
+                         "reason": REASON_TEXT.get(r.get("reason"), "accepted" if r.get("ok") else "rejected"),
+                         "read_as": r.get("read_as"), "filename": r.get("filename"),
+                         "document_id": r.get("document_id"), "kept_file": bool(r.get("kept_file"))}
+                        for i, r in enumerate(results)]})
+    return {"rows": rows[:500], "counts": _form_upload_counts(db, me)}
+
+
+@router.get("/form-uploads/{event_id}/file/{i}")
+def form_upload_file(event_id: int, i: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """A file the upload page turned away (kept under _portal_rejected/)."""
+    e = db.get(AgreementEvent, event_id)
+    if e is None or e.event_type != "PORTAL_UPLOAD":
+        raise HTTPException(404, "not found")
+    _own_csp(db, e.csp_id, me)
+    results = (e.payload or {}).get("results") or []
+    kept = results[i].get("kept_file") if 0 <= i < len(results) else None
+    path = vault.abs_path(kept) if kept else None
+    if path is None or not path.exists() or not vault.is_inside_vault(path.resolve()):
+        raise HTTPException(404, "file not found")
+    media = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+    return FileResponse(path.resolve(), media_type=media.get(path.suffix.lower(), "application/octet-stream"),
+                        headers={"Content-Disposition": f'inline; filename="{path.name}"',
+                                 "X-Content-Type-Options": "nosniff"})
 
 
 # ------------------------------------------------------------ CSP questions

@@ -317,3 +317,35 @@ def test_upload_page_posts_relative_so_it_works_behind_a_public_sub_path(client)
     _, _, token = _csp(Session)
     page = c.get(f"/upload?token={token}").text
     assert 'fetch("api/portal/upload"' in page and 'fetch("/api/portal/upload"' not in page
+
+
+# ------------------------------------------- "Slab 5": form uploads page
+def test_form_uploads_record_what_was_accepted_and_what_was_turned_away(client, monkeypatch):
+    c, Session = client
+    cid, code, token = _csp(Session)
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    key = {"X-API-Key": "k"}
+    pvr_date = date.today() - timedelta(days=30)
+    r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=pvr_date.isoformat(),
+                                                iibf_issue_date=pvr_date.isoformat()),
+               files={"pvr_file": ("pvr.pdf", _pvr_pdf(pvr_date), "application/pdf"),
+                      "iibf_file": ("iibf.pdf", _pvr_pdf(pvr_date), "application/pdf")})   # a PVR in the IIBF box
+    assert r.status_code == 200
+    shown = r.json()["results"]
+    assert all(set(x) <= {"section", "ok", "message", "issue_date", "expiry_date"} for x in shown)  # nothing internal
+
+    d = c.get("/api/hub/form-uploads", headers=key).json()
+    [row] = [x for x in d["rows"] if x["csp"]["id"] == cid]
+    by = {x["section"]: x for x in row["results"]}
+    assert row["outcome"] == "partly" and by["pvr"]["ok"] and by["pvr"]["document_id"]
+    assert not by["iibf"]["ok"] and by["iibf"]["reason"] == "wrong document" and by["iibf"]["kept_file"]
+    assert by["iibf"]["read_as"] == "POLICE_VERIFICATION" and row["slab_after"] == 3
+    f = c.get(f"/api/hub/form-uploads/{row['id']}/file/{by['iibf']['i']}", headers=key)
+    assert f.status_code == 200 and f.content[:4] == b"%PDF"
+    assert c.get(f"/api/hub/form-uploads/{row['id']}/file/{by['pvr']['i']}", headers=key).status_code == 404
+    assert c.get("/api/hub/summary", headers=key).json()["form_uploads"]["csps"] >= 1
+    only_partly = c.get("/api/hub/form-uploads?outcome=partly", headers=key).json()["rows"]
+    assert all(x["outcome"] == "partly" for x in only_partly)
+    s = Session()
+    assert s.get(CSP, cid).category == 3            # still in its own slab as well
+    s.close()

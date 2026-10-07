@@ -118,7 +118,8 @@ def main():
         # which may itself be inside storage/), files being received, and the
         # vault's own index and marker. Leftover copies inside the vault (old
         # code-only folders such as 1A850168/) are swept like any other.
-        keep = [vault.ROOT.parent / "ocr_cache", vault.ROOT.parent / "reports", legacy, vault.ROOT / vault.STAGING]
+        keep = [vault.ROOT.parent / "ocr_cache", vault.ROOT.parent / "reports", legacy, vault.ROOT / vault.STAGING,
+                vault.ROOT / vault.PORTAL_REJECTED]
         orphans = 0
         for root in OLD_ROOTS + [vault.ROOT]:
             if not root.is_dir():

@@ -49,6 +49,7 @@ from ..document_service import store_extracted_document
 from ..expiry_engine import add_years
 from ..models import (AgreementEvent, ContactChangeRequest, CSP, CspQuestion, DocumentStatus, InternalUser,
                       ManualReviewQueue, OutboundMessage, OutboundStatus, ReviewStatus)
+from .. import vault
 from ..ocr_service import detect_mime, photo_problem
 from ..portal_tokens import issue_upload_link, resolve_token, revoke_if_complete
 from ..validation import normalize_csp_code
@@ -335,39 +336,50 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
             continue
         if not getattr(upload, "filename", ""):
             continue
-        res = {"section": section, "ok": False}
+        res = {"section": section, "ok": False, "filename": str(upload.filename)[:200]}
         results.append(res)
+
+        def turn_away(reason: str, data: Optional[bytes] = None, mime: Optional[str] = None) -> None:
+            res["message"], res["reason"] = _msg(reason), reason
+            if data and mime:
+                # Kept so the team can see what the CSP tried (dashboard: Form uploads).
+                try:
+                    res["kept_file"] = vault.keep_rejected_upload(data, csp.current_code, section, mime)
+                except OSError:
+                    logger.exception("portal_rejected_file_not_kept csp_id=%s", csp.id)
 
         typed = _parse_date(form.get(f"{section}_issue_date"))
         problem = _typed_date_problem(doc_type, typed, today)
         if problem:
-            res["message"] = _msg(problem)
+            turn_away(problem)
             continue
         data = await _read_limited(upload)
         if data is None:
-            res["message"] = _msg("too_big")
+            turn_away("too_big")
             continue
         mime = detect_mime(data)
         if mime is None:
-            res["message"] = _msg("file_type")
+            turn_away("file_type")
             continue
 
         problem = photo_problem(data)
         if problem:
-            # Not stored: the CSP retakes the photo right away.
-            res["message"] = _msg(problem)
+            # Not filed as a document: the CSP retakes the photo right away.
+            turn_away(problem, data, mime)
             continue
         ex = await run_in_threadpool(extract_document_fields_deterministic, data, upload.filename)
         if ex["readability"] == "UNREADABLE":
             ex["document_type"] = ex.get("document_type") if ex.get("document_type") != "UNKNOWN" else doc_type
-            store_extracted_document(db, csp, data, upload.filename, mime, ex, channel="CSP_UPLOAD_PORTAL")
-            res["message"] = _msg("unreadable")
+            kept = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel="CSP_UPLOAD_PORTAL")
+            turn_away("unreadable")
+            res["document_id"] = kept.document.id if kept.document is not None else None
             continue
         if ex["readability"] != "READABLE" or ex["document_type"] != doc_type:
-            res["message"] = _msg("wrong_doc")
+            turn_away("wrong_doc", data, mime)
+            res["read_as"] = ex.get("document_type")
             continue
         if ex.get("compliance_status") == "EXPIRED":
-            res["message"] = _msg("expired")
+            turn_away("expired", data, mime)
             continue
 
         read_date = _parse_date(ex.get("start_date"))
@@ -378,8 +390,8 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
         out = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel="CSP_UPLOAD_PORTAL",
                                        sender_on_sheet=True)
         if out.decision == "DUPLICATE":
-            res["message"] = _msg("duplicate")
-            res["ok"] = True
+            res.update(message=_msg("duplicate"), reason="duplicate", ok=True,
+                       document_id=out.document.id if out.document is not None else None)
             continue
         doc = out.document
         if ex.get("typed_issue_date"):
@@ -389,20 +401,27 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
             db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
                                      reason=f"Typed issue date {typed} differs from date read by model {read_date}."))
         res.update(ok=True, message=_msg("review" if needs_review else "accepted"),
+                   reason="review" if needs_review else "accepted", document_id=doc.id,
                    issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))
 
     if not results:
         raise HTTPException(422, detail={"hi": "कम से कम एक डॉक्यूमेंट चुनें।", "en": "Please choose at least one document."})
 
     changes = _record_contact_changes(db, csp, {k: form.get(k) for k in ("name", "email", "mobile", "rm", "dc")})
-    db.add(AgreementEvent(csp_id=csp.id, event_type="PORTAL_UPLOAD", source="CSP_UPLOAD_PORTAL", channel="WEB",
-                          payload={"results": [{k: r.get(k) for k in ("section", "ok")} for r in results],
-                                   "contact_changes": changes}))
+    slab_before = csp.category
     # Category, and the follow-up cycles this upload satisfies, update now
     # (queued reminders for them are cancelled), not at the next daily run.
     from ..renewal_engine import on_documents_received
     state = on_documents_received(db, csp, today)
+    # One row per submission: the "Form uploads" page reads these.
+    keep = ("section", "ok", "reason", "filename", "document_id", "kept_file", "read_as", "issue_date", "expiry_date")
+    db.add(AgreementEvent(csp_id=csp.id, event_type="PORTAL_UPLOAD", source="CSP_UPLOAD_PORTAL", channel="WEB",
+                          payload={"results": [{k: r.get(k) for k in keep if r.get(k) is not None} for r in results],
+                                   "contact_changes": changes, "slab_before": slab_before,
+                                   "slab_after": state.category, "sub_slab_after": csp.sub_slab,
+                                   "still_needed": state.needs_upload}))
     revoke_if_complete(db, row, state.needs_upload)
     db.commit()
-    return {"results": results, "category": state.category,
+    shown = ("section", "ok", "message", "issue_date", "expiry_date")       # nothing internal to the browser
+    return {"results": [{k: r[k] for k in shown if k in r} for r in results], "category": state.category,
             "still_needed": [DOC_LABELS[t][0] for t in state.needs_upload]}

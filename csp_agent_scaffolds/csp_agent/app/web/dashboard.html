@@ -33,6 +33,7 @@
     <button data-view="contacts">Contacts &amp; gaps</button>
     <button data-view="ingestion">Gmail ingestion</button>
     <button data-view="review">Review queue <span class="count" id="n-review"></span></button>
+    <button data-view="formuploads">Form uploads <span class="count" id="n-form"></span></button>
     <button data-view="questions">CSP questions <span class="count" id="n-questions"></span></button>
     <button data-view="accuracy">Accuracy</button>
     <div class="foot" id="modes"></div>
@@ -128,6 +129,13 @@
           <div class="small" style="margin-top:6px">${Object.entries(s.sub_slabs || {}).filter(([x]) => x.startsWith(k + ".")).map(([x, v]) => `${x} ${esc(v.label)}: <b>${v.count}</b>`).join("<br>")}</div>
           ${k < 4 ? `<div class="small" style="margin-top:6px">${badge("EXPIRED", (s.categories_with_expired?.[k] ?? 0) + " with an expired document")}</div>` : ""}</div>`).join("")}
       </div>
+      <div class="card kpi" data-go="formuploads" style="margin-top:14px;cursor:pointer;border-top:4px solid var(--forest-light, #2f8f5b)">
+        <div class="label">Slab 5 · Uploaded through the form</div>
+        <div style="display:flex;gap:28px;align-items:baseline;flex-wrap:wrap">
+          <div class="n">${s.form_uploads?.csps ?? 0}</div>
+          <div class="small">All accepted: <b>${s.form_uploads?.accepted ?? 0}</b> · Partly accepted: <b>${s.form_uploads?.partly ?? 0}</b>
+            · <span style="color:var(--danger-ink)">Tried, nothing accepted: <b>${s.form_uploads?.rejected ?? 0}</b></span></div>
+          <div class="small muted">CSPs who used the upload page (by their latest try). They also stay in slab 1–4 above.</div></div></div>
       <div class="grid k3" style="margin-top:14px">
         <div class="card"><h2>Waiting for your approval</h2>
           <div class="kv"><dt>WhatsApp drafts</dt><dd class="num">${s.drafts_pending.WHATSAPP}</dd>
@@ -323,6 +331,32 @@
         : `<div class="empty">No mistakes found in the checks so far.</div>`}</div>`;
     },
 
+    async formuploads() {
+      const out = state.fout ?? "", days = state.fdays ?? 0;
+      const d = await api(`/api/hub/form-uploads?outcome=${out}&days=${days}`);
+      const k = d.counts;
+      const OUT = {accepted: ["VALID", "all accepted"], partly: ["REVIEW", "partly accepted"], rejected: ["EXPIRED", "nothing accepted"]};
+      const slabTxt = (n, sub) => n ? `Slab ${sub || n}` : "—";
+      return `<p class="small muted">Every time a CSP submitted the upload page: what they sent, what was accepted or turned away and why, and their slab now. <b>"Tried, nothing accepted"</b> are the CSPs to call first. Turned-away files are kept so you can see what they tried.</p>
+      <div class="tabs">${[["", `All (${k.csps} CSPs)`], ["accepted", `All accepted (${k.accepted})`], ["partly", `Partly (${k.partly})`], ["rejected", `Tried, nothing accepted (${k.rejected})`]]
+        .map(([v, l]) => `<button class="tab ${out === v ? "active" : ""}" data-fout="${v}">${l}</button>`).join("")}</div>
+      <div class="tabs">${[[0, "Any time"], [1, "Today"], [7, "Last 7 days"], [30, "Last 30 days"]]
+        .map(([v, l]) => `<button class="tab ${days === v ? "active" : ""}" data-fdays="${v}">${l}</button>`).join("")}</div>
+      <p class="small muted">Counts in brackets are CSPs, by their latest submission; the list below shows every submission.</p>
+      ${d.rows.map((r) => `<div class="card" style="margin-bottom:10px">
+        <div class="meta">${badge(OUT[r.outcome][0], OUT[r.outcome][1])}
+          <a href="#" data-csp="${r.csp.id}"><b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)}</a> · RM ${esc(r.rm || "-")}
+          · now <b>${esc(slabTxt(r.csp.slab, r.csp.sub_slab))}</b>${r.slab_before && r.slab_after && r.slab_before !== r.slab_after ? ` <span class="muted">(was slab ${r.slab_before} → ${r.slab_after} after this upload)</span>` : ""}
+          <span class="muted" style="margin-left:auto">${when(r.at)}</span></div>
+        <div class="kv" style="margin-top:6px">${r.results.map((x) => `
+          <dt>${esc(DOC[x.type] || x.section)}</dt>
+          <dd>${x.ok ? "✅" : "❌"} ${esc(x.reason)}${x.read_as && !x.ok ? ` <span class="muted">(read as ${esc(DOC[x.read_as] || x.read_as)})</span>` : ""}
+            ${x.document_id ? ` · <a href="#" data-file="${x.document_id}">view</a>` : ""}${x.kept_file ? ` · <a href="#" data-keptfile="${r.id}/${x.i}">view what they sent</a>` : ""}
+            ${x.filename ? `<span class="small muted"> · ${esc(x.filename)}</span>` : ""}</dd>`).join("")}</div>
+        ${r.contact_changes ? `<div class="small" style="margin-top:6px">Also changed ${r.contact_changes} contact detail(s): see <a href="#" data-go="contacts">Contacts</a>.</div>` : ""}
+      </div>`).join("") || `<div class="card empty">No form submissions here yet.</div>`}`;
+    },
+
     async questions() {
       const st = state.qstatus ?? "OPEN";
       const d = await api(`/api/hub/questions?status=${st}`);
@@ -412,12 +446,13 @@
   function closeDrawer() { $("#drawer").classList.remove("open"); $("#backdrop").classList.remove("open"); }
   $("#backdrop").onclick = closeDrawer;
 
-  async function openFile(id, download) {
+  function openFile(id, download) { return openPath(`api/hub/documents/${id}/file${download ? "?download=1" : ""}`); }
+  async function openPath(path) {
     // Open the tab now, while the click still counts: a tab opened after the
     // download finishes is blocked as a pop-up.
     const tab = window.open("", "_blank");
     if (tab) tab.document.write("<p style='font-family:sans-serif'>Loading document…</p>");
-    const r = await fetch(`api/hub/documents/${id}/file${download ? "?download=1" : ""}`, {credentials: "same-origin", headers: H});
+    const r = await fetch(path, {credentials: "same-origin", headers: H});
     if (!r.ok) { if (tab) tab.close(); return toast(r.status === 401 ? "Wrong API key." : "File not found."); }
     const url = URL.createObjectURL(await r.blob());
     if (tab) tab.location.href = url;
@@ -427,7 +462,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-qstatus],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-qstatus],[data-fout],[data-fdays],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -460,6 +495,9 @@
       if (ds.csp) return openCsp(ds.csp);
       if (ds.approve) { const m = await post(`/api/hub/messages/${ds.approve}/approve`); toast(`Approved → ${m.status.replaceAll("_", " ").toLowerCase()}`); return refreshAfterAction(); }
       if (ds.sendnow) { if (!confirm("Send this WhatsApp message to the CSP now?")) return; const m = await post(`/api/hub/messages/${ds.sendnow}/send-now`); toast(`→ ${m.status.replaceAll("_", " ").toLowerCase()}${m.error ? ": " + m.error : ""}`); return refreshAfterAction(); }
+      if (ds.fout !== undefined) { state.fout = ds.fout; return render(); }
+      if (ds.fdays !== undefined) { state.fdays = +ds.fdays; return render(); }
+      if (ds.keptfile) { e.preventDefault(); const [ev, i] = ds.keptfile.split("/"); return openPath(`api/hub/form-uploads/${ev}/file/${i}`); }
       if (ds.answer) { await post(`/api/hub/questions/${ds.answer}/answer`, {note: $(`#qn${ds.answer}`)?.value || ""}); toast("Marked answered."); return render(); }
       if (ds.qstatus !== undefined) { state.qstatus = ds.qstatus; return render(); }
       if (ds.reject) { const why = prompt("Reason for rejecting (optional)") ?? null; if (why === null) return; await post(`/api/hub/messages/${ds.reject}/reject`, {reason: why}); toast("Rejected."); return refreshAfterAction(); }
@@ -500,7 +538,7 @@
   // ------------------------------------------------------------ render
   const TITLES = {overview: "Overview", categories: "Slabs", documents: "Latest documents", comms: "Communication Hub",
                   contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy",
-                  questions: "CSP questions"};
+                  questions: "CSP questions", formuploads: "Form uploads (Slab 5)"};
   async function render() {
     try {
       state.summary = await api("/api/hub/summary");
@@ -508,6 +546,7 @@
       const drafts = s.drafts_pending.EMAIL + s.drafts_pending.WHATSAPP;
       $("#n-drafts").textContent = drafts || ""; $("#n-review").textContent = s.review_pending || "";
       $("#n-questions").textContent = s.questions_open || "";
+      $("#n-form").textContent = s.form_uploads?.rejected || "";
       $("#n-cat").textContent = (s.categories[2] + s.categories[3] + s.categories[4]) || "";
       $("#modepill").textContent = s.modes.outbound === "review" ? "Review mode: nothing is sent without approval" : "Auto mode: approved messages send automatically";
       const me = s.me || {};

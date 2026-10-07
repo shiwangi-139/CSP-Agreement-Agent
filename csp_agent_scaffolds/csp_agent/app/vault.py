@@ -13,6 +13,9 @@ file is, so staff can find an expired PVR without opening anything.
           unreadable/   blurred/unreadable copies, kept for audit
           rejected/     copies a reviewer rejected
       _staging/         new files land here first, then move into place
+      _portal_rejected/ files a CSP sent on the upload page that were turned
+                        away (wrong document, expired, bad photo), kept so
+                        the team can see what was tried
 
 The database decides and the file name follows: desired_path() works out
 where a document's file belongs from its row, and place() moves it there.
@@ -66,6 +69,7 @@ KIND = {
 EXT_FOR_MIME = {"application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".png"}
 SUBFOLDER = {"EXPIRED": "expired", "REPLACED": "expired", "UNREADABLE": "unreadable", "REJECTED": "rejected"}
 STAGING = "_staging"
+PORTAL_REJECTED = "_portal_rejected"
 REVIEW_STATUSES = {DocumentStatus.NEEDS_APPROVAL, DocumentStatus.NEEDS_REVIEW}
 
 
@@ -225,6 +229,20 @@ def stage(data: bytes, sha256: str, mime_type: Optional[str]) -> str:
     return rel(final)
 
 
+def keep_rejected_upload(data: bytes, csp_code: str, section: str, mime_type: Optional[str]) -> str:
+    """Save a file the upload page turned away, under
+    _portal_rejected/<CODE>/, and return its storage path (relative)."""
+    check_root()
+    d = ROOT / PORTAL_REJECTED / (_clean(csp_code, 20) or "UNKNOWN")
+    d.mkdir(parents=True, exist_ok=True)
+    stamp = date.today().isoformat()
+    final = d / f"{stamp}_{_clean(section, 20)}_{secrets.token_hex(4)}{EXT_FOR_MIME.get(mime_type or '', '.pdf')}"
+    tmp = final.with_suffix(final.suffix + ".part")
+    tmp.write_bytes(data)
+    tmp.replace(final)
+    return rel(final)
+
+
 def _sync_agreement_link(db: Session, doc: Document) -> None:
     if doc.agreement_id is None:
         return
@@ -319,6 +337,8 @@ def orphan_files(db: Session) -> list[Path]:
     for f in ROOT.rglob("*"):
         if not f.is_file() or f.name == "INDEX.xlsx" or f.name.startswith(".~lock"):
             continue
+        if PORTAL_REJECTED in f.parts:
+            continue                        # recorded on the upload event, not a Document
         if f.resolve() not in known:
             out.append(f)
     return out
