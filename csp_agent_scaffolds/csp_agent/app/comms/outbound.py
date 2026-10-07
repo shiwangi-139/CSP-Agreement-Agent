@@ -313,6 +313,40 @@ def process_outbox(db: Session, limit: int = 50) -> dict:
     return counts
 
 
+def refresh_whatsapp_delivery(db: Session, limit: int = 40) -> dict:
+    """Ask the Bulk Sender (Meta's receipts) whether recent WhatsApp messages
+    were delivered or read, for the analytics. Messages of the last 3 days
+    whose status isn't final yet."""
+    if WHATSAPP_MODE != "wabs":
+        return {}
+    from .wabs import call
+    since = _now() - timedelta(days=3)
+    rows = (db.query(OutboundMessage)
+            .filter(OutboundMessage.channel == "WHATSAPP", OutboundMessage.status == OutboundStatus.SENT,
+                    OutboundMessage.sent_at >= since, OutboundMessage.provider_message_id.isnot(None),
+                    OutboundMessage.provider_message_id != "",
+                    (OutboundMessage.delivery_status.is_(None))
+                    | OutboundMessage.delivery_status.notin_(["READ", "FAILED_DELIVERY"]))
+            .order_by(OutboundMessage.sent_at.desc()).limit(limit).all())
+    counts: dict[str, int] = {}
+    for m in rows:
+        try:
+            r = call("get_delivery_status", {"job_id": m.provider_message_id})
+        except Exception as e:
+            logger.warning("delivery_status_unavailable message_id=%s: %s", m.id, e)
+            break
+        got = [x for x in (r.get("rows") or []) if isinstance(x, dict)] if isinstance(r, dict) else []
+        st = (got[0].get("delivery_status") or "").lower() if got else ""
+        new = {"delivered": "DELIVERED", "read": "READ", "failed": "FAILED_DELIVERY"}.get(st)
+        if new and new != m.delivery_status:
+            m.delivery_status = new
+            if new == "FAILED_DELIVERY":
+                m.error_log = (got[0].get("delivery_error") or "WhatsApp could not deliver it")[:500]
+            counts[new] = counts.get(new, 0) + 1
+    db.commit()
+    return counts
+
+
 def cancel_superseded(db: Session, csp: CSP, cycle_ids: list[int], reason: str) -> int:
     """Messages not sent yet for follow-up cycles that just closed (the CSP
     uploaded the documents): never send them. Marked REJECTED by the agent,

@@ -14,13 +14,13 @@ from typing import Any
 
 SCAN_RULES_HI = (
     "अपलोड के नियम:\n"
-    "• स्कैन की हुई PDF ही अपलोड करें (मोबाइल से: Google Drive → Scan, या Adobe Scan ऐप, या कैमरा का 'Document' मोड)।\n"
+    "• लिंक खोलें, '📷 फोटो खींचें' दबाएँ और हर पेज की अलग फोटो लें। PDF हो तो वो भी डाल सकते हैं।\n"
     "• सारे पेज पूरे और सीधे हों, कोई हिस्सा कटा न हो।\n"
     "• अच्छी रोशनी में, धुंधला (blur) न हो। स्क्रीन की फोटो न लें।"
 )
 SCAN_RULES_EN = (
     "Upload rules:\n"
-    "• Upload a scanned PDF (on your phone: Google Drive → Scan, the Adobe Scan app, or the camera's 'Document' mode).\n"
+    "• Open the link, tap 'Take photo' and photograph each page. A PDF works too.\n"
     "• All pages, complete and straight, nothing cut off.\n"
     "• Good light, not blurry. Do not photograph a screen."
 )
@@ -130,13 +130,13 @@ def _onboard_all(c):
 
 
 def _unreadable_reupload(c):
-    return (f"Document not readable: please upload a scanned PDF | KO {c['csp_code']}",
+    return (f"Document not readable: please upload clear photos again | KO {c['csp_code']}",
             f"नमस्ते {c['csp_name']} (KO {c['csp_code']}),\nआपका {c.get('doc_label_hi', 'डॉक्यूमेंट')} जो हमें मिला था "
             f"(आपसे या आपके RM से), वो साफ़ पढ़ा नहीं जा सका (फोटो धुंधली है या पूरी नहीं है), इसलिए वो हमारे रिकॉर्ड में नहीं आ पाया।\n"
-            f"ये डॉक्यूमेंट जमा करना ज़रूरी है। कृपया स्कैन की हुई साफ़ PDF फिर से अपलोड करें।",
+            f"ये डॉक्यूमेंट जमा करना ज़रूरी है। कृपया अच्छी रोशनी में हर पेज की साफ़ फोटो लेकर फिर से अपलोड करें।",
             f"Hello {c['csp_name']} (KO {c['csp_code']}),\nThe {c.get('doc_label_en', 'document')} we received "
             f"(from you or your RM) could not be read (the photo is blurry or incomplete), so it is not on our records.\n"
-            f"This document is mandatory. Please upload a clear scanned PDF again.")
+            f"This document is mandatory. Please upload it again with a clear photo of each page, in good light.")
 
 
 def _link_request(c):
@@ -191,8 +191,8 @@ def render(key: str, channel: str, ctx: dict[str, Any]) -> dict[str, str]:
         hi_parts.append(SCAN_RULES_HI)
         en_parts.append(SCAN_RULES_EN)
     elif csp_facing:
-        hi_parts.append("कृपया स्कैन की हुई साफ़ PDF ही अपलोड करें।")
-        en_parts.append("Please upload a clear scanned PDF.")
+        hi_parts.append("हर पेज की साफ़ फोटो लें, या PDF डालें।")
+        en_parts.append("Take a clear photo of each page, or upload a PDF.")
     hindi = "\n".join(p for p in hi_parts if p)
     english = "\n".join(p for p in en_parts if p)
     sep = "\n\n———\n\n" if channel == "EMAIL" else "\n\n"

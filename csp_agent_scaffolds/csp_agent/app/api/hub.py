@@ -19,7 +19,7 @@ from ..auth import Principal, require_admin, require_user
 from ..compliance import (CATEGORY_NAMES, DOC_LABELS, REQUIRED_TYPES, SUB_SLABS, canonical_type, evaluate,
                           sub_slab, sub_slab_label)
 from ..comms import outbound
-from ..config import (OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE, CALLING_SHEET_LINK, CALLING_SHEET_SOURCE,
+from ..config import (OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE, CALLING_SHEET_LINK, CALLING_SHEET_SOURCE, local_now,
                       CALLING_SHEET_TAB)
 from ..db import get_db, SessionLocal
 from ..models import (AgreementEvent, CSP, ContactChangeRequest, CspQuestion, Document, DocumentStatus, ExtractionCorrection, InboundMessage, InternalUser,
@@ -604,7 +604,7 @@ def _form_events(db: Session, me: Principal, days: int = 0):
     q = _mine(db.query(AgreementEvent, CSP).join(CSP, CSP.id == AgreementEvent.csp_id), me) \
         .filter(AgreementEvent.event_type == "PORTAL_UPLOAD")
     if days:
-        q = q.filter(AgreementEvent.sent_at >= datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days))
+        q = q.filter(AgreementEvent.sent_at >= local_now() - timedelta(days=days))     # local time (database clock)
     return q.order_by(AgreementEvent.sent_at.desc())
 
 
@@ -658,6 +658,16 @@ def form_upload_file(event_id: int, i: int, me: Principal = Depends(require_user
     return FileResponse(path.resolve(), media_type=media.get(path.suffix.lower(), "application/octet-stream"),
                         headers={"Content-Disposition": f'inline; filename="{path.name}"',
                                  "X-Content-Type-Options": "nosniff"})
+
+
+# ------------------------------------------------------ messaging analytics
+@router.get("/analytics")
+def messaging_analytics(days: int = 14, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """Sent, delivered and what CSPs did afterwards, per India day. An RM
+    sees only their own CSPs."""
+    from .. import analytics
+    ids = None if me.is_admin else {i for (i,) in _mine(db.query(CSP.id), me)}
+    return analytics.build(db, ids, days=min(max(days, 1), 60))
 
 
 # ------------------------------------------------------------ CSP questions

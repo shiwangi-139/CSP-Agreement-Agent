@@ -355,7 +355,7 @@ def test_templates_are_hindi_first_then_english():
         body = render("UPLOAD_MISSING", channel, ctx)["body"]
         hi, en = body.index("नमस्ते"), body.index("Hello")
         assert hi < en and "https://x/u" in body
-    assert "Google Drive" in render("UPLOAD_MISSING", "EMAIL", ctx)["body"]
+    assert "Take photo" in render("UPLOAD_MISSING", "EMAIL", ctx)["body"]          # email carries the photo how-to
 
 
 def test_sub_slabs_say_exactly_what_is_on_file(db_session):

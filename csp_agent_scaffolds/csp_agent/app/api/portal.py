@@ -17,7 +17,7 @@ Server-side rules (the page enforces the same, but the server decides):
   - issue date required; not in the future; not already expired
     (issue + validity < today) -> "please upload the renewed document"
   - unreadable / blurry -> rejected at once ("photo not taken properly,
-    please upload a scanned PDF"); the document stays missing
+    please retake the photos"); the document stays missing
   - the wrong document in a section, or an expired document -> rejected
   - typed date vs date read from the document: equal -> accepted; the
     document's own date wins when it was read by the rules; if it was read
@@ -43,13 +43,13 @@ from sqlalchemy.orm import Session
 
 from ..ai.extraction.deterministic_extractor import extract_document_fields_deterministic
 from ..compliance import DOC_LABELS, evaluate, refresh_category
-from ..config import MAX_UPLOAD_SIZE_BYTES
+from ..config import MAX_UPLOAD_SIZE_BYTES, local_now
 from ..db import SessionLocal, get_db
 from ..document_service import store_extracted_document
 from ..expiry_engine import add_years
 from ..models import (AgreementEvent, ContactChangeRequest, CSP, CspQuestion, DocumentStatus, InternalUser,
                       ManualReviewQueue, OutboundMessage, OutboundStatus, ReviewStatus)
-from .. import vault
+from .. import pages, vault
 from ..ocr_service import detect_mime, photo_problem
 from ..portal_tokens import issue_upload_link, resolve_token, revoke_if_complete
 from ..validation import normalize_csp_code
@@ -71,13 +71,17 @@ MSG = {
     "bad_link": ("यह लिंक अब नहीं चल रहा है। नए लिंक के लिए अपने RM से बात करें।",
                  "This link is invalid or has expired. Please contact your RM for a new link."),
     "file_type": ("सिर्फ़ PDF, JPG या PNG फ़ाइल अपलोड करें।", "Please upload a PDF, JPG or PNG file only."),
+    "too_many_pages": ("एक डॉक्यूमेंट में ज़्यादा से ज़्यादा 15 पेज हो सकते हैं।",
+                       "A document can have at most 15 pages."),
+    "pdf_or_photos": ("या तो एक PDF चुनें, या पेजों की फोटो। दोनों एक साथ नहीं।",
+                      "Choose either one PDF or photos of the pages, not both."),
     "too_big": ("फ़ाइल बहुत बड़ी है।", "The file is too large."),
     "no_date": ("कृपया डॉक्यूमेंट बनने की तारीख (issue date) भरें।", "Please enter the document's issue date."),
     "future": ("यह तारीख आज के बाद की नहीं हो सकती।", "The issue date cannot be in the future."),
     "expired": ("इस डॉक्यूमेंट की तारीख निकल चुकी है (expired)। कृपया इसे रिन्यू करवाकर नया डॉक्यूमेंट अपलोड करें।",
                 "This document has expired. Please renew it and upload the new document."),
-    "unreadable": ("फोटो साफ़ नहीं है — कृपया स्कैन की हुई PDF अपलोड करें (Google Drive → Scan या Adobe Scan)।",
-                   "Photo not taken properly — please upload a scanned PDF (Google Drive → Scan, or Adobe Scan)."),
+    "unreadable": ("फोटो साफ़ नहीं है — कृपया अच्छी रोशनी में, फोन स्थिर रखकर हर पेज की फिर से फोटो लें।",
+                   "The photo isn't clear: please retake each page in good light, holding the phone still."),
     "wrong_doc": ("यह सही डॉक्यूमेंट नहीं है। कृपया यहाँ सही डॉक्यूमेंट अपलोड करें।",
                   "This is not the right document for this section. Please upload the correct document."),
     "duplicate": ("यह फ़ाइल पहले से हमारे पास है।", "We already have this file."),
@@ -143,6 +147,17 @@ def _get_link_page(notice: str = "", result: str = "") -> HTMLResponse:
                         .replace("__RESULT__", card("done", result) if result else ""))
 
 
+def _record_link_open(db: Session, csp_id: int) -> None:
+    """For the messaging analytics: the CSP opened their link (at most one
+    record per CSP per hour, so reloading the page isn't counted again)."""
+    since = local_now() - timedelta(hours=1)               # sent_at is in local time (database clock)
+    if db.query(AgreementEvent.id).filter(AgreementEvent.csp_id == csp_id, AgreementEvent.event_type == "LINK_OPENED",
+                                          AgreementEvent.sent_at >= since).first():
+        return
+    db.add(AgreementEvent(csp_id=csp_id, event_type="LINK_OPENED", source="CSP_UPLOAD_PORTAL", channel="WEB"))
+    db.commit()
+
+
 @router.get("/upload", response_class=HTMLResponse)
 def upload_page(token: str = Query(""), db: Session = Depends(get_db)):
     row = resolve_token(db, token)
@@ -151,6 +166,7 @@ def upload_page(token: str = Query(""), db: Session = Depends(get_db)):
         # for a fresh link instead of a dead end.
         return _get_link_page(notice="bad_link" if token else "")
     csp = db.get(CSP, row.csp_id)
+    _record_link_open(db, csp.id)
     ctx = _context(db, csp, row.requested_types or [])
     # JSON inside <script type="application/json">: escape "<" so a name
     # like "</script>" can't break out of the tag.
@@ -219,7 +235,7 @@ def _ask_question(db: Session, token: str, category: str, text: str, phone: str)
     if len(text) < 3:
         return JSONResponse({"ok": False, "message": _msg("question_empty")}, status_code=422)
     csp = db.get(CSP, row.csp_id)
-    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+    since = local_now() - timedelta(days=1)                # created_at is in local time (database clock)
     if db.query(CspQuestion).filter(CspQuestion.csp_id == csp.id, CspQuestion.created_at >= since).count() \
             >= QUESTIONS_PER_CSP_DAY:
         return JSONResponse({"ok": False, "message": _msg("too_many")}, status_code=429)
@@ -331,12 +347,14 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
 
     results = []
     for section, doc_type in SECTIONS.items():
-        upload = form.get(f"{section}_file")
-        if not isinstance(upload, UploadFile) and not hasattr(upload, "read"):
+        # One PDF, or one photo per page (several files under the same name).
+        uploads = [u for u in form.getlist(f"{section}_file")
+                   if (isinstance(u, UploadFile) or hasattr(u, "read")) and getattr(u, "filename", "")]
+        if not uploads:
             continue
-        if not getattr(upload, "filename", ""):
-            continue
-        res = {"section": section, "ok": False, "filename": str(upload.filename)[:200]}
+        upload = uploads[0]
+        res = {"section": section, "ok": False, "filename": str(upload.filename)[:200],
+               "pages": len(uploads)}
         results.append(res)
 
         def turn_away(reason: str, data: Optional[bytes] = None, mime: Optional[str] = None) -> None:
@@ -353,20 +371,36 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
         if problem:
             turn_away(problem)
             continue
-        data = await _read_limited(upload)
-        if data is None:
+        if len(uploads) > pages.MAX_PAGES:
+            turn_away("too_many_pages")
+            continue
+        files = []
+        for u in uploads:
+            files.append(await _read_limited(u))
+        if any(f is None for f in files) or sum(len(f) for f in files) > MAX_UPLOAD_SIZE_BYTES:
             turn_away("too_big")
             continue
-        mime = detect_mime(data)
-        if mime is None:
+        mimes = [detect_mime(f) for f in files]
+        if None in mimes:
             turn_away("file_type")
             continue
-
-        problem = photo_problem(data)
-        if problem:
-            # Not filed as a document: the CSP retakes the photo right away.
-            turn_away(problem, data, mime)
+        if len(files) > 1 and "application/pdf" in mimes:
+            turn_away("pdf_or_photos")
             continue
+        if mimes[0] == "application/pdf":
+            data, mime = files[0], mimes[0]
+        else:
+            bad = next(((i, p) for i, p in enumerate(photo_problem(f) for f in files) if p), None)
+            if bad:
+                # Not filed as a document: the CSP retakes that page right away.
+                turn_away(bad[1], files[bad[0]], mimes[bad[0]])
+                if len(files) > 1:
+                    res["message"] = {k: f"{'पेज' if k == 'hi' else 'Page'} {bad[0] + 1}: {v}"
+                                      for k, v in res["message"].items()}
+                continue
+            # Photos -> one small PDF (shrunk, upright, pages in order).
+            data = await run_in_threadpool(lambda: pages.photos_to_pdf([pages.shrink_photo(f) for f in files]))
+            mime = "application/pdf"
         ex = await run_in_threadpool(extract_document_fields_deterministic, data, upload.filename)
         if ex["readability"] == "UNREADABLE":
             ex["document_type"] = ex.get("document_type") if ex.get("document_type") != "UNKNOWN" else doc_type

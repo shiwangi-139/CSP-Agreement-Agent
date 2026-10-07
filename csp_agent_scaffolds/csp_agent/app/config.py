@@ -69,6 +69,16 @@ SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "csp-documents")
 # ---------------------------------------------------------------------------
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Kolkata")
 
+
+def local_now():
+    """Naive local time (APP_TIMEZONE). Columns filled by the database's own
+    clock (default=func.now(): AgreementEvent.sent_at, CspQuestion.created_at,
+    InboundMessage.received_at...) are in this time; columns the app fills
+    with _now() (OutboundMessage times, tokens, sessions) are in UTC."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(APP_TIMEZONE)).replace(tzinfo=None)
+
 # Calling sheet. "local_xlsx" reads ONLY the CALLING_SHEET_TAB tab of the
 # local workbook, read-only. "google" reads the live sheet (deployment).
 CALLING_SHEET_SOURCE = os.getenv("CALLING_SHEET_SOURCE", "local_xlsx")

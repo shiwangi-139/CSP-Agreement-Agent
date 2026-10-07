@@ -33,6 +33,7 @@
     <button data-view="contacts">Contacts &amp; gaps</button>
     <button data-view="ingestion">Gmail ingestion</button>
     <button data-view="review">Review queue <span class="count" id="n-review"></span></button>
+    <button data-view="analytics">Messaging analytics</button>
     <button data-view="find">Find CSPs</button>
     <button data-view="formuploads">Form uploads <span class="count" id="n-form"></span></button>
     <button data-view="questions">CSP questions <span class="count" id="n-questions"></span></button>
@@ -354,6 +355,46 @@
         : `<div class="empty">No mistakes found in the checks so far.</div>`}</div>`;
     },
 
+    async analytics() {
+      const a = await api("/api/hub/analytics?days=14");
+      const pct = (n, d) => d ? Math.round(100 * n / d) + "%" : "—";
+      const NAMES = {today: "Today", yesterday: "Yesterday", last_7_days: "Last 7 days", last_30_days: "Last 30 days"};
+      const TYPES = {ONBOARD_ALL: "Onboarding (no documents)", UPLOAD_MISSING: "Documents missing", UPLOAD_EXPIRED: "Documents expired",
+                     UNREADABLE_REUPLOAD: "Unreadable, re-upload", RENEWAL_NOTICE: "Renewal notice", RENEWAL_FOLLOWUP: "Renewal reminder",
+                     RENEWAL_FINAL: "Renewal final", LINK_REQUEST: "Link the CSP asked for"};
+      const card = ([k, p]) => `<div class="card kpi"><div class="label">${NAMES[k]}</div>
+        <div class="kv">
+          <dt>WhatsApp sent</dt><dd class="num">${p.whatsapp.sent}${p.whatsapp.delivered ? ` <span class="small muted">· ${p.whatsapp.delivered} delivered · ${p.whatsapp.read} read</span>` : ""}</dd>
+          <dt>Email sent</dt><dd class="num">${p.email.sent}</dd>
+          <dt>Failed / blocked</dt><dd class="num">${p.whatsapp.failed + p.email.failed} / ${p.whatsapp.blocked + p.email.blocked}</dd>
+          <dt>CSPs reached</dt><dd class="num">${p.csps_reached}</dd>
+          <dt>Responded</dt><dd class="num">${p.any} <span class="small muted">(${pct(p.any, p.csps_reached)})</span></dd>
+          <dt>Documents accepted</dt><dd class="num">${p.accepted} <span class="small muted">(${pct(p.accepted, p.csps_reached)})</span></dd></div></div>`;
+      const m = a.periods.last_30_days;
+      const funnel = [["Messaged", m.csps_reached], ["Opened the link", m.opened], ["Submitted the form", m.submitted],
+                      ["Documents accepted", m.accepted], ["Asked the RM a question", m.asked], ["Replied by email", m.email_reply]];
+      return `<p class="small muted">Messages sent to CSPs and what the CSPs did afterwards, per day (India time). <b>Responded</b> = within ${a.response_days} days of the message the CSP opened their link, submitted the form, asked a question or replied by email.
+        WhatsApp replies can't be read (the sender is send-only), so the response is what the CSP does. Email replies are counted when they carry an attachment. The test CSP is never counted.</p>
+      <div class="grid k4">${Object.entries(a.periods).map(card).join("")}</div>
+      <div class="grid k3" style="margin-top:14px">
+        <div class="card"><h2>Last 30 days: from message to documents</h2>
+          <div class="kv">${funnel.map(([l, n]) => `<dt>${l}</dt><dd class="num">${n} <span class="small muted">${l === "Messaged" ? "CSPs" : pct(n, m.csps_reached)}</span></dd>`).join("")}</div></div>
+        <div class="card"><h2>Who sent them</h2>
+          <div class="kv">${a.senders.map((x) => `<dt>${esc(x.who)}</dt><dd class="num">${x.whatsapp} <span class="small muted">WhatsApp</span> · ${x.email} <span class="small muted">email</span></dd>`).join("") || `<dt class="muted">Nothing sent yet</dt><dd></dd>`}</div></div>
+        <div class="card"><h2>What was sent</h2>
+          <div class="kv">${a.types.map((x) => `<dt>${esc(TYPES[x.type] || x.type)}</dt><dd class="num">${x.whatsapp} <span class="small muted">WA</span> · ${x.email} <span class="small muted">email</span></dd>`).join("") || `<dt class="muted">Nothing sent yet</dt><dd></dd>`}</div></div>
+      </div>
+      <div class="card tablewrap" style="margin-top:14px"><h2>Day by day</h2>
+        <table><thead><tr><th>Day</th><th>WhatsApp sent</th><th>Delivered / read</th><th>Email sent</th><th>Failed</th><th>Blocked</th>
+          <th>CSPs reached</th><th>Opened link</th><th>Submitted</th><th>Docs accepted</th><th>Asked</th><th>Email reply</th></tr></thead><tbody>
+        ${a.days.map((d) => { const r = d.responses; return `<tr><td class="mono">${fmt(d.date)}${d.date === a.today ? ' <span class="small muted">today</span>' : ""}</td>
+          <td class="num">${d.whatsapp.sent}</td><td class="num">${d.whatsapp.delivered} / ${d.whatsapp.read}</td><td class="num">${d.email.sent}</td>
+          <td class="num">${d.whatsapp.failed + d.email.failed}</td><td class="num">${d.whatsapp.blocked + d.email.blocked}</td>
+          <td class="num">${r.reached}</td><td class="num">${r.opened}</td><td class="num">${r.submitted}</td><td class="num">${r.accepted}</td>
+          <td class="num">${r.asked}</td><td class="num">${r.email_reply}</td></tr>`; }).join("")}
+        </tbody></table></div>`;
+    },
+
     async find() {
       const f = state.find;
       const d = await api(`/api/hub/find?${findQuery(f)}&page=${state.page}&size=50`);
@@ -600,7 +641,8 @@
   // ------------------------------------------------------------ render
   const TITLES = {overview: "Overview", categories: "Slabs", documents: "Latest documents", comms: "Communication Hub",
                   contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy",
-                  questions: "CSP questions", formuploads: "Form uploads (Slab 5)", find: "Find CSPs"};
+                  questions: "CSP questions", formuploads: "Form uploads (Slab 5)", find: "Find CSPs",
+                  analytics: "Messaging analytics"};
   async function render() {
     try {
       state.summary = await api("/api/hub/summary");

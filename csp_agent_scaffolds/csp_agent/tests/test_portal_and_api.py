@@ -349,3 +349,61 @@ def test_form_uploads_record_what_was_accepted_and_what_was_turned_away(client, 
     s = Session()
     assert s.get(CSP, cid).category == 3            # still in its own slab as well
     s.close()
+
+
+# ------------------------------------------- photos of pages -> one PDF
+def _page_photo(text="PAGE", w=1200, h=1600) -> bytes:
+    import cv2
+    import numpy as np
+    img = np.full((h, w, 3), 235, np.uint8)
+    for i in range(12):
+        cv2.putText(img, f"{text} line {i} CHARACTER CERTIFICATE", (40, 120 + 110 * i), cv2.FONT_HERSHEY_SIMPLEX, 1.3, (20, 20, 20), 3)
+    return cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 97])[1].tobytes()
+
+
+def test_photos_of_pages_become_one_small_pdf(client, monkeypatch):
+    import fitz
+    from app.api import portal
+    c, Session = client
+    cid, _, token = _csp(Session)
+    seen = {}
+    issue = date.today() - timedelta(days=20)
+
+    def fake_read(data, filename):
+        seen["data"] = data
+        return {"readability": "READABLE", "document_type": "POLICE_VERIFICATION", "compliance_status": "VALID",
+                "start_date": issue.isoformat(), "expiry_date": (issue + timedelta(days=365)).isoformat(),
+                "date_source": "PVR_DIGITAL_SIGNATURE_DATE", "confidence": 0.9}
+    monkeypatch.setattr(portal, "extract_document_fields_deterministic", fake_read)
+    big = [_page_photo("one"), _page_photo("two"), _page_photo("three")]
+    r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=issue.isoformat()),
+               files=[("pvr_file", (f"p{i}.jpg", b, "image/jpeg")) for i, b in enumerate(big)])
+    assert r.json()["results"][0]["ok"], r.text
+    pdf = fitz.open(stream=seen["data"], filetype="pdf")
+    assert pdf.page_count == 3 and seen["data"][:5] == b"%PDF-"
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    assert d.mime_type == "application/pdf"
+    s.close()
+
+
+def test_one_pdf_or_photos_not_both_and_bad_page_is_named(client):
+    c, Session = client
+    _, _, token = _csp(Session)
+    issue = date.today() - timedelta(days=20)
+    mixed = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=issue.isoformat()),
+                   files=[("pvr_file", ("a.pdf", _pvr_pdf(issue), "application/pdf")),
+                          ("pvr_file", ("b.jpg", _page_photo(), "image/jpeg"))]).json()["results"][0]
+    assert not mixed["ok"] and "not both" in mixed["message"]["en"]
+    bad = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=issue.isoformat()),
+                 files=[("pvr_file", ("a.jpg", _page_photo(), "image/jpeg")),
+                        ("pvr_file", ("b.png", _blurry_png(), "image/png"))]).json()["results"][0]
+    assert not bad["ok"] and bad["message"]["en"].startswith("Page 2:")
+
+
+def test_shrink_photo_keeps_it_readable_and_small():
+    from app.pages import MAX_SIDE_PX, shrink_photo
+    from PIL import Image
+    raw = _page_photo(w=3000, h=4000)
+    small = shrink_photo(raw)
+    assert max(Image.open(io.BytesIO(small)).size) == MAX_SIDE_PX and len(small) < len(raw)

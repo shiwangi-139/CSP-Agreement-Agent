@@ -98,6 +98,18 @@ def job_outbox():
     return _run("outbox", go)
 
 
+def job_delivery():
+    from .comms.outbound import refresh_whatsapp_delivery
+
+    def go():
+        db = SessionLocal()
+        try:
+            return refresh_whatsapp_delivery(db)
+        finally:
+            db.close()
+    return _run("delivery", go)
+
+
 def job_vault():
     from . import vault
 
@@ -134,6 +146,7 @@ def build_scheduler():
     sched.add_job(job_sheet, IntervalTrigger(minutes=60), id="sheet", next_run_time=datetime.now())
     sched.add_job(job_engine, CronTrigger(hour=9, minute=0), id="engine")
     sched.add_job(job_outbox, IntervalTrigger(minutes=2), id="outbox")
+    sched.add_job(job_delivery, IntervalTrigger(minutes=30), id="delivery")
     sched.add_job(job_vault, CronTrigger(hour=VAULT_JOB_HOUR, minute=VAULT_JOB_MINUTE), id="vault")
     sched.add_job(job_reports, CronTrigger(hour=7, minute=30), id="reports")
     return sched
