@@ -22,7 +22,7 @@ from ..comms import outbound
 from ..config import (OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE, CALLING_SHEET_LINK, CALLING_SHEET_SOURCE,
                       CALLING_SHEET_TAB)
 from ..db import get_db, SessionLocal
-from ..models import (CSP, ContactChangeRequest, Document, DocumentStatus, ExtractionCorrection, InboundMessage, InternalUser,
+from ..models import (CSP, ContactChangeRequest, CspQuestion, Document, DocumentStatus, ExtractionCorrection, InboundMessage, InternalUser,
                       ManualReviewQueue, OutboundMessage, OutboundStatus, OutreachCycle, ReviewStatus)
 from ..portal_tokens import issue_upload_link
 from .. import vault
@@ -123,6 +123,8 @@ def summary(me: Principal = Depends(require_user), db: Session = Depends(get_db)
                                 .join(CSP, CSP.id == Document.csp_id), me)
                           .filter(ManualReviewQueue.status == ReviewStatus.PENDING).count(),
         "contact_changes_pending": db.query(ContactChangeRequest).filter_by(status="PENDING").count() if me.is_admin else 0,
+        "questions_open": _mine(db.query(CspQuestion).join(CSP, CSP.id == CspQuestion.csp_id), me)
+                          .filter(CspQuestion.status == "OPEN").count(),
         "me": {"name": me.name, "role": me.role},
         "modes": {"outbound": OUTBOUND_COMMUNICATION_MODE, "whatsapp": WHATSAPP_MODE,
                   "calling_sheet": (f"live sheet link · {CALLING_SHEET_TAB}" if CALLING_SHEET_LINK
@@ -471,6 +473,35 @@ def resolve_contact_change(req_id: int, action: str, db: Session = Depends(get_d
     r.status = "DONE" if action == "done" else "DISMISSED"
     db.commit()
     return {"id": r.id, "status": r.status}
+
+
+# ------------------------------------------------------------ CSP questions
+@router.get("/questions")
+def list_questions(status: str = "OPEN", me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """Questions CSPs asked on the upload page; an RM sees their own CSPs'."""
+    q = _mine(db.query(CspQuestion, CSP).join(CSP, CSP.id == CspQuestion.csp_id), me)
+    if status:
+        q = q.filter(CspQuestion.status == status)
+    rows = q.order_by(CspQuestion.created_at.desc()).limit(300).all()
+    rms = {u.id: u.name for u in db.query(InternalUser).filter(InternalUser.role == "RM")}
+    return {"rows": [{"id": x.id, "category": x.category, "text": x.text, "status": x.status,
+                      "callback_phone": x.callback_phone, "created_at": _iso(x.created_at),
+                      "answered_at": _iso(x.answered_at), "answered_by": x.answered_by, "answer_note": x.answer_note,
+                      "rm": rms.get(c.rm_id), "csp": {"id": c.id, "code": c.current_code, "name": c.name,
+                                                      "phone": c.phone}} for x, c in rows]}
+
+
+@router.post("/questions/{qid}/answer")
+def answer_question(qid: int, note: str = Body("", embed=True), me: Principal = Depends(require_user),
+                    db: Session = Depends(get_db)):
+    x = db.get(CspQuestion, qid)
+    if x is None:
+        raise HTTPException(404, "not found")
+    _own_csp(db, x.csp_id, me)
+    x.status, x.answered_at, x.answered_by = "ANSWERED", datetime.now(timezone.utc).replace(tzinfo=None), me.name
+    x.answer_note = (note or "").strip()[:1000] or None
+    db.commit()
+    return {"id": x.id, "status": x.status}
 
 
 # ----------------------------------------------------------- review, inbound

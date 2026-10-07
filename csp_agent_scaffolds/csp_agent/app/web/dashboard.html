@@ -33,6 +33,7 @@
     <button data-view="contacts">Contacts &amp; gaps</button>
     <button data-view="ingestion">Gmail ingestion</button>
     <button data-view="review">Review queue <span class="count" id="n-review"></span></button>
+    <button data-view="questions">CSP questions <span class="count" id="n-questions"></span></button>
     <button data-view="accuracy">Accuracy</button>
     <div class="foot" id="modes"></div>
     <div class="foot" id="whoami"></div>
@@ -132,7 +133,8 @@
           <div class="kv"><dt>WhatsApp drafts</dt><dd class="num">${s.drafts_pending.WHATSAPP}</dd>
           <dt>Email drafts</dt><dd class="num">${s.drafts_pending.EMAIL}</dd>
           <dt>Review queue</dt><dd class="num">${s.review_pending}</dd>
-          <dt>Contact changes</dt><dd class="num">${s.contact_changes_pending}</dd></div>
+          <dt>Contact changes</dt><dd class="num">${s.contact_changes_pending}</dd>
+          <dt><a href="#" data-go="questions">CSP questions</a></dt><dd class="num">${s.questions_open}</dd></div>
           <p><button class="btn primary" data-go="comms">Open Communication Hub</button></p></div>
         <div class="card"><h2>Coming up</h2>
           <div class="kv"><dt>Documents expiring in 60 days</dt><dd class="num">${s.expiring_60_days}</dd>
@@ -321,6 +323,25 @@
         : `<div class="empty">No mistakes found in the checks so far.</div>`}</div>`;
     },
 
+    async questions() {
+      const st = state.qstatus ?? "OPEN";
+      const d = await api(`/api/hub/questions?status=${st}`);
+      const CAT = {AGREEMENT: "Agreement", UPLOAD_PROBLEM: "Upload problem", OTHER: "Other"};
+      return `<p class="small muted">Questions CSPs asked with <b>"Ask a question"</b> on their upload page. Call them back, then mark the question answered with a short note. RMs see only their own CSPs.</p>
+      <div class="tabs">${[["OPEN", "Open"], ["ANSWERED", "Answered"], ["", "All"]].map(([k, l]) =>
+        `<button class="tab ${st === k ? "active" : ""}" data-qstatus="${k}">${l}</button>`).join("")}</div>
+      ${d.rows.map((q) => `<div class="card" style="margin-bottom:10px">
+        <div class="meta">${badge(q.status === "OPEN" ? "REVIEW" : "VALID", q.status === "OPEN" ? "open" : "answered")}
+          ${esc(CAT[q.category] || q.category)} · <a href="#" data-csp="${q.csp.id}"><b class="mono">${esc(q.csp.code)}</b> ${esc(q.csp.name)}</a>
+          · RM ${esc(q.rm || "-")} <span class="muted" style="margin-left:auto">${when(q.created_at)}</span></div>
+        <p style="white-space:pre-wrap">${esc(q.text)}</p>
+        <div class="small">Call: <span class="mono">${esc(q.callback_phone || q.csp.phone || "no number")}</span></div>
+        ${q.status === "OPEN" ? `<div class="toolbar"><input type="text" id="qn${q.id}" placeholder="What did you tell them? (optional)" style="flex:1">
+          <button class="btn primary" data-answer="${q.id}">Mark answered</button></div>`
+          : `<div class="small muted">Answered by ${esc(q.answered_by || "")} · ${when(q.answered_at)}${q.answer_note ? " · " + esc(q.answer_note) : ""}</div>`}
+      </div>`).join("") || `<div class="card empty">No questions here.</div>`}`;
+    },
+
     async review() {
       const d = await api("/api/hub/review");
       const kind = (reason) => /^Spot check/.test(reason) ? ["APPROVAL", "spot check"] : /^Reference check/.test(reason) ? ["APPROVAL", "reference check"] : ["REVIEW", "needs a decision"];
@@ -406,7 +427,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-qstatus],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -439,6 +460,8 @@
       if (ds.csp) return openCsp(ds.csp);
       if (ds.approve) { const m = await post(`/api/hub/messages/${ds.approve}/approve`); toast(`Approved → ${m.status.replaceAll("_", " ").toLowerCase()}`); return refreshAfterAction(); }
       if (ds.sendnow) { if (!confirm("Send this WhatsApp message to the CSP now?")) return; const m = await post(`/api/hub/messages/${ds.sendnow}/send-now`); toast(`→ ${m.status.replaceAll("_", " ").toLowerCase()}${m.error ? ": " + m.error : ""}`); return refreshAfterAction(); }
+      if (ds.answer) { await post(`/api/hub/questions/${ds.answer}/answer`, {note: $(`#qn${ds.answer}`)?.value || ""}); toast("Marked answered."); return render(); }
+      if (ds.qstatus !== undefined) { state.qstatus = ds.qstatus; return render(); }
       if (ds.reject) { const why = prompt("Reason for rejecting (optional)") ?? null; if (why === null) return; await post(`/api/hub/messages/${ds.reject}/reject`, {reason: why}); toast("Rejected."); return refreshAfterAction(); }
       if (ds.edit) {
         const card = t.closest("[data-msg]"); const pre = $("pre", card);
@@ -476,13 +499,15 @@
 
   // ------------------------------------------------------------ render
   const TITLES = {overview: "Overview", categories: "Slabs", documents: "Latest documents", comms: "Communication Hub",
-                  contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy"};
+                  contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy",
+                  questions: "CSP questions"};
   async function render() {
     try {
       state.summary = await api("/api/hub/summary");
       const s = state.summary;
       const drafts = s.drafts_pending.EMAIL + s.drafts_pending.WHATSAPP;
       $("#n-drafts").textContent = drafts || ""; $("#n-review").textContent = s.review_pending || "";
+      $("#n-questions").textContent = s.questions_open || "";
       $("#n-cat").textContent = (s.categories[2] + s.categories[3] + s.categories[4]) || "";
       $("#modepill").textContent = s.modes.outbound === "review" ? "Review mode: nothing is sent without approval" : "Auto mode: approved messages send automatically";
       const me = s.me || {};

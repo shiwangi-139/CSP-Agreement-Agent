@@ -6,7 +6,9 @@ the WhatsApp / email messages.
 GET  /upload?token=...          the page (app/web/portal.html); with no token
                                 or a dead one: "get your upload link" (app/web/get_link.html)
 POST /upload                    KO code + mobile -> a fresh link by WhatsApp, only to
-                                a number on the calling sheet (never shown on screen)
+                                a number on the calling sheet (never shown on screen);
+                                or, with action=question and a live token, a question
+                                for the CSP's RM (CspQuestion, shown on the dashboard)
 GET  /api/portal/context        what this CSP still needs, prefilled contacts
 POST /api/portal/upload         one or more documents + typed issue dates
 
@@ -35,7 +37,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
@@ -45,7 +47,7 @@ from ..config import MAX_UPLOAD_SIZE_BYTES
 from ..db import SessionLocal, get_db
 from ..document_service import store_extracted_document
 from ..expiry_engine import add_years
-from ..models import (AgreementEvent, ContactChangeRequest, CSP, DocumentStatus, InternalUser,
+from ..models import (AgreementEvent, ContactChangeRequest, CSP, CspQuestion, DocumentStatus, InternalUser,
                       ManualReviewQueue, OutboundMessage, OutboundStatus, ReviewStatus)
 from ..ocr_service import detect_mime, photo_problem
 from ..portal_tokens import issue_upload_link, resolve_token, revoke_if_complete
@@ -92,6 +94,9 @@ MSG = {
                        "नया लिंक आ जाएगा। न आए तो अपने RM से बात करें।",
                        "If the KO code and mobile number match our records, a new link will reach that number on "
                        "WhatsApp in a few minutes. If it doesn't, please talk to your RM."),
+    "question_sent": ("आपका सवाल आपके RM तक पहुँच गया है। वो जल्दी आपसे संपर्क करेंगे।",
+                      "Your question has reached your RM. They will contact you soon."),
+    "question_empty": ("कृपया अपना सवाल लिखें।", "Please write your question."),
     "too_many": ("बहुत बार कोशिश हो चुकी है। कृपया थोड़ी देर बाद फिर कोशिश करें या अपने RM से बात करें।",
                  "Too many attempts. Please try again later or talk to your RM."),
     "accepted": ("डॉक्यूमेंट मिल गया और ठीक है। धन्यवाद!", "Document accepted. Thank you!"),
@@ -122,7 +127,8 @@ def _context(db: Session, csp: CSP, requested: list[str]) -> dict:
                      "requested": t in requested or s.status != "VALID",
                      "max_validity_years": MAX_VALIDITY_YEARS[t]})
     return {"csp": {"code": csp.current_code, "name": csp.name, "email": csp.email or "",
-                    "mobile": csp.phone or "", "rm": rm.name if rm else "", "dc": dc.name if dc else ""},
+                    "mobile": csp.phone or "", "rm": rm.name if rm else "", "dc": dc.name if dc else "",
+                    "rm_phone": (rm.phone or "") if rm else ""},
             "docs": docs, "today": date.today().isoformat(),
             "max_upload_mb": round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)}
 
@@ -200,10 +206,39 @@ def _send_link(csp_id: int, phone10: str) -> None:
         db.close()
 
 
+QUESTION_CATEGORIES = {"AGREEMENT", "UPLOAD_PROBLEM", "OTHER"}
+QUESTIONS_PER_CSP_DAY = 5
+
+
+def _ask_question(db: Session, token: str, category: str, text: str, phone: str) -> JSONResponse:
+    row = resolve_token(db, token)
+    if row is None:
+        return JSONResponse({"ok": False, "message": _msg("bad_link")}, status_code=403)
+    text = (text or "").strip()[:1000]
+    if len(text) < 3:
+        return JSONResponse({"ok": False, "message": _msg("question_empty")}, status_code=422)
+    csp = db.get(CSP, row.csp_id)
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=1)
+    if db.query(CspQuestion).filter(CspQuestion.csp_id == csp.id, CspQuestion.created_at >= since).count() \
+            >= QUESTIONS_PER_CSP_DAY:
+        return JSONResponse({"ok": False, "message": _msg("too_many")}, status_code=429)
+    from ..comms.outbound import _phone10
+    db.add(CspQuestion(csp_id=csp.id, rm_id=csp.rm_id, text=text, callback_phone=_phone10(phone),
+                       category=category if category in QUESTION_CATEGORIES else "OTHER", status="OPEN"))
+    db.commit()
+    return JSONResponse({"ok": True, "message": _msg("question_sent")})
+
+
 @router.post("/upload", response_class=HTMLResponse)
 def request_link(request: Request, background: BackgroundTasks, code: str = Form(""), mobile: str = Form(""),
+                 action: str = Form(""), token: str = Form(""), category: str = Form(""), text: str = Form(""),
                  db: Session = Depends(get_db)):
     ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
+    if action == "question":
+        # Only Nginx's public routes reach the app, so questions share this one.
+        if not _ip_allowed(ip):
+            return JSONResponse({"ok": False, "message": _msg("too_many")}, status_code=429)
+        return _ask_question(db, token, category, text, mobile)
     if not _ip_allowed(ip):
         return _get_link_page(result="too_many")
     from ..comms.outbound import _phone10, allowed_destinations

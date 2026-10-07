@@ -84,3 +84,46 @@ def test_the_link_message_goes_to_the_typed_number_without_review(world, monkeyp
     assert sent[0][0] == "link" and sent[0][1][0]["phone"] == "919876501234"
     assert "/upload?token=" in sent[0][1][0]["link"]
     s.close()
+
+
+# ------------------------------------------------------- ask a question
+def test_a_csp_question_reaches_the_dashboard_and_can_be_answered(world, monkeypatch):
+    from app import auth
+    from app.portal_tokens import issue_upload_link
+    c, w = world
+    s = w["Session"]()
+    token = issue_upload_link(s, s.get(CSP, w["id"]), ["AGREEMENT"]).split("token=")[1]
+    s.commit()
+    s.close()
+    page = c.get(f"/upload?token={token}", headers=PUBLIC).text
+    assert "Have a question?" in page and "Your RM" in page
+
+    r = c.post("/upload", data={"action": "question", "token": token, "category": "AGREEMENT",
+                                "text": "एग्रीमेंट कहाँ से मिलेगा?", "mobile": "9876501234"}, headers=PUBLIC)
+    assert r.status_code == 200 and r.json()["ok"]
+    assert c.post("/upload", data={"action": "question", "token": "dead", "text": "hello"},
+                  headers=PUBLIC).status_code == 403
+    assert c.post("/upload", data={"action": "question", "token": token, "text": " "},
+                  headers=PUBLIC).status_code == 422
+
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "server-only-key")
+    key = {"X-API-Key": "server-only-key"}                       # on the server, not forwarded
+    rows = c.get("/api/hub/questions", headers=key).json()["rows"]
+    mine = [q for q in rows if q["csp"]["id"] == w["id"]]
+    assert mine and mine[0]["category"] == "AGREEMENT" and mine[0]["callback_phone"] == "9876501234"
+    qid = mine[0]["id"]
+    assert c.post(f"/api/hub/questions/{qid}/answer", json={"note": "called, explained"},
+                  headers={**key, "X-Requested-With": auth.CSRF_HEADER_VALUE}).json()["status"] == "ANSWERED"
+    assert all(q["id"] != qid for q in c.get("/api/hub/questions", headers=key).json()["rows"])
+
+
+def test_questions_are_limited_per_csp(world):
+    from app.portal_tokens import issue_upload_link
+    c, w = world
+    s = w["Session"]()
+    token = issue_upload_link(s, s.get(CSP, w["id"]), ["AGREEMENT"]).split("token=")[1]
+    s.commit()
+    s.close()
+    codes = [c.post("/upload", data={"action": "question", "token": token, "text": f"question {i}"},
+                    headers={"X-Real-IP": f"198.51.100.{i}"}).status_code for i in range(portal.QUESTIONS_PER_CSP_DAY + 1)]
+    assert codes[-1] == 429 and codes.count(200) == portal.QUESTIONS_PER_CSP_DAY

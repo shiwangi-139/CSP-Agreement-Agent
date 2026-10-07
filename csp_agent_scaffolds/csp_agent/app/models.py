@@ -346,6 +346,23 @@ class PortalToken(Base):
     revoke_reason = Column(String, nullable=True)
 
 
+class CspQuestion(Base):
+    """A question a CSP asked on the upload page ("Ask a question"). It goes
+    to their RM's dashboard; the RM calls back and marks it answered."""
+    __tablename__ = "csp_questions"
+    id = Column(Integer, primary_key=True)
+    csp_id = Column(Integer, ForeignKey("csp.id"), nullable=False, index=True)
+    rm_id = Column(Integer, ForeignKey("internal_users.id"), nullable=True, index=True)  # RM when asked
+    category = Column(String, nullable=False)          # AGREEMENT, UPLOAD_PROBLEM, OTHER
+    text = Column(Text, nullable=False)
+    callback_phone = Column(String)                    # the number the CSP typed, if any
+    status = Column(String, default="OPEN", nullable=False, index=True)   # OPEN, ANSWERED
+    created_at = Column(DateTime, default=func.now())
+    answered_at = Column(DateTime)
+    answered_by = Column(String)
+    answer_note = Column(Text)
+
+
 class ContactChangeRequest(Base):
     """Contact edits typed on the upload portal. They never overwrite the
     calling-sheet data directly; someone reviews and updates the sheet."""

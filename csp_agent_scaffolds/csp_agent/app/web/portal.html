@@ -49,6 +49,21 @@
   button:disabled { opacity: .6; }
   .done { display: none; }
   details summary { cursor: pointer; font-weight: 600; }
+  .trust { background: hsl(155 40% 18%); color: #fff; font-size: .82rem; padding: 6px 16px; opacity: .95; }
+  .trust .en { color: hsl(150 30% 80%); }
+  .steps { display: flex; gap: 8px; text-align: center; }
+  .steps div { flex: 1; background: var(--mist); border-radius: .6rem; padding: 10px 6px; font-size: .85rem; font-weight: 600; }
+  .steps .ico { display: block; font-size: 1.5rem; line-height: 1.2; }
+  .steps .en { display: block; font-weight: 400; font-size: .75rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip { font-size: .85rem; font-weight: 600; padding: 4px 10px; border-radius: 999px; }
+  .rmcard .actions { display: flex; gap: 8px; margin-top: 10px; }
+  .rmcard a { flex: 1; text-align: center; padding: 11px; border-radius: .6rem; font-weight: 700; text-decoration: none; }
+  .rmcard .call { background: var(--primary); color: #fff; }
+  .rmcard .wa { background: hsl(142 70% 35%); color: #fff; }
+  select, textarea { width: 100%; padding: 12px; font: inherit; border: 1px solid var(--border); border-radius: .6rem; background: #fff; color: var(--ink); }
+  textarea { min-height: 90px; resize: vertical; }
+  .secondary { background: var(--forest); margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -59,7 +74,28 @@
   <p id="who"></p>
   </div>
 </header>
+<div class="trust">Eko · SBI कियोस्क बैंकिंग पार्टनर <span class="en">· SBI Kiosk Banking partner</span></div>
 <main>
+  <section class="card" id="progress">
+    <h2>आपके डॉक्यूमेंट <span class="en">/ Your documents</span></h2>
+    <div class="chips" id="chips"></div>
+  </section>
+
+  <section class="card rmcard" id="rmcard" style="display:none">
+    <h2>आपके RM: <span id="rmname"></span> <span class="en">/ Your RM</span></h2>
+    <p class="hint" style="margin:0">एग्रीमेंट, डॉक्यूमेंट या किसी और सवाल के लिए अपने RM से बात करें।
+      <span class="en">For questions about the agreement, documents or anything else, talk to your RM.</span></p>
+    <div class="actions" id="rmactions"></div>
+  </section>
+
+  <section class="card">
+    <div class="steps">
+      <div><span class="ico">📄</span>फ़ाइल चुनें<span class="en">Choose file</span></div>
+      <div><span class="ico">📅</span>तारीख भरें<span class="en">Enter date</span></div>
+      <div><span class="ico">✅</span>जमा करें<span class="en">Submit</span></div>
+    </div>
+  </section>
+
   <section class="card rules">
     <h2>अपलोड के नियम <span class="en">/ Upload rules</span></h2>
     <ul>
@@ -98,6 +134,21 @@
     <h2>धन्यवाद <span class="en">/ Thank you</span></h2>
     <div id="summary"></div>
   </section>
+
+  <section class="card" id="ask">
+    <h2>कोई सवाल है? <span class="en">/ Have a question?</span></h2>
+    <p class="hint" style="margin-top:0">अपना सवाल लिखें, ये सीधे आपके RM के पास जाएगा। <span class="en">Write your question; it goes straight to your RM.</span></p>
+    <label for="qcat">विषय <span class="en">/ About</span></label>
+    <select id="qcat">
+      <option value="AGREEMENT">सीएसपी एग्रीमेंट / CSP agreement</option>
+      <option value="UPLOAD_PROBLEM">डॉक्यूमेंट अपलोड में दिक्कत / Problem uploading</option>
+      <option value="OTHER">कुछ और / Something else</option>
+    </select>
+    <label for="qtext">आपका सवाल <span class="en">/ Your question</span></label>
+    <textarea id="qtext" maxlength="1000"></textarea>
+    <div id="qmsg" class="hint"></div>
+    <button type="button" id="qsend" class="secondary">सवाल भेजें / Send question</button>
+  </section>
 </main>
 
 <script type="application/json" id="ctx">__CONTEXT_JSON__</script>
@@ -113,6 +164,41 @@
   $("who").textContent = `${ctx.csp.name} · KO ${ctx.csp.code}`;
   $("code").value = ctx.csp.code;
   for (const k of ["name", "mobile", "email", "rm", "dc"]) $(k).value = ctx.csp[k] || "";
+
+  // What's on file at a glance, then the RM card with call / WhatsApp buttons.
+  $("chips").innerHTML = ctx.docs.map((d) => {
+    const st = STATUS[d.status] || [d.status, d.status];
+    return `<span class="chip ${esc(d.status)}">${d.status === "VALID" ? "✅" : d.status === "MISSING" ? "⏳" : "⚠️"} ${esc(d.label_hi)} · ${esc(st[0])}</span>`;
+  }).join("");
+  if (ctx.csp.rm) {
+    $("rmname").textContent = ctx.csp.rm;
+    $("rmcard").style.display = "block";
+    const p = (ctx.csp.rm_phone || "").replace(/\D/g, "").slice(-10);
+    if (p.length === 10) {
+      const hello = encodeURIComponent(`नमस्ते, मैं ${ctx.csp.name} (KO ${ctx.csp.code}) हूँ। मुझे डॉक्यूमेंट के बारे में मदद चाहिए।`);
+      $("rmactions").innerHTML = `<a class="call" href="tel:+91${p}">📞 कॉल करें / Call</a>
+        <a class="wa" href="https://wa.me/91${p}?text=${hello}" target="_blank" rel="noopener">💬 WhatsApp</a>`;
+    }
+  }
+
+  $("qsend").addEventListener("click", async () => {
+    const text = $("qtext").value.trim();
+    if (text.length < 3) { $("qmsg").textContent = "कृपया अपना सवाल लिखें / Please write your question."; return; }
+    const fd = new FormData();
+    fd.append("action", "question"); fd.append("token", token);
+    fd.append("category", $("qcat").value); fd.append("text", text); fd.append("mobile", $("mobile").value.trim());
+    $("qsend").disabled = true;
+    try {
+      const r = await fetch("upload", { method: "POST", body: fd });   // relative: next to the page
+      const j = await r.json();
+      $("qmsg").textContent = (j.message?.hi || "") + " / " + (j.message?.en || "");
+      if (j.ok) $("qtext").value = "";
+    } catch (e) {
+      $("qmsg").textContent = "नेटवर्क समस्या, दोबारा कोशिश करें / Network problem, please try again.";
+    } finally {
+      $("qsend").disabled = false;
+    }
+  });
 
   const docsEl = $("docs");
   for (const d of ctx.docs) {
