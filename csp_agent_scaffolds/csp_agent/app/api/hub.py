@@ -179,6 +179,112 @@ def list_csps(category: Optional[int] = None, q: str = "", rm: str = "", expired
     return {"total": total, "page": page, "size": size, "rows": out}
 
 
+# ------------------------------------------------- find CSPs by document
+# Each document of each CSP is in one state; any combination can be asked
+# for ("only the agreement expired" = agreement EXPIRED, PVR VALID, IIBF VALID).
+DOC_STATES = ("VALID", "EXPIRING", "EXPIRED", "MISSING", "UNREADABLE")
+DOC_PARAM = {"agr": "AGREEMENT", "pvr": "POLICE_VERIFICATION", "iibf": "IIBF_CERTIFICATE"}
+EXPIRING_DAYS = 60
+
+
+def _doc_state(s) -> str:
+    if s.status == "VALID" and s.days_left is not None and 0 <= s.days_left <= EXPIRING_DAYS:
+        return "EXPIRING"
+    return s.status
+
+
+def _form_outcomes(db: Session, ids: list[int]) -> dict[int, str]:
+    """Each CSP's latest upload-page outcome (accepted / partly / rejected)."""
+    out: dict[int, str] = {}
+    for e in (db.query(AgreementEvent).filter(AgreementEvent.event_type == "PORTAL_UPLOAD",
+                                               AgreementEvent.csp_id.in_(ids or [-1]))
+              .order_by(AgreementEvent.sent_at.desc())):
+        out.setdefault(e.csp_id, _outcome((e.payload or {}).get("results") or []))
+    return out
+
+
+def _find(db: Session, me: Principal, agr: str = "", pvr: str = "", iibf: str = "", slab: Optional[int] = None,
+          rm: str = "", form: str = "") -> list[tuple]:
+    query = _mine(db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)), me)
+    if slab:
+        query = query.filter(CSP.category == slab)
+    staff = _staff_map(db)
+    if rm:
+        ids = [u.id for u in staff.values() if u.role == "RM" and u.name.lower() == rm.lower()]
+        query = query.filter(CSP.rm_id.in_(ids or [-1]))
+    csps = query.order_by(CSP.current_code).all()
+    forms = _form_outcomes(db, [c.id for c in csps])
+    want = {DOC_PARAM[k]: v.upper() for k, v in (("agr", agr), ("pvr", pvr), ("iibf", iibf)) if v}
+    out = []
+    for c in csps:
+        if form == "yes" and c.id not in forms or form == "no" and c.id in forms \
+                or form in ("accepted", "partly", "rejected") and forms.get(c.id) != form:
+            continue
+        st = evaluate(db, c)
+        states = {t: _doc_state(x) for t, x in st.docs.items()}
+        if all(states.get(t) == v for t, v in want.items()):
+            out.append((c, st, states, forms.get(c.id), staff))
+    return out
+
+
+def _find_row(c, st, states, form, staff) -> dict:
+    return {"id": c.id, "code": c.current_code, "name": c.name, "phone": c.phone,
+            "category": st.category, "sub_slab": sub_slab(st), "sub_slab_label": sub_slab_label(sub_slab(st)),
+            "rm": staff[c.rm_id].name if c.rm_id in staff else None,
+            "dc": staff[c.dc_id].name if c.dc_id in staff else None, "form": form,
+            "docs": {t: {"status": x.status, "state": states[t], "issue_date": _iso(x.issue_date),
+                         "expiry_date": _iso(x.expiry_date), "days_left": x.days_left} for t, x in st.docs.items()}}
+
+
+@router.get("/find")
+def find_csps(agr: str = "", pvr: str = "", iibf: str = "", slab: Optional[int] = None, rm: str = "", form: str = "",
+              page: int = 1, size: int = 50, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    found = _find(db, me, agr, pvr, iibf, slab, rm, form)
+    size = min(max(size, 1), 200)
+    rows = found[(page - 1) * size: page * size]
+    return {"total": len(found), "page": page, "size": size, "rows": [_find_row(*r) for r in rows]}
+
+
+@router.get("/find.xlsx")
+def find_csps_xlsx(agr: str = "", pvr: str = "", iibf: str = "", slab: Optional[int] = None, rm: str = "",
+                   form: str = "", me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "CSPs"
+    head = ["CSP code", "Name", "Phone", "RM", "DC", "Slab", "Sub-group"]
+    for t in REQUIRED_TYPES:
+        en = DOC_LABELS[t][0]
+        head += [f"{en}: state", f"{en}: issued", f"{en}: expires"]
+    ws.append(head + ["Upload page"])
+    for r in (_find_row(*x) for x in _find(db, me, agr, pvr, iibf, slab, rm, form)):
+        line = [r["code"], r["name"], r["phone"], r["rm"], r["dc"], r["category"], r["sub_slab_label"]]
+        for t in REQUIRED_TYPES:
+            d = r["docs"][t]
+            line += [d["state"].lower(), d["issue_date"], d["expiry_date"]]
+        ws.append(line + [r["form"] or ""])
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    name = "csps_" + "_".join(f"{k}-{v}" for k, v in (("agreement", agr), ("pvr", pvr), ("iibf", iibf), ("slab", slab),
+                                                         ("rm", rm), ("form", form)) if v) or "csps_all"
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f'attachment; filename="{name[:80]}.xlsx"'})
+
+
+@router.get("/doc-matrix")
+def doc_matrix(me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """Counts of CSPs per document and state, for the overview table."""
+    counts = {t: {k: 0 for k in DOC_STATES} for t in REQUIRED_TYPES}
+    for c, st, states, _, _ in _find(db, me):
+        for t, v in states.items():
+            if t in counts and v in counts[t]:
+                counts[t][v] += 1
+    return {"counts": counts, "expiring_days": EXPIRING_DAYS,
+            "rms": sorted(u.name for u in _staff_map(db).values() if u.role == "RM") if me.is_admin else []}
+
+
 @router.get("/csp/{csp_id}")
 def csp_detail(csp_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     c = _own_csp(db, csp_id, me)

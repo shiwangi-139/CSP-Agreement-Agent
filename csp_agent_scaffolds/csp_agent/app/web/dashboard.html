@@ -33,6 +33,7 @@
     <button data-view="contacts">Contacts &amp; gaps</button>
     <button data-view="ingestion">Gmail ingestion</button>
     <button data-view="review">Review queue <span class="count" id="n-review"></span></button>
+    <button data-view="find">Find CSPs</button>
     <button data-view="formuploads">Form uploads <span class="count" id="n-form"></span></button>
     <button data-view="questions">CSP questions <span class="count" id="n-questions"></span></button>
     <button data-view="accuracy">Accuracy</button>
@@ -69,7 +70,20 @@
                3: ["2 documents missing", "One received, two missing or unreadable"],
                4: ["No documents", "Nothing readable on file in 2 years"]};
   const slab = (k) => `Slab ${k} · ${CAT[k][0]}`;
-  const state = {view: "overview", cat: 1, q: "", expiredOnly: false, page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
+  // Find CSPs: one state per document; "" = any.
+  const FSTATES = [["", "any"], ["VALID", "valid"], ["EXPIRING", "expiring ≤60d"], ["EXPIRED", "expired"], ["MISSING", "missing"], ["UNREADABLE", "unreadable"]];
+  const FPRESETS = [
+    ["Only agreement expired", {agr: "EXPIRED", pvr: "VALID", iibf: "VALID"}],
+    ["Only PVR expired", {agr: "VALID", pvr: "EXPIRED", iibf: "VALID"}],
+    ["Agreement expired (any other)", {agr: "EXPIRED"}],
+    ["PVR expired (any other)", {pvr: "EXPIRED"}],
+    ["Agreement expiring ≤60d", {agr: "EXPIRING"}],
+    ["PVR expiring ≤60d", {pvr: "EXPIRING"}],
+    ["Only IIBF missing", {agr: "VALID", pvr: "VALID", iibf: "MISSING"}],
+    ["Everything valid", {agr: "VALID", pvr: "VALID", iibf: "VALID"}],
+  ];
+  const findQuery = (f) => ["agr", "pvr", "iibf", "slab", "rm", "form"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&");
+  const state = {view: "overview", find: {}, cat: 1, q: "", expiredOnly: false, page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
 
   // ---------------------------------------------------------------- api
   // Paths are relative (no leading "/"): the page is served at "/" on the
@@ -122,7 +136,16 @@
     async overview() {
       const s = state.summary;
       const c = s.categories;
-      return `
+      const m = await api("/api/hub/doc-matrix");
+      const cols = FSTATES.slice(1);
+      const matrix = `<div class="card tablewrap" style="margin-top:14px"><h2>Documents at a glance</h2>
+        <p class="small muted">CSPs per document and state. Click a number to see exactly those CSPs (and download them).</p>
+        <table><thead><tr><th></th>${cols.map(([, l]) => `<th>${l}</th>`).join("")}</tr></thead><tbody>
+        ${[["AGREEMENT", "agr"], ["POLICE_VERIFICATION", "pvr"], ["IIBF_CERTIFICATE", "iibf"]].map(([t, key]) => `<tr><td><b>${DOC[t]}</b></td>
+          ${cols.map(([v]) => { const n = m.counts[t][v]; return `<td class="num">${n ? `<a href="#" data-findset='${JSON.stringify({[key]: v})}'>${n}</a>` : `<span class="muted">0</span>`}</td>`; }).join("")}</tr>`).join("")}
+        </tbody></table></div>`;
+      state.rms = m.rms;
+      return matrix + `
       <div class="grid k4">${[1,2,3,4].map((k) => `
         <div class="card kpi c${k}" data-cat="${k}"><div class="label">${slab(k)}</div>
           <div class="n">${c[k] ?? 0}</div><div class="small muted">${CAT[k][1]}</div>
@@ -331,6 +354,32 @@
         : `<div class="empty">No mistakes found in the checks so far.</div>`}</div>`;
     },
 
+    async find() {
+      const f = state.find;
+      const d = await api(`/api/hub/find?${findQuery(f)}&page=${state.page}&size=50`);
+      const sel = (key, label, opts) => `<label class="small">${label}<br><select data-fkey="${key}">${opts.map(([v, l]) =>
+        `<option value="${v}" ${String(f[key] ?? "") === String(v) ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
+      const rms = [["", "any"], ...(state.rms || []).map((n) => [n, n])];
+      const pages = Math.max(1, Math.ceil(d.total / d.size));
+      return `<p class="small muted">Pick a state for each document; "any" means it doesn't matter. Example: <i>only the agreement expired</i> = Agreement expired, PVR valid, IIBF valid. Expiring = valid but ends within 60 days.</p>
+      <div class="tabs small">${FPRESETS.map(([l, p]) => `<button data-findset='${JSON.stringify(p)}'>${l}</button>`).join("")}<button data-findset='{}'>Clear</button></div>
+      <div class="toolbar" style="flex-wrap:wrap;gap:12px">
+        ${sel("agr", "Agreement", FSTATES)} ${sel("pvr", "PVR / Character", FSTATES)} ${sel("iibf", "IIBF", FSTATES.filter(([v]) => !["EXPIRING", "EXPIRED"].includes(v)))}
+        ${sel("slab", "Slab", [["", "any"], [1, "1"], [2, "2"], [3, "3"], [4, "4"]])}
+        ${state.summary.me.role === "ADMIN" ? sel("rm", "RM", rms) : ""}
+        ${sel("form", "Upload page", [["", "any"], ["yes", "used it"], ["no", "not used"], ["accepted", "all accepted"], ["partly", "partly accepted"], ["rejected", "tried, nothing accepted"]])}
+        <span class="muted"><b>${d.total}</b> CSPs</span>
+        <a class="btn" href="#" data-findxlsx="1">Download this list (.xlsx)</a></div>
+      <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>CSP</th><th>Agreement</th><th>PVR</th><th>IIBF</th><th>RM / DC</th><th>Upload page</th></tr></thead><tbody>
+        ${d.rows.map((r) => `<tr class="click" data-csp="${r.id}">
+          <td><div class="mono">${esc(r.code)}</div><div>${esc(r.name)}</div><div class="small">${badge("c" + r.category, r.sub_slab_label)}</div></td>
+          <td>${docCell(r.docs.AGREEMENT)}</td><td>${docCell(r.docs.POLICE_VERIFICATION)}</td><td>${docCell(r.docs.IIBF_CERTIFICATE)}</td>
+          <td class="small">${esc(r.rm || "—")}<br><span class="muted">${esc(r.dc || "no DC")}</span></td>
+          <td class="small">${esc(r.form ? {accepted: "all accepted", partly: "partly", rejected: "nothing accepted"}[r.form] : "—")}</td></tr>`).join("")}
+        </tbody></table>` : `<div class="empty">No CSPs match.</div>`}</div>
+      ${pager(pages)}`;
+    },
+
     async formuploads() {
       const out = state.fout ?? "", days = state.fdays ?? 0;
       const d = await api(`/api/hub/form-uploads?outcome=${out}&days=${days}`);
@@ -462,7 +511,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-qstatus],[data-fout],[data-fdays],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -495,6 +544,14 @@
       if (ds.csp) return openCsp(ds.csp);
       if (ds.approve) { const m = await post(`/api/hub/messages/${ds.approve}/approve`); toast(`Approved → ${m.status.replaceAll("_", " ").toLowerCase()}`); return refreshAfterAction(); }
       if (ds.sendnow) { if (!confirm("Send this WhatsApp message to the CSP now?")) return; const m = await post(`/api/hub/messages/${ds.sendnow}/send-now`); toast(`→ ${m.status.replaceAll("_", " ").toLowerCase()}${m.error ? ": " + m.error : ""}`); return refreshAfterAction(); }
+      if (ds.findset) { e.preventDefault(); state.find = JSON.parse(ds.findset); state.page = 1; state.view = "find"; return render(); }
+      if (ds.findxlsx) {
+        e.preventDefault();
+        const r = await fetch(`api/hub/find.xlsx?${findQuery(state.find)}`, {credentials: "same-origin", headers: H});
+        if (!r.ok) return alert("Download failed: " + r.status);
+        const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
+        a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "csps.xlsx"; a.click(); return;
+      }
       if (ds.fout !== undefined) { state.fout = ds.fout; return render(); }
       if (ds.fdays !== undefined) { state.fdays = +ds.fdays; return render(); }
       if (ds.keptfile) { e.preventDefault(); const [ev, i] = ds.keptfile.split("/"); return openPath(`api/hub/form-uploads/${ev}/file/${i}`); }
@@ -532,13 +589,18 @@
   });
   document.addEventListener("change", (e) => {
     if (e.target.id === "expiredonly") { state.expiredOnly = e.target.checked; state.page = 1; render(); }
+    if (e.target.dataset.fkey) {
+      const f = {...state.find, [e.target.dataset.fkey]: e.target.value};
+      if (!e.target.value) delete f[e.target.dataset.fkey];
+      state.find = f; state.page = 1; render();
+    }
   });
   async function refreshAfterAction() { if ($("#drawer").classList.contains("open")) closeDrawer(); render(); }
 
   // ------------------------------------------------------------ render
   const TITLES = {overview: "Overview", categories: "Slabs", documents: "Latest documents", comms: "Communication Hub",
                   contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy",
-                  questions: "CSP questions", formuploads: "Form uploads (Slab 5)"};
+                  questions: "CSP questions", formuploads: "Form uploads (Slab 5)", find: "Find CSPs"};
   async function render() {
     try {
       state.summary = await api("/api/hub/summary");
