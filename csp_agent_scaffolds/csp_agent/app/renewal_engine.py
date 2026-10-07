@@ -74,10 +74,15 @@ def _stages(db: Session, cycle: OutreachCycle) -> list[dict]:
     for m in rows:
         st = out.setdefault(m.stage, {"stage": m.stage, "role": m.recipient_role, "rows": []})
         st["rows"].append(m)
-    # A stage the agent retired unsent (superseded) never happened.
+    # A stage that never reached anyone didn't happen: rows the agent retired
+    # unsent (superseded) don't count, nor does a stage whose only other rows
+    # were blocked (no number / email on the calling sheet).
+    def superseded(m):
+        return m.status == OutboundStatus.REJECTED and (m.error_log or "").startswith("Superseded")
+    for st in out.values():
+        st["rows"] = [m for m in st["rows"] if not superseded(m)]
     out = {k: st for k, st in out.items()
-           if not all(m.status == OutboundStatus.REJECTED and (m.error_log or "").startswith("Superseded")
-                      for m in st["rows"])}
+           if st["rows"] and not all(m.status == OutboundStatus.BLOCKED for m in st["rows"])}
     for st in out.values():
         sent = [m.sent_at for m in st["rows"] if m.status == OutboundStatus.SENT and m.sent_at]
         if sent:

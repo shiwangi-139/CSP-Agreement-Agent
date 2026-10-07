@@ -385,3 +385,26 @@ def test_retired_drafts_are_written_again_fresh(db_session):
     fresh = [m for m in _msgs(db, csp) if m.document_type == "AGREEMENT" and m.status == OutboundStatus.QUEUED_FOR_REVIEW]
     assert {m.stage for m in fresh} == {"T-60"} and len(fresh) == 2
     assert {m.idempotency_key for m in fresh}.isdisjoint({m.idempotency_key for m in first})
+
+
+def test_csp_without_email_gets_a_fresh_whatsapp_draft_after_redraft(db_session):
+    db = db_session
+    csp = _csp(db, email=False)                                        # email row is BLOCKED
+    renewal_engine.run_for_csp(db, csp, TODAY)
+    for m in _msgs(db, csp):
+        if m.status == OutboundStatus.QUEUED_FOR_REVIEW:              # what scripts/redraft_fresh does
+            m.status, m.error_log = OutboundStatus.REJECTED, "Superseded: redrafted fresh"
+    renewal_engine.run_for_csp(db, csp, TODAY + timedelta(days=1))
+    fresh = [m for m in _msgs(db, csp) if m.status == OutboundStatus.QUEUED_FOR_REVIEW]
+    assert [m.channel for m in fresh] == ["WHATSAPP"]
+    for _ in range(3):                                                  # no new blocked rows every day
+        renewal_engine.run_for_csp(db, csp, TODAY + timedelta(days=2))
+    assert len(_msgs(db, csp)) == 3
+
+
+def test_csp_with_no_contact_is_not_drafted_again_every_day(db_session):
+    db = db_session
+    csp = _csp(db, email=False)
+    csp.phone = csp.whatsapp_number = None
+    _run_days(db, csp, TODAY, 20)
+    assert len(_msgs(db, csp)) == 2 and all(m.status == OutboundStatus.BLOCKED for m in _msgs(db, csp))
