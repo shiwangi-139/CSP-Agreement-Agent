@@ -69,6 +69,11 @@ SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET", "csp-documents")
 # ---------------------------------------------------------------------------
 APP_TIMEZONE = os.getenv("APP_TIMEZONE", "Asia/Kolkata")
 
+# Parked features (built, switched off until discussed; see PROJECT_DISCUSSION.md):
+#   FEATURE_MESSAGING_ANALYTICS  the "Messaging analytics" page, link-open
+#                                records and the WhatsApp delivery-status job
+FEATURE_MESSAGING_ANALYTICS = os.getenv("FEATURE_MESSAGING_ANALYTICS", "off").strip().lower() in ("1", "on", "true", "yes")
+
 
 def local_now():
     """Naive local time (APP_TIMEZONE). Columns filled by the database's own

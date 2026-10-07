@@ -25,7 +25,8 @@ from datetime import datetime
 
 from sqlalchemy import text
 
-from .config import APP_TIMEZONE, GMAIL_SCAN_INTERVAL_MINUTES, VAULT_JOB_HOUR, VAULT_JOB_MINUTE
+from .config import (APP_TIMEZONE, FEATURE_MESSAGING_ANALYTICS, GMAIL_SCAN_INTERVAL_MINUTES, VAULT_JOB_HOUR,
+                     VAULT_JOB_MINUTE)
 from .db import SessionLocal, engine
 from .logging_config import configure_logging
 
@@ -146,7 +147,8 @@ def build_scheduler():
     sched.add_job(job_sheet, IntervalTrigger(minutes=60), id="sheet", next_run_time=datetime.now())
     sched.add_job(job_engine, CronTrigger(hour=9, minute=0), id="engine")
     sched.add_job(job_outbox, IntervalTrigger(minutes=2), id="outbox")
-    sched.add_job(job_delivery, IntervalTrigger(minutes=30), id="delivery")
+    if FEATURE_MESSAGING_ANALYTICS:                       # parked feature
+        sched.add_job(job_delivery, IntervalTrigger(minutes=30), id="delivery")
     sched.add_job(job_vault, CronTrigger(hour=VAULT_JOB_HOUR, minute=VAULT_JOB_MINUTE), id="vault")
     sched.add_job(job_reports, CronTrigger(hour=7, minute=30), id="reports")
     return sched

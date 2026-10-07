@@ -20,6 +20,7 @@ from ..compliance import (CATEGORY_NAMES, DOC_LABELS, REQUIRED_TYPES, SUB_SLABS,
                           sub_slab, sub_slab_label)
 from ..comms import outbound
 from ..config import (OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE, CALLING_SHEET_LINK, CALLING_SHEET_SOURCE, local_now,
+                      FEATURE_MESSAGING_ANALYTICS,
                       CALLING_SHEET_TAB)
 from ..db import get_db, SessionLocal
 from ..models import (AgreementEvent, CSP, ContactChangeRequest, CspQuestion, Document, DocumentStatus, ExtractionCorrection, InboundMessage, InternalUser,
@@ -127,6 +128,7 @@ def summary(me: Principal = Depends(require_user), db: Session = Depends(get_db)
                           .filter(CspQuestion.status == "OPEN").count(),
         "form_uploads": _form_upload_counts(db, me),
         "me": {"name": me.name, "role": me.role},
+        "features": {"analytics": FEATURE_MESSAGING_ANALYTICS},
         "modes": {"outbound": OUTBOUND_COMMUNICATION_MODE, "whatsapp": WHATSAPP_MODE,
                   "calling_sheet": (f"live sheet link · {CALLING_SHEET_TAB}" if CALLING_SHEET_LINK
                                     else f"{CALLING_SHEET_SOURCE} · {CALLING_SHEET_TAB}")},
@@ -666,6 +668,8 @@ def messaging_analytics(days: int = 14, me: Principal = Depends(require_user), d
     """Sent, delivered and what CSPs did afterwards, per India day. An RM
     sees only their own CSPs."""
     from .. import analytics
+    if not FEATURE_MESSAGING_ANALYTICS:
+        raise HTTPException(404, "Messaging analytics is switched off (FEATURE_MESSAGING_ANALYTICS).")
     ids = None if me.is_admin else {i for (i,) in _mine(db.query(CSP.id), me)}
     return analytics.build(db, ids, days=min(max(days, 1), 60))
 

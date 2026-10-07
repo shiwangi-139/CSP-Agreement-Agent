@@ -58,3 +58,15 @@ def test_sent_and_what_csps_did_afterwards(db_session):
 
     only_b = analytics.build(db, {b.id}, days=3)                                 # an RM sees their own CSPs
     assert only_b["periods"]["last_7_days"]["csps_reached"] == 1
+
+
+def test_parked_by_default_page_is_off_and_nothing_is_recorded(monkeypatch):
+    from app.api import portal
+    monkeypatch.setattr(portal, "FEATURE_MESSAGING_ANALYTICS", False)
+    calls = []
+
+    class DB:                                    # any query would mean a record was attempted
+        def query(self, *a):
+            calls.append(a)
+    portal._record_link_open(DB(), 1)
+    assert calls == []

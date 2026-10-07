@@ -17,7 +17,7 @@ Server-side rules (the page enforces the same, but the server decides):
   - issue date required; not in the future; not already expired
     (issue + validity < today) -> "please upload the renewed document"
   - unreadable / blurry -> rejected at once ("photo not taken properly,
-    please retake the photos"); the document stays missing
+    please upload a scanned PDF"); the document stays missing
   - the wrong document in a section, or an expired document -> rejected
   - typed date vs date read from the document: equal -> accepted; the
     document's own date wins when it was read by the rules; if it was read
@@ -43,7 +43,7 @@ from sqlalchemy.orm import Session
 
 from ..ai.extraction.deterministic_extractor import extract_document_fields_deterministic
 from ..compliance import DOC_LABELS, evaluate, refresh_category
-from ..config import MAX_UPLOAD_SIZE_BYTES, local_now
+from ..config import FEATURE_MESSAGING_ANALYTICS, MAX_UPLOAD_SIZE_BYTES, local_now
 from ..db import SessionLocal, get_db
 from ..document_service import store_extracted_document
 from ..expiry_engine import add_years
@@ -80,8 +80,8 @@ MSG = {
     "future": ("यह तारीख आज के बाद की नहीं हो सकती।", "The issue date cannot be in the future."),
     "expired": ("इस डॉक्यूमेंट की तारीख निकल चुकी है (expired)। कृपया इसे रिन्यू करवाकर नया डॉक्यूमेंट अपलोड करें।",
                 "This document has expired. Please renew it and upload the new document."),
-    "unreadable": ("फोटो साफ़ नहीं है — कृपया अच्छी रोशनी में, फोन स्थिर रखकर हर पेज की फिर से फोटो लें।",
-                   "The photo isn't clear: please retake each page in good light, holding the phone still."),
+    "unreadable": ("फोटो साफ़ नहीं है — कृपया स्कैन की हुई PDF अपलोड करें (Google Drive → Scan या Adobe Scan)।",
+                   "Photo not taken properly — please upload a scanned PDF (Google Drive → Scan, or Adobe Scan)."),
     "wrong_doc": ("यह सही डॉक्यूमेंट नहीं है। कृपया यहाँ सही डॉक्यूमेंट अपलोड करें।",
                   "This is not the right document for this section. Please upload the correct document."),
     "duplicate": ("यह फ़ाइल पहले से हमारे पास है।", "We already have this file."),
@@ -150,6 +150,8 @@ def _get_link_page(notice: str = "", result: str = "") -> HTMLResponse:
 def _record_link_open(db: Session, csp_id: int) -> None:
     """For the messaging analytics: the CSP opened their link (at most one
     record per CSP per hour, so reloading the page isn't counted again)."""
+    if not FEATURE_MESSAGING_ANALYTICS:                    # parked feature: record nothing
+        return
     since = local_now() - timedelta(hours=1)               # sent_at is in local time (database clock)
     if db.query(AgreementEvent.id).filter(AgreementEvent.csp_id == csp_id, AgreementEvent.event_type == "LINK_OPENED",
                                           AgreementEvent.sent_at >= since).first():

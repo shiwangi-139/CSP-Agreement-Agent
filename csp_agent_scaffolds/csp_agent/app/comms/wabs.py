@@ -34,7 +34,7 @@ CLEAN = {
         "If any detail in the form is missing or wrong, please correct it. Our team checks every change.\n\n"
         "📎 अपलोड करें / Upload here:\n{{4}}\n\n"
         "मदद / Help: {{5}}\n"
-        "हर पेज की साफ़ फोटो लें, या PDF डालें / A clear photo of each page, or a PDF.\n"
+        "कृपया साफ़ स्कैन की हुई PDF भेजें / Please send a clear scanned PDF.\n"
         "— Eko"),
 }
 # The CSP asked for their link on the public page (sent only to the number on record).

@@ -33,7 +33,7 @@
     <button data-view="contacts">Contacts &amp; gaps</button>
     <button data-view="ingestion">Gmail ingestion</button>
     <button data-view="review">Review queue <span class="count" id="n-review"></span></button>
-    <button data-view="analytics">Messaging analytics</button>
+    <button data-view="analytics" id="nav-analytics" style="display:none">Messaging analytics</button>
     <button data-view="find">Find CSPs</button>
     <button data-view="formuploads">Form uploads <span class="count" id="n-form"></span></button>
     <button data-view="questions">CSP questions <span class="count" id="n-questions"></span></button>
@@ -650,6 +650,7 @@
       const drafts = s.drafts_pending.EMAIL + s.drafts_pending.WHATSAPP;
       $("#n-drafts").textContent = drafts || ""; $("#n-review").textContent = s.review_pending || "";
       $("#n-questions").textContent = s.questions_open || "";
+      $("#nav-analytics").style.display = s.features?.analytics ? "" : "none";     // parked feature
       $("#n-form").textContent = s.form_uploads?.rejected || "";
       $("#n-cat").textContent = (s.categories[2] + s.categories[3] + s.categories[4]) || "";
       $("#modepill").textContent = s.modes.outbound === "review" ? "Review mode: nothing is sent without approval" : "Auto mode: approved messages send automatically";
