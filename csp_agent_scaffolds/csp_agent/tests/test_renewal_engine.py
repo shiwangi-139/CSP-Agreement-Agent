@@ -1,6 +1,6 @@
 """Follow-up engine, categories, recipient guard and templates, against the
 isolated test database (tests/conftest.py never touches the main DB)."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import uuid
 
 import pytest
@@ -57,10 +57,18 @@ def _msgs(db, csp):
     return db.query(OutboundMessage).filter_by(csp_id=csp.id).order_by(OutboundMessage.id).all()
 
 
-def _run_days(db, csp, start, days):
+def _run_days(db, csp, start, days, send=False):
+    """The daily engine run; with send=True the team sends every waiting
+    draft the same day (as if approved on the dashboard)."""
     for i in range(days):
-        renewal_engine.run_for_csp(db, csp, start + timedelta(days=i))
+        day = start + timedelta(days=i)
+        renewal_engine.run_for_csp(db, csp, day)
         db.flush()
+        if send:
+            for m in _msgs(db, csp):
+                if m.status in renewal_engine.PENDING:
+                    m.status, m.sent_at = OutboundStatus.SENT, datetime.combine(day, datetime.min.time()).replace(hour=10)
+            db.flush()
 
 
 # ------------------------------------------------------------ categories
@@ -99,7 +107,7 @@ def test_agreement_ladder_order_and_caps(db_session):
     csp = _csp(db)
     expiry = TODAY + timedelta(days=61)
     _all_valid(db, csp, expiry)
-    _run_days(db, csp, TODAY, 61)
+    _run_days(db, csp, TODAY, 61, send=True)
 
     agr = [m for m in _msgs(db, csp) if m.document_type == "AGREEMENT" and m.channel == "WHATSAPP"]
     roles = [m.recipient_role for m in agr]
@@ -108,7 +116,17 @@ def test_agreement_ladder_order_and_caps(db_session):
     assert roles.index("RM") >= 2              # at least 2 CSP messages first
     assert roles.count("RM") == 2 and roles.count("DC") == 1
     assert roles.index("DC") > len(roles) - 1 - roles[::-1].index("RM")  # DC after the 2nd RM message
-    assert all(m.status == OutboundStatus.QUEUED_FOR_REVIEW for m in agr)  # review mode: drafts only
+
+
+def test_unsent_renewal_reminders_do_not_pile_up(db_session):
+    db = db_session
+    csp = _csp(db)
+    _all_valid(db, csp, TODAY + timedelta(days=61))
+    _run_days(db, csp, TODAY, 40)                                    # nobody sends anything
+    agr = [m for m in _msgs(db, csp) if m.document_type == "AGREEMENT"]
+    waiting = {m.stage for m in agr if m.status in renewal_engine.PENDING}
+    assert len(waiting) == 1                                         # only the newest reminder waits
+    assert "RM" not in {m.recipient_role for m in agr}               # no RM before the CSP got anything
 
 
 def test_each_step_drafted_once(db_session):
@@ -160,15 +178,70 @@ def test_upload_cycle_cadence_and_caps(db_session):
     db = db_session
     csp = _csp(db)
     _doc(db, csp, "AGREEMENT", date(2026, 1, 1), date(2029, 1, 1))   # PVR + IIBF missing -> Cat 2
-    _run_days(db, csp, TODAY, 60)
+    _run_days(db, csp, TODAY, 150, send=True)
     wa = [m for m in _msgs(db, csp) if m.cycle_id and m.channel == "WHATSAPP"
           and db.get(OutreachCycle, m.cycle_id).kind == "UPLOAD"]
-    days = [(m.stage, m.recipient_role) for m in wa]
-    assert days[:5] == [("U-D0", "CSP"), ("U-D3", "CSP"), ("U-D6", "CSP"), ("U-D9", "CSP"), ("U-D12", "CSP")]
-    roles = [r for _, r in days]
+    steps = [(m.stage, m.recipient_role, (m.sent_at.date() - TODAY).days) for m in wa]
+    assert steps[:7] == [("U-1", "CSP", 0), ("U-2", "CSP", 4), ("U-3", "CSP", 11), ("U-RM1", "RM", 18),
+                         ("U-4", "CSP", 25), ("U-RM2", "RM", 32), ("U-DC", "DC", 39)]
+    assert steps[7][0] == "U-W1" and steps[7][2] == 46                # then weekly
+    roles = [r for _, r, _ in steps]
     assert roles.count("RM") == 2 and roles.count("DC") == 1
-    assert roles.count("CSP") <= 10
+    assert roles.count("CSP") == 10                                   # capped
     assert all(m.template_name in ("UPLOAD_MISSING", "ESCALATION_RM", "ESCALATION_DC") for m in wa)
+
+
+def test_next_reminder_waits_until_the_previous_one_is_sent(db_session):
+    db = db_session
+    csp = _csp(db)
+    _run_days(db, csp, TODAY, 30)                                    # slab 4, nothing sent for a month
+    msgs = _msgs(db, csp)
+    assert {m.stage for m in msgs} == {"U-1"} and len(msgs) == 2     # one WhatsApp + one email, no pile-up
+    cycle = db.query(OutreachCycle).filter_by(csp_id=csp.id, kind="UPLOAD").first()
+    assert cycle.csp_messages == 0
+    wa = next(m for m in msgs if m.channel == "WHATSAPP")
+    wa.status, wa.sent_at = OutboundStatus.SENT, datetime(2026, 10, 25, 10)  # sent on day 30
+    _run_days(db, csp, date(2026, 10, 25), 4)                        # days 30-33: too early
+    assert {m.stage for m in _msgs(db, csp)} == {"U-1"}
+    renewal_engine.run_for_csp(db, csp, date(2026, 10, 29))          # 4 days after the send
+    assert {m.stage for m in _msgs(db, csp)} == {"U-1", "U-2"}
+    email_u1 = next(m for m in msgs if m.channel == "EMAIL")
+    assert email_u1.status == OutboundStatus.QUEUED_FOR_REVIEW        # the sent stage's email is left alone
+    assert cycle.csp_messages == 1
+
+
+def test_rejected_reminder_counts_as_handled(db_session):
+    db = db_session
+    csp = _csp(db)
+    renewal_engine.run_for_csp(db, csp, TODAY)
+    for m in _msgs(db, csp):
+        outbound.reject(db, m, "tester", "not now")
+        m.reviewed_at = datetime(2026, 9, 25, 12)
+    renewal_engine.run_for_csp(db, csp, TODAY + timedelta(days=3))
+    assert {m.stage for m in _msgs(db, csp)} == {"U-1"}
+    renewal_engine.run_for_csp(db, csp, TODAY + timedelta(days=4))
+    assert {m.stage for m in _msgs(db, csp)} == {"U-1", "U-2"}
+
+
+def test_old_piled_up_drafts_are_reduced_to_one(db_session):
+    db = db_session
+    csp = _csp(db)
+    renewal_engine.run_for_csp(db, csp, TODAY)
+    cycle = db.query(OutreachCycle).filter_by(csp_id=csp.id, kind="UPLOAD").first()
+    for stage in ("U-D3", "U-D6"):                                    # what the old calendar drafted
+        outbound.draft(db, csp=csp, role="CSP", template_key="ONBOARD_ALL",
+                       ctx={"csp_name": csp.name, "csp_code": csp.current_code, "docs": []},
+                       key_base=f"C{cycle.id}:{stage}", cycle_id=cycle.id, stage=stage)
+    renewal_engine.run_for_csp(db, csp, TODAY + timedelta(days=1))
+    waiting = {m.stage for m in _msgs(db, csp) if m.status == OutboundStatus.QUEUED_FOR_REVIEW}
+    assert waiting == {"U-1"}
+    retired = [m for m in _msgs(db, csp) if m.stage in ("U-D3", "U-D6")]
+    assert all(m.status == OutboundStatus.REJECTED and m.error_log.startswith("Superseded") for m in retired)
+    for m in _msgs(db, csp):                                          # the team sends U-1 on day 2
+        if m.stage == "U-1":
+            m.status, m.sent_at = OutboundStatus.SENT, datetime(2026, 9, 27, 10)
+    renewal_engine.run_for_csp(db, csp, date(2026, 10, 1))
+    assert [m.stage for m in _msgs(db, csp) if m.status == OutboundStatus.QUEUED_FOR_REVIEW] == ["U-2", "U-2"]
 
 
 def test_upload_cycle_closes_when_documents_arrive(db_session):
@@ -187,7 +260,7 @@ def test_upload_closes_cycle_at_once_and_cancels_unsent_reminders(db_session):
     db = db_session
     csp = _csp(db)
     _doc(db, csp, "AGREEMENT", date(2026, 1, 1), date(2029, 1, 1))
-    renewal_engine.run_for_csp(db, csp, TODAY)                       # U-D0 drafted, waiting for review
+    renewal_engine.run_for_csp(db, csp, TODAY)                       # U-1 drafted, waiting for review
     queued = [m for m in _msgs(db, csp) if m.status == OutboundStatus.QUEUED_FOR_REVIEW]
     assert queued
     _doc(db, csp, "POLICE_VERIFICATION", TODAY, TODAY + timedelta(days=365), months=12)

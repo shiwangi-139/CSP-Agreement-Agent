@@ -4,12 +4,12 @@ editing these tables, not the engine (app/renewal_engine.py).
 
 Every step says WHO gets a message and WHEN:
   RENEWAL ladders: `days_before` = days before the document's expiry.
-  UPLOAD cycle:    `day` = days since the cycle opened (missing / expired /
-                   unreadable documents), one message every 3 days.
+  UPLOAD cycle:    `gap` = days after the previous message was SENT
+                   (missing / expired / unreadable documents).
 
 Escalation rules (agreed with the business):
   - the CSP always gets at least 2 follow-ups before the RM is involved,
-    and 5 in the short upload cycle;
+    (counting messages actually sent, not drafts);
   - the RM gets at most 2 messages and the DC at most 1 per cycle;
   - the DC is contacted only after the RM's second message;
   - everything stops as soon as a newer valid document arrives.
@@ -61,20 +61,21 @@ PVR_6M_LADDER = [
 # -------------------------------------------------------- upload-link cycle
 # Used for Cat 2 (missing/unreadable), Cat 3 (expired) and Cat 4 (nothing on
 # file). The template is chosen by category at send time.
+#
+# A batch, not a calendar: step N+1 is drafted only after step N has been
+# SENT (or rejected on the dashboard), and only `gap` days after that. While
+# a message waits for review nothing new is drafted, so drafts never pile up.
 UPLOAD_CYCLE = [
-    {"stage": "U-D0", "day": 0, "to": "CSP"},
-    {"stage": "U-D3", "day": 3, "to": "CSP"},
-    {"stage": "U-D6", "day": 6, "to": "CSP"},
-    {"stage": "U-D9", "day": 9, "to": "CSP"},
-    {"stage": "U-D12", "day": 12, "to": "CSP"},
-    {"stage": "U-D15-RM1", "day": 15, "to": "RM", "template": "ESCALATION_RM"},
-    {"stage": "U-D18", "day": 18, "to": "CSP"},
-    {"stage": "U-D21-RM2", "day": 21, "to": "RM", "template": "ESCALATION_RM"},
-    {"stage": "U-D24-DC", "day": 24, "to": "DC", "template": "ESCALATION_DC"},
+    {"stage": "U-1", "gap": 0, "to": "CSP"},                               # first message
+    {"stage": "U-2", "gap": 4, "to": "CSP"},                               # 4 days later
+    {"stage": "U-3", "gap": 7, "to": "CSP"},
+    {"stage": "U-RM1", "gap": 7, "to": "RM", "template": "ESCALATION_RM"},  # RM calls the CSP
+    {"stage": "U-4", "gap": 7, "to": "CSP"},
+    {"stage": "U-RM2", "gap": 7, "to": "RM", "template": "ESCALATION_RM"},
+    {"stage": "U-DC", "gap": 7, "to": "DC", "template": "ESCALATION_DC"},
 ]
 # After the table ends the CSP keeps getting a weekly reminder until upload,
-# capped at MAX_CSP_UPLOAD_MESSAGES CSP messages in total.
-UPLOAD_WEEKLY_AFTER_DAY = 24
+# capped at MAX_CSP_UPLOAD_MESSAGES CSP messages sent in total.
 UPLOAD_WEEKLY_EVERY_DAYS = 7
 
 LADDERS = {
@@ -100,15 +101,12 @@ def due_renewal_steps(ladder_key: str, days_left: int) -> list[dict]:
     return [s for s in LADDERS[ladder_key] if days_left <= s["days_before"]]
 
 
-def due_upload_steps(days_open: int) -> list[dict]:
-    steps = [s for s in UPLOAD_CYCLE if days_open >= s["day"]]
-    day = UPLOAD_WEEKLY_AFTER_DAY + UPLOAD_WEEKLY_EVERY_DAYS
-    n = 1
-    while day <= days_open:
-        steps.append({"stage": f"U-W{n}", "day": day, "to": "CSP"})
-        day += UPLOAD_WEEKLY_EVERY_DAYS
-        n += 1
-    return steps
+def upload_step(index: int) -> dict:
+    """The upload cycle's step number `index` (0 = first message)."""
+    if index < len(UPLOAD_CYCLE):
+        return UPLOAD_CYCLE[index]
+    n = index - len(UPLOAD_CYCLE) + 1
+    return {"stage": f"U-W{n}", "gap": UPLOAD_WEEKLY_EVERY_DAYS, "to": "CSP"}
 
 
 # Kept for the old /api/scheduler code paths and tests.

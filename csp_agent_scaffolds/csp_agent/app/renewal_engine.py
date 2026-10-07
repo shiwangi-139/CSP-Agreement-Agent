@@ -7,13 +7,18 @@ For every CSP on the calling sheet:
   2. RENEWAL cycles: for each valid Agreement / PVR approaching expiry, walk
      its ladder in app/policy.py;
   3. UPLOAD cycle: while anything is missing, unreadable or expired, send an
-     upload link every 3 days, escalating to RM then DC;
+     upload link in batches: the next reminder is drafted only once the
+     previous one was SENT (or rejected) and its gap has passed, escalating
+     to RM then DC;
   4. close a cycle the moment a newer valid document arrives (stop condition).
 
 Guarantees, enforced here regardless of the policy tables:
   - only the most recent due step is drafted (a CSP who enters a ladder late
     gets one message, not a burst of old ones);
   - each step is drafted once (idempotency key "C<cycle>:<stage>");
+  - at most one reminder per cycle waits for review: a newer one replaces
+    an older unsent one, so drafts never pile up while nobody is sending;
+  - counts below are of messages actually SENT, never of drafts;
   - the RM is never messaged before the CSP has had 2 messages in the cycle,
     and at most MAX_RM_MESSAGES times; the DC only after the RM's second
     message, and at most MAX_DC_MESSAGES times.
@@ -25,7 +30,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from .compliance import ComplianceState, DOC_LABELS, refresh_category
-from .models import CSP, InternalUser, OutboundMessage, OutreachCycle
+from .models import CSP, InternalUser, OutboundMessage, OutboundStatus, OutreachCycle
 from .comms.outbound import cancel_superseded, draft
 from .portal_tokens import current_upload_link, issue_upload_link
 from . import policy
@@ -48,8 +53,61 @@ def _close(cycle: OutreachCycle, reason: str) -> None:
     cycle.closed_at, cycle.close_reason = _now(), reason
 
 
+# Not sent yet, and may still be sent.
+PENDING = (OutboundStatus.DRAFT, OutboundStatus.QUEUED_FOR_REVIEW, OutboundStatus.APPROVED,
+           OutboundStatus.READY_NOT_SENT)
+
+
 def _sent_stages(db: Session, cycle: OutreachCycle) -> set[str]:
+    """Every stage drafted in this cycle (whatever happened to it)."""
     return {s for (s,) in db.query(OutboundMessage.stage).filter(OutboundMessage.cycle_id == cycle.id)}
+
+
+def _stages(db: Session, cycle: OutreachCycle) -> list[dict]:
+    """The cycle's steps in the order they were drafted. A step is one stage
+    (its WhatsApp + email rows): SENT once any row went out, PENDING while a
+    row can still go out, otherwise DONE (rejected, blocked or failed)."""
+    rows = (db.query(OutboundMessage).filter(OutboundMessage.cycle_id == cycle.id)
+            .order_by(OutboundMessage.created_at, OutboundMessage.id).all())
+    out: dict[str, dict] = {}
+    for m in rows:
+        st = out.setdefault(m.stage, {"stage": m.stage, "role": m.recipient_role, "rows": []})
+        st["rows"].append(m)
+    # A stage the agent retired unsent (superseded) never happened.
+    out = {k: st for k, st in out.items()
+           if not all(m.status == OutboundStatus.REJECTED and (m.error_log or "").startswith("Superseded")
+                      for m in st["rows"])}
+    for st in out.values():
+        sent = [m.sent_at for m in st["rows"] if m.status == OutboundStatus.SENT and m.sent_at]
+        if sent:
+            st["state"], st["at"] = "SENT", min(sent)
+        elif any(m.status in PENDING for m in st["rows"]):
+            st["state"], st["at"] = "PENDING", None
+        else:
+            st["state"] = "DONE"
+            st["at"] = max((m.reviewed_at or m.created_at or _now()) for m in st["rows"])
+    return list(out.values())
+
+
+def _sync_counts(cycle: OutreachCycle, stages: list[dict]) -> None:
+    """The cycle's counters = messages actually sent, per recipient."""
+    sent = [st["role"] for st in stages if st["state"] == "SENT"]
+    cycle.csp_messages, cycle.rm_messages, cycle.dc_messages = sent.count("CSP"), sent.count("RM"), sent.count("DC")
+
+
+def _supersede(stages: list[dict], keep: Optional[str], why: str) -> int:
+    """Reject the unsent rows of every stage except `keep`, so only one
+    reminder per cycle ever waits for review."""
+    n = 0
+    for st in stages:
+        if st["stage"] == keep:
+            continue
+        for m in st["rows"]:
+            if m.status in PENDING and m.delivery_status != "PULLED":
+                m.status, m.reviewed_by, m.reviewed_at = OutboundStatus.REJECTED, "agent", _now()
+                m.error_log = f"Superseded: {why}"[:500]
+                n += 1
+    return n
 
 
 def _ctx(db: Session, csp: CSP, state: ComplianceState, link: Optional[str] = None, **extra) -> dict:
@@ -91,15 +149,6 @@ def _pick_step(cycle: OutreachCycle, due: list[dict], sent: set[str]) -> Optiona
     return step
 
 
-def _record(cycle: OutreachCycle, role: str) -> None:
-    if role == "CSP":
-        cycle.csp_messages += 1
-    elif role == "RM":
-        cycle.rm_messages += 1
-    elif role == "DC":
-        cycle.dc_messages += 1
-
-
 # ------------------------------------------------------------------ renewal
 def _run_renewals(db: Session, csp: CSP, state: ComplianceState, today: date) -> list[date]:
     next_dates = []
@@ -126,9 +175,17 @@ def _run_renewals(db: Session, csp: CSP, state: ComplianceState, today: date) ->
                                   csp_messages=0, rm_messages=0, dc_messages=0)
             db.add(cycle)
             db.flush()
+        stages = _stages(db, cycle)
+        waiting = [st for st in stages if st["state"] == "PENDING"]
+        if len(waiting) > 1:     # drafted before this rule existed: keep the newest
+            _supersede(stages, waiting[-1]["stage"], "only one reminder waits at a time")
+        _sync_counts(cycle, stages)
         step = _pick_step(cycle, due, _sent_stages(db, cycle))
         if step is None:
             continue
+        # The ladder runs on the calendar (days before expiry); a newer step
+        # replaces an older reminder nobody sent.
+        _supersede(stages, None, f"a newer reminder ({step['stage']}) replaced it")
         en, hi = DOC_LABELS[doc_type]
         link = issue_upload_link(db, csp, [doc_type]) if step["to"] == "CSP" else None
         template = step.get("template") or "RENEWAL_FOLLOWUP"
@@ -138,7 +195,6 @@ def _run_renewals(db: Session, csp: CSP, state: ComplianceState, today: date) ->
         draft(db, csp=csp, role=step["to"], template_key=template, ctx=ctx,
               key_base=f"C{cycle.id}:{step['stage']}", cycle_id=cycle.id,
               document_type=doc_type, stage=step["stage"])
-        _record(cycle, step["to"])
     return next_dates
 
 
@@ -166,19 +222,36 @@ def _run_upload_cycle(db: Session, csp: CSP, state: ComplianceState, today: date
                               anchor_date=today, csp_messages=0, rm_messages=0, dc_messages=0)
         db.add(cycle)
         db.flush()
-    days_open = (today - cycle.anchor_date).days
-    due = policy.due_upload_steps(days_open)
-    future = [s for s in policy.due_upload_steps(days_open + 30) if s["day"] > days_open]
-    next_date = cycle.anchor_date + timedelta(days=future[0]["day"]) if future else None
 
-    step = _pick_step(cycle, due, _sent_stages(db, cycle))
-    if step is None:
-        return next_date
-    if step["to"] == "CSP" and cycle.csp_messages >= policy.MAX_CSP_UPLOAD_MESSAGES:
+    stages = _stages(db, cycle)
+    pending = [st for st in stages if st["state"] == "PENDING"]
+    if pending:
+        # Waiting for the team to send it: draft nothing new. (Drafts made
+        # before this rule existed: keep the oldest, retire the rest.)
+        _supersede(stages, pending[0]["stage"], "only one reminder waits at a time")
+        _sync_counts(cycle, stages)
         return None
+    _sync_counts(cycle, stages)
+    if cycle.csp_messages >= policy.MAX_CSP_UPLOAD_MESSAGES:
+        return None
+
+    # Every finished step (sent, or rejected on the dashboard) moves the
+    # cycle one step on; the next waits its gap after the latest of them.
+    step = dict(policy.upload_step(len(stages)))
+    if stages:
+        due_on = max(st["at"] for st in stages).date() + timedelta(days=step["gap"])
+        if today < due_on:
+            return due_on
+    if step["to"] == "RM" and (cycle.rm_messages >= policy.MAX_RM_MESSAGES
+                               or cycle.csp_messages < MIN_CSP_BEFORE_RM):
+        step = {**step, "to": "CSP", "stage": f"{step['stage']}-CSP", "template": None}
+    elif step["to"] == "DC" and (cycle.dc_messages >= policy.MAX_DC_MESSAGES
+                                 or cycle.rm_messages < policy.MAX_RM_MESSAGES):
+        step = {**step, "to": "CSP", "stage": f"{step['stage']}-CSP", "template": None}
+
     template = step.get("template") or _upload_template(state)
     single = needed[0] if len(needed) == 1 else None
-    labels = DOC_LABELS.get(single, ("documents", "दस्तावेज़")) if single else ("documents", "दस्तावेज़")
+    labels = DOC_LABELS.get(single, ("documents", "डॉक्यूमेंट")) if single else ("documents", "डॉक्यूमेंट")
     # Only messages to the CSP create or extend the link; an RM/DC escalation
     # just shows the link the CSP already has (so they can forward it).
     link = issue_upload_link(db, csp, needed) if step["to"] == "CSP" else current_upload_link(db, csp)
@@ -187,8 +260,7 @@ def _run_upload_cycle(db: Session, csp: CSP, state: ComplianceState, today: date
     draft(db, csp=csp, role=step["to"], template_key=template, ctx=ctx,
           key_base=f"C{cycle.id}:{step['stage']}", cycle_id=cycle.id,
           document_type=",".join(needed), stage=step["stage"])
-    _record(cycle, step["to"])
-    return next_date
+    return None
 
 
 # ------------------------------------------------------------ on upload
