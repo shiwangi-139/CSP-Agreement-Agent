@@ -20,3 +20,6 @@ venv/
 
 # Uploaded spreadsheets (contacts etc.): never in Git
 data/
+
+# Google service account for the live calling sheet (read-only)
+sheets_service_account.json
