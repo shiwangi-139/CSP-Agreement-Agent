@@ -179,6 +179,7 @@ def _run_renewals(db: Session, csp: CSP, state: ComplianceState, today: date) ->
         waiting = [st for st in stages if st["state"] == "PENDING"]
         if len(waiting) > 1:     # drafted before this rule existed: keep the newest
             _supersede(stages, waiting[-1]["stage"], "only one reminder waits at a time")
+            stages = _stages(db, cycle)
         _sync_counts(cycle, stages)
         step = _pick_step(cycle, due, _sent_stages(db, cycle))
         if step is None:
@@ -224,6 +225,13 @@ def _run_upload_cycle(db: Session, csp: CSP, state: ComplianceState, today: date
         db.flush()
 
     stages = _stages(db, cycle)
+    sent_pos = [i for i, st in enumerate(stages) if st["state"] == "SENT"]
+    if sent_pos:
+        # Unsent reminders drafted before one that already went out are stale.
+        stale = [st for st in stages[:sent_pos[-1]] if st["state"] == "PENDING"]
+        if stale:
+            _supersede(stale, None, "a later reminder was already sent")
+            stages = _stages(db, cycle)
     pending = [st for st in stages if st["state"] == "PENDING"]
     if pending:
         # Waiting for the team to send it: draft nothing new. (Drafts made

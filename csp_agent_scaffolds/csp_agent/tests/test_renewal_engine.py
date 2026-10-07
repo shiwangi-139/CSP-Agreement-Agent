@@ -223,6 +223,22 @@ def test_rejected_reminder_counts_as_handled(db_session):
     assert {m.stage for m in _msgs(db, csp)} == {"U-1", "U-2"}
 
 
+def test_older_unsent_reminders_are_retired_when_a_later_one_was_sent(db_session):
+    db = db_session
+    csp = _csp(db)
+    renewal_engine.run_for_csp(db, csp, TODAY)
+    cycle = db.query(OutreachCycle).filter_by(csp_id=csp.id, kind="UPLOAD").first()
+    [late] = outbound.draft(db, csp=csp, role="CSP", template_key="ONBOARD_ALL",   # old calendar's day-6 draft
+                            ctx={"csp_name": csp.name, "csp_code": csp.current_code, "docs": []},
+                            key_base=f"C{cycle.id}:U-D6", cycle_id=cycle.id, stage="U-D6", channels=("WHATSAPP",))
+    late.status, late.sent_at = OutboundStatus.SENT, datetime(2026, 9, 26, 10)          # the team sent that one
+    renewal_engine.run_for_csp(db, csp, TODAY + timedelta(days=2))
+    old = [m for m in _msgs(db, csp) if m.stage == "U-1"]
+    assert old and all(m.status == OutboundStatus.REJECTED for m in old)               # no second onboarding
+    renewal_engine.run_for_csp(db, csp, date(2026, 9, 30))                            # 4 days after the send
+    assert {m.stage for m in _msgs(db, csp) if m.status == OutboundStatus.QUEUED_FOR_REVIEW} == {"U-2"}
+
+
 def test_old_piled_up_drafts_are_reduced_to_one(db_session):
     db = db_session
     csp = _csp(db)
