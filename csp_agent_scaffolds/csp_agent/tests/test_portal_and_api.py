@@ -79,9 +79,10 @@ def _form(token, **kw):
     return base
 
 
-def test_bad_token_page_is_403(client):
+def test_bad_token_page_offers_a_new_link_not_the_form(client):
     c, _ = client
-    assert c.get("/upload?token=nope").status_code == 403
+    r = c.get("/upload?token=nope")
+    assert "Get your upload link" in r.text and "__CONTEXT_JSON__" not in r.text and "csp_id" not in r.text
 
 
 def test_page_renders_with_escaped_context(client):
