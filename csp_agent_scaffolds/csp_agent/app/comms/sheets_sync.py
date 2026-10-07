@@ -36,6 +36,8 @@ COLUMNS = {
     "csp mobile number": "phone",
     "alternative mobile number": "alt_phone",
     "relationship manager": "rm_name",
+    "mobile no of rm": "rm_phone",
+    "email of rm": "rm_email",
     "district coordinator": "dc_name",
     "mobile number dc": "dc_phone",
     "email id dc": "dc_email",
@@ -106,6 +108,7 @@ def parse_row(raw: dict[str, Any]) -> dict[str, Any] | None:
         return None
     phones = clean_phones(row.get("phone")) + clean_phones(row.get("alt_phone"))
     dc_phones = clean_phones(row.get("dc_phone"))
+    rm_phones = clean_phones(row.get("rm_phone"))
     return {
         "code": code,
         "name": _text(row.get("name")) or f"CSP {code}",
@@ -113,6 +116,8 @@ def parse_row(raw: dict[str, Any]) -> dict[str, Any] | None:
         "phone": phones[0] if phones else None,
         "alt_phone": phones[1] if len(phones) > 1 else None,
         "rm_name": _text(row.get("rm_name")),
+        "rm_phone": rm_phones[0] if rm_phones else None,
+        "rm_email": clean_email(row.get("rm_email")),
         "dc_name": _text(row.get("dc_name")),
         "dc_phone": dc_phones[0] if dc_phones else None,
         "dc_email": clean_email(row.get("dc_email")),
@@ -144,9 +149,10 @@ def compute_contact_gaps(csp: CSP, rm: InternalUser | None, dc: InternalUser | N
 
 
 def _upsert_staff(db: Session, role: str, names_to_rows: dict[str, list[dict]]) -> dict[str, InternalUser]:
-    """One InternalUser per RM/DC name. A DC's phone and email are the most
-    common non-empty values across that DC's rows in the sheet. RMs have no
-    contact columns in this tab, so theirs are left as set by an admin."""
+    """One InternalUser per RM/DC name. Their phone and email are the most
+    common non-empty values across their rows in the sheet ("Mobile No Of
+    RM" / "Email of RM", "Mobile Number DC" / "Email ID DC"). A blank in the
+    sheet never erases a contact an admin entered."""
     existing = {u.name.strip().lower(): u for u in db.query(InternalUser).filter(InternalUser.role == role)}
     taken_emails = {e for (e,) in db.query(InternalUser.email).filter(InternalUser.email.isnot(None))}
     out = {}
@@ -156,16 +162,18 @@ def _upsert_staff(db: Session, role: str, names_to_rows: dict[str, list[dict]]) 
         if user is None:
             user = InternalUser(name=name.strip(), role=role)
             db.add(user)
-        if role == "DC":
-            phones = Counter(r["dc_phone"] for r in rows if r["dc_phone"])
-            emails = Counter(r["dc_email"] for r in rows if r["dc_email"])
-            if phones:
-                user.phone = phones.most_common(1)[0][0]
-            if emails:
-                email = emails.most_common(1)[0][0]
-                if email == user.email or email not in taken_emails:
-                    user.email = email
-                    taken_emails.add(email)
+        prefix = "dc" if role == "DC" else "rm"
+        phones = Counter(r[f"{prefix}_phone"] for r in rows if r.get(f"{prefix}_phone"))
+        emails = Counter(r[f"{prefix}_email"] for r in rows if r.get(f"{prefix}_email"))
+        if phones:
+            user.phone = phones.most_common(1)[0][0]
+        # The email is also the dashboard login: once someone can log in with
+        # it, the sheet doesn't change it.
+        if emails and not (user.login_enabled and user.email):
+            email = emails.most_common(1)[0][0]
+            if email == user.email or email not in taken_emails:
+                user.email = email
+                taken_emails.add(email)
         out[key] = user
     db.flush()
     return out

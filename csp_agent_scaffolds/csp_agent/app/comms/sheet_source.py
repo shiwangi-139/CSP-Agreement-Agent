@@ -73,7 +73,11 @@ def _read_google(sheet_id: str) -> list[list[Any]]:
 
     if not sheet_id:
         raise SheetSourceError("CALLING_SHEET_SPREADSHEET_ID is not set.")
-    creds_file = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
+    # A service account shared (Viewer) on this one spreadsheet; separate from
+    # credentials.json, which is the Gmail login.
+    creds_file = os.getenv("SHEETS_SERVICE_ACCOUNT_FILE", "sheets_service_account.json")
+    if not os.path.exists(creds_file):
+        raise SheetSourceError(f"Service-account file not found: {creds_file}")
     with open(creds_file) as f:
         if json.load(f).get("type") != "service_account":
             raise SheetSourceError("Live sheet access needs a service-account credentials file.")
@@ -81,7 +85,7 @@ def _read_google(sheet_id: str) -> list[list[Any]]:
         creds_file, scopes=["https://www.googleapis.com/auth/spreadsheets.readonly"])
     service = build("sheets", "v4", credentials=creds, cache_discovery=False)
     result = service.spreadsheets().values().get(
-        spreadsheetId=sheet_id, range=f"'{CALLING_SHEET_TAB}'!A:AZ").execute()
+        spreadsheetId=sheet_id, range=f"'{CALLING_SHEET_TAB}'").execute()   # this tab only, every column
     return result.get("values", [])
 
 
