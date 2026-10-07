@@ -8,6 +8,7 @@ the queue untouched.
     python -m scripts.whatsapp_test send --to 9198XXXXXXXX,9197XXXXXXXX --kind missing
     python -m scripts.whatsapp_test send --to 9198XXXXXXXX --kind onboard --force   # resend within 15 min
     python -m scripts.whatsapp_test template                 # has Meta approved our test wording?
+    python -m scripts.whatsapp_test submit --kind link       # ask Meta to approve a layout, sending nothing
     python -m scripts.whatsapp_test history                  # only this tool's sends (the account is shared)
     python -m scripts.whatsapp_test status --job JOB_ID
 
@@ -106,9 +107,9 @@ def _report(r: dict) -> None:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=["whoami", "send", "history", "status", "template"])
+    ap.add_argument("action", choices=["whoami", "send", "history", "status", "template", "submit"])
     ap.add_argument("--to", help="your number(s), 91XXXXXXXXXX, comma-separated")
-    ap.add_argument("--kind", choices=sorted(KINDS), default="onboard")
+    ap.add_argument("--kind", choices=sorted(set(KINDS) | set(CLEAN)), default="onboard")
     ap.add_argument("--count", type=int, default=1)
     ap.add_argument("--job")
     ap.add_argument("--style", choices=["clean", "plain"], default="clean",
@@ -127,10 +128,17 @@ def main():
         for r in ours:
             print(f"  {r.get('timestamp', '')[:19]}  job {r.get('job_id')}  {r.get('template_name')}  "
                   f"sent {r.get('sent')} · failed {r.get('failed')} · skipped {r.get('skipped')}  ({r.get('sheet_name')})")
+    elif a.action == "submit":
+        if a.kind not in CLEAN:
+            sys.exit(f"No fixed layout for {a.kind!r} yet (layouts: {', '.join(CLEAN)}).")
+        r = call("create_meta_template", {"name": f"csp_agent_{a.kind}", "body": CLEAN[a.kind],
+                                          "category": "UTILITY", "language": "hi"})
+        print(json.dumps(r, indent=2, ensure_ascii=False)[:1500])
+        print("\nSubmitted. Check with: python -m scripts.whatsapp_test template")
     elif a.action == "template":
         t = call("list_meta_templates", {})
         rows = t if isinstance(t, list) else t.get("templates") or t.get("data") or []
-        ours = [x for x in rows if isinstance(x, dict) and str(x.get("name", "")).startswith("auto_")]
+        ours = [x for x in rows if isinstance(x, dict) and str(x.get("name", "")).startswith(("auto_", "csp_agent_"))]
         for x in ours[-10:]:
             print(f"  {x.get('name')}: {x.get('status')}  {x.get('category', '')}  {str(x.get('rejected_reason') or '')}")
         if not ours:
