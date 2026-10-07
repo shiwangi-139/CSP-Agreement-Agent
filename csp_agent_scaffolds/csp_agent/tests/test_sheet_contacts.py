@@ -37,3 +37,34 @@ def test_sheet_does_not_change_the_login_email_of_an_rm_who_can_log_in(db_sessio
     r = parse_row(_raw(name, email=f"other{uuid.uuid4().hex[:6]}@eko.co.in"))
     rm = _upsert_staff(db_session, "RM", {name: [r]})[name.lower()]
     assert rm.email == login and rm.phone == "9876543210"
+
+
+# ------------------------------------------------------- live sheet by link
+from app.comms import sheet_source
+
+
+def test_link_gives_the_sheet_and_the_tab():
+    sid, gid = sheet_source.parse_sheet_link(
+        "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/edit?usp=sharing#gid=987654")
+    assert sid == "1AbCdEfGhIjKlMnOpQrStUvWxYz012345" and gid == "987654"
+    assert sheet_source.parse_sheet_link("https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/edit")[1] == ""
+
+
+def test_live_sheet_is_used_and_falls_back_to_the_saved_copy(monkeypatch):
+    link = "https://docs.google.com/spreadsheets/d/1AbCdEfGhIjKlMnOpQrStUvWxYz012345/edit#gid=5"
+    monkeypatch.setattr(sheet_source, "CALLING_SHEET_LINK", link)
+    rows = [["Calling sheet banner"], ["CSP ID", "CSP Name", "Mobile No Of RM"], ["1A850684", "Ram", "9876543210"]]
+    asked = []
+    monkeypatch.setattr(sheet_source, "_read_link_csv", lambda sid, gid: asked.append((sid, gid)) or rows)
+    out = sheet_source.load_calling_sheet_rows()
+    assert asked == [("1AbCdEfGhIjKlMnOpQrStUvWxYz012345", "5")] and out[0]["Mobile No Of RM"] == "9876543210"
+    assert sheet_source.LAST_SOURCE["source"] == "live sheet (link)"
+
+    def private(sid, gid):
+        raise sheet_source.SheetSourceError("the link is not shared for viewing")
+    monkeypatch.setattr(sheet_source, "_read_link_csv", private)
+    monkeypatch.setattr(sheet_source, "_read_google", lambda sid: (_ for _ in ()).throw(sheet_source.SheetSourceError("no key")))
+    monkeypatch.setattr(sheet_source, "_read_local_xlsx", lambda path: rows)
+    monkeypatch.setattr(sheet_source, "CALLING_SHEET_SOURCE", "local_xlsx")
+    sheet_source.load_calling_sheet_rows()
+    assert sheet_source.LAST_SOURCE["source"] == "saved copy" and "not shared" in sheet_source.LAST_SOURCE["note"]

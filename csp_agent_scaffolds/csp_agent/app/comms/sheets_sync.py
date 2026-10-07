@@ -252,19 +252,30 @@ def sync_calling_sheet(sheet_id: str | None = None, range_name: str | None = Non
             csp.contact_gaps = compute_contact_gaps(csp, rm, dc)
             csp.has_missing_contact = bool(csp.contact_gaps["csp"])
 
+        active = sum(1 for c in by_code.values() if c.is_active_in_calling_sheet)
+        if active and len(seen) < active * 0.5:
+            # A wrong tab or a half-loaded sheet must not switch off half the
+            # CSPs: change nothing and say why.
+            raise SheetSourceError(f"only {len(seen)} CSPs read but {active} are active: "
+                                   "not applying this load (wrong tab or incomplete sheet?)")
         for code, csp in by_code.items():
             if code not in seen and csp.is_active_in_calling_sheet:
                 csp.is_active_in_calling_sheet = False
                 summary["deactivated"] += 1
 
         db.commit()
-    except Exception:
+    except Exception as e:
         db.rollback()
         logger.exception("calling_sheet_sync_failed")
         summary["errors"] += 1
+        summary["error"] = str(e)[:300]
     finally:
         db.close()
 
+    from .sheet_source import LAST_SOURCE
+    summary["source"] = LAST_SOURCE.get("source", "")
+    if LAST_SOURCE.get("note"):
+        summary["note"] = LAST_SOURCE["note"]
     logger.info("calling_sheet_sync_complete %s", summary)
     return summary
 

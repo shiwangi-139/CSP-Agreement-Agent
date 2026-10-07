@@ -19,7 +19,8 @@ from ..auth import Principal, require_admin, require_user
 from ..compliance import (CATEGORY_NAMES, DOC_LABELS, REQUIRED_TYPES, SUB_SLABS, canonical_type, evaluate,
                           sub_slab, sub_slab_label)
 from ..comms import outbound
-from ..config import OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE, CALLING_SHEET_SOURCE, CALLING_SHEET_TAB
+from ..config import (OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE, CALLING_SHEET_LINK, CALLING_SHEET_SOURCE,
+                      CALLING_SHEET_TAB)
 from ..db import get_db, SessionLocal
 from ..models import (CSP, ContactChangeRequest, Document, DocumentStatus, ExtractionCorrection, InboundMessage, InternalUser,
                       ManualReviewQueue, OutboundMessage, OutboundStatus, OutreachCycle, ReviewStatus)
@@ -124,7 +125,8 @@ def summary(me: Principal = Depends(require_user), db: Session = Depends(get_db)
         "contact_changes_pending": db.query(ContactChangeRequest).filter_by(status="PENDING").count() if me.is_admin else 0,
         "me": {"name": me.name, "role": me.role},
         "modes": {"outbound": OUTBOUND_COMMUNICATION_MODE, "whatsapp": WHATSAPP_MODE,
-                  "calling_sheet": f"{CALLING_SHEET_SOURCE} · {CALLING_SHEET_TAB}"},
+                  "calling_sheet": (f"live sheet link · {CALLING_SHEET_TAB}" if CALLING_SHEET_LINK
+                                    else f"{CALLING_SHEET_SOURCE} · {CALLING_SHEET_TAB}")},
         "ingestion": ingestion_status(db),
         "jobs": _jobs if me.is_admin else {},
     }

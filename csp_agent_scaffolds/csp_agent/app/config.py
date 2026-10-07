@@ -75,6 +75,11 @@ CALLING_SHEET_SOURCE = os.getenv("CALLING_SHEET_SOURCE", "local_xlsx")
 CALLING_SHEET_LOCAL_PATH = os.getenv("CALLING_SHEET_LOCAL_PATH", "CSP Details.xlsx")
 CALLING_SHEET_TAB = os.getenv("CALLING_SHEET_TAB", "Calling Sheet New")
 CALLING_SHEET_SPREADSHEET_ID = os.getenv("CALLING_SHEET_SPREADSHEET_ID", "")
+# The live sheet's link, opened on the "Calling Sheet New" tab (its #gid=...
+# says which tab). When set, it is read first: directly if the link is
+# shared for viewing, else through the service account; the saved copy is
+# only the fallback. See app/comms/sheet_source.py.
+CALLING_SHEET_LINK = os.getenv("CALLING_SHEET_LINK", "").strip()
 
 # Outbound. "review": everything is a draft until approved on the dashboard.
 # "auto": sent automatically (deployment). Anything else is treated as review.
