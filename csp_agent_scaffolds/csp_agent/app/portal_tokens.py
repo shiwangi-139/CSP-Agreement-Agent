@@ -67,6 +67,19 @@ def extend_for_sent_message(db: Session, link: Optional[str], days: int = PORTAL
         row.expires_at = max(row.expires_at, _now() + timedelta(days=days))
 
 
+def live_link(db: Session, csp: CSP, link: Optional[str], fallback_types: list[str]) -> Optional[str]:
+    """`link` if its token still works, else the CSP's live link (created if
+    needed) asking for the same documents. Called just before sending, so a
+    message never carries a link that died while it waited for review."""
+    if not link or "token=" not in link:
+        return link
+    old = db.get(PortalToken, link.split("token=", 1)[1].split("&")[0])
+    if old is not None and old.revoked_at is None and old.expires_at > _now():
+        return link
+    types = (old.requested_types if old is not None and old.requested_types else None) or fallback_types
+    return issue_upload_link(db, csp, types)
+
+
 def resolve_token(db: Session, token: str) -> Optional[PortalToken]:
     """The live token row, or None if unknown, expired or revoked."""
     if not token or len(token) > 100:

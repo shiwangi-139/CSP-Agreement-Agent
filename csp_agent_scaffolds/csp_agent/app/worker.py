@@ -86,12 +86,13 @@ def job_engine():
 
 
 def job_outbox():
-    from .comms.outbound import process_outbox
+    from .comms.outbound import auto_approve, process_outbox
 
     def go():
         db = SessionLocal()
         try:
-            return process_outbox(db)
+            approved = auto_approve(db)
+            return {**process_outbox(db), **({"auto_approved": approved} if approved else {})}
         finally:
             db.close()
     return _run("outbox", go)

@@ -7,7 +7,10 @@ table is the permanent record of what was sent to whom, when, and why.
 
 OUTBOUND_COMMUNICATION_MODE:
   review (testing) - drafts wait on the dashboard for Approve / Edit / Reject.
-  auto   (deployment) - drafts are approved and sent by the worker.
+  auto   (deployment) - the worker approves waiting CSP drafts itself
+         (auto_approve), on AUTO_SEND_CHANNELS, during AUTO_SEND_HOURS, with
+         the same checks as the Approve button (Meta layout, daily limit).
+         Anything it can't send stays on the dashboard for a person.
 
 Recipient guard: a message may only go to a phone number or email address
 that the calling sheet lists for that CSP, or for its assigned RM / DC.
@@ -22,9 +25,10 @@ from typing import Optional
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..config import OUTBOUND_COMMUNICATION_MODE, WHATSAPP_DAILY_LIMIT, WHATSAPP_MODE
+from ..config import (AUTO_SEND_CHANNELS, AUTO_SEND_HOURS, OUTBOUND_COMMUNICATION_MODE, WHATSAPP_DAILY_LIMIT,
+                      WHATSAPP_MODE)
 from ..models import CSP, InternalUser, OutboundMessage, OutboundStatus
-from ..portal_tokens import extend_for_sent_message
+from ..portal_tokens import extend_for_sent_message, live_link
 from .templates import render
 from .whatsapp import send_wabs, send_whatsapp
 
@@ -83,6 +87,13 @@ def draft(db: Session, *, csp: CSP, role: str, template_key: str, ctx: dict, key
     for channel in channels:
         key = f"{key_base}:{role}:{channel}"
         existing = db.query(OutboundMessage).filter(OutboundMessage.idempotency_key == key).first()
+        n = 1
+        while existing is not None and existing.status == OutboundStatus.REJECTED \
+                and (existing.error_log or "").startswith("Superseded"):
+            # Retired unsent by the agent: this step is being drafted fresh.
+            key = f"{key_base}:{role}:{channel}:r{n}"
+            existing = db.query(OutboundMessage).filter(OutboundMessage.idempotency_key == key).first()
+            n += 1
         if existing:
             created.append(existing)
             continue
@@ -101,8 +112,9 @@ def draft(db: Session, *, csp: CSP, role: str, template_key: str, ctx: dict, key
             msg.status = OutboundStatus.BLOCKED
             msg.error_log = f"No {where} for this {role} on the calling sheet."
         else:
-            msg.status = (OutboundStatus.APPROVED if OUTBOUND_COMMUNICATION_MODE == "auto"
-                          else OutboundStatus.QUEUED_FOR_REVIEW)
+            # Auto mode too: the worker approves through auto_approve(), which
+            # applies the same checks as a person clicking Approve.
+            msg.status = OutboundStatus.QUEUED_FOR_REVIEW
         try:
             with db.begin_nested():
                 db.add(msg)
@@ -186,7 +198,7 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
         logger.warning("outbound_blocked_by_recipient_guard message_id=%s", msg.id)
         return msg
 
-    payload = msg.payload_json or {}
+    payload = _with_live_link(db, csp, msg)
     msg.attempts = (msg.attempts or 0) + 1
     try:
         if msg.channel == "EMAIL":
@@ -220,12 +232,61 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
     return msg
 
 
+def _with_live_link(db: Session, csp: CSP, msg: OutboundMessage) -> dict:
+    """The message's payload, with its upload link swapped for a live one if
+    the old link expired or was closed while the message waited."""
+    payload = dict(msg.payload_json or {})
+    old = payload.get("link")
+    if not old:
+        return payload
+    fallback = [t for t in (msg.document_type or "").split(",") if t] or \
+        ["AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"]
+    new = live_link(db, csp, old, fallback)
+    if new and new != old:
+        for k in ("body", "html"):
+            if isinstance(payload.get(k), str):
+                payload[k] = payload[k].replace(old, new)
+        payload["link"] = new
+        msg.payload_json = payload
+        logger.info("outbound_link_refreshed message_id=%s", msg.id)
+    return payload
+
+
 def _fail(msg: OutboundMessage, error: Optional[str], retryable: bool) -> None:
     msg.error_log = (error or "send failed")[:1000]
     if retryable and (msg.attempts or 0) < MAX_ATTEMPTS:
         msg.next_retry_at = _now() + timedelta(minutes=RETRY_BACKOFF_MINUTES[(msg.attempts or 1) - 1])
     else:
         msg.status = OutboundStatus.FAILED
+
+
+def auto_approve(db: Session, now: Optional[datetime] = None) -> dict:
+    """Auto mode: approve waiting CSP drafts, oldest first, on
+    AUTO_SEND_CHANNELS and only during AUTO_SEND_HOURS (server time). Stops
+    at the daily WhatsApp limit; drafts it may not send (no Meta layout yet)
+    stay for a person. Called by the worker before process_outbox."""
+    if OUTBOUND_COMMUNICATION_MODE != "auto":
+        return {}
+    hour = (now or datetime.now()).hour
+    if not (AUTO_SEND_HOURS[0] <= hour < AUTO_SEND_HOURS[1]):
+        return {"outside_hours": True}
+    counts: dict[str, int] = {}
+    for channel in AUTO_SEND_CHANNELS:
+        q = (db.query(OutboundMessage)
+             .filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW,
+                     OutboundMessage.channel == channel, OutboundMessage.recipient_role == "CSP")
+             .order_by(OutboundMessage.created_at, OutboundMessage.id).limit(500))
+        for m in q.all():
+            try:
+                approve(db, m, "agent (auto mode)")
+            except ValueError as e:
+                if "Daily WhatsApp limit" in str(e):
+                    counts[f"{channel}:limit_reached"] = 1
+                    break
+                continue                      # e.g. no Meta layout: a person decides
+            counts[channel] = counts.get(channel, 0) + 1
+        db.commit()
+    return counts
 
 
 def process_outbox(db: Session, limit: int = 50) -> dict:

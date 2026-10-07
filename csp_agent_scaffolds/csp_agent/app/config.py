@@ -89,6 +89,13 @@ WHATSAPP_AGENT_TOKEN = os.getenv("WHATSAPP_AGENT_TOKEN", "")
 # WHATSAPP_MODE=wabs: at most this many WhatsApp messages approved per day
 # (a careless "approve all" can never become a mass send).
 WHATSAPP_DAILY_LIMIT = int(os.getenv("WHATSAPP_DAILY_LIMIT", "5") or 5)
+# Auto mode only: channels the worker may approve by itself, and the hours
+# (server time, start-end) it may do so, so CSPs aren't messaged at night.
+AUTO_SEND_CHANNELS = [c.strip().upper() for c in os.getenv("AUTO_SEND_CHANNELS", "WHATSAPP").split(",") if c.strip()]
+try:
+    AUTO_SEND_HOURS = tuple(int(h) for h in os.getenv("AUTO_SEND_HOURS", "10-18").split("-", 1))
+except ValueError:
+    AUTO_SEND_HOURS = (10, 18)
 
 # Upload portal and public links.
 PORTAL_SECRET_KEY = os.getenv("PORTAL_SECRET_KEY", "")

@@ -59,8 +59,9 @@ PENDING = (OutboundStatus.DRAFT, OutboundStatus.QUEUED_FOR_REVIEW, OutboundStatu
 
 
 def _sent_stages(db: Session, cycle: OutreachCycle) -> set[str]:
-    """Every stage drafted in this cycle (whatever happened to it)."""
-    return {s for (s,) in db.query(OutboundMessage.stage).filter(OutboundMessage.cycle_id == cycle.id)}
+    """Every stage drafted in this cycle (whatever happened to it), except
+    ones the agent retired unsent: those may be drafted again, fresh."""
+    return {st["stage"] for st in _stages(db, cycle)}
 
 
 def _stages(db: Session, cycle: OutreachCycle) -> list[dict]:

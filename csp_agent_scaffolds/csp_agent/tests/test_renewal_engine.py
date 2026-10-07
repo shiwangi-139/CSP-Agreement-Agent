@@ -371,3 +371,17 @@ def test_sub_slabs_say_exactly_what_is_on_file(db_session):
     nothing = _csp(db)
     got = [sub_slab(evaluate(db, c, TODAY)) for c in (full, soon, overdue, no_iibf, only_pvr, blurry, nothing)]
     assert got == ["1.1", "1.2", "1.3", "2.3", "3.2", "4.2", "4.1"]
+
+
+def test_retired_drafts_are_written_again_fresh(db_session):
+    db = db_session
+    csp = _csp(db)
+    _all_valid(db, csp, TODAY + timedelta(days=60))                  # agreement renewal T-60 due
+    renewal_engine.run_for_csp(db, csp, TODAY)
+    first = [m for m in _msgs(db, csp) if m.document_type == "AGREEMENT"]
+    for m in first:                                                   # what scripts/redraft_fresh does
+        m.status, m.error_log = OutboundStatus.REJECTED, "Superseded: redrafted fresh"
+    renewal_engine.run_for_csp(db, csp, TODAY)
+    fresh = [m for m in _msgs(db, csp) if m.document_type == "AGREEMENT" and m.status == OutboundStatus.QUEUED_FOR_REVIEW]
+    assert {m.stage for m in fresh} == {"T-60"} and len(fresh) == 2
+    assert {m.idempotency_key for m in fresh}.isdisjoint({m.idempotency_key for m in first})
