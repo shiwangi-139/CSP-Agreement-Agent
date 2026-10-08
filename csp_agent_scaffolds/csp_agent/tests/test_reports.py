@@ -35,13 +35,13 @@ def test_csp_report_tabs_and_rows(db_session):
                     issue_date=date.today() - timedelta(days=1070), expiry_date=date.today() + timedelta(days=25)))
     db.flush()
     wb = load_workbook(reports.csp_report(db))
-    assert wb.sheetnames == ["Summary", "All CSPs", "Slab 1 All documents on file", "Slab 2 1 document missing",
-                             "Slab 3 2 documents missing", "Slab 4 No documents", "Renewal due", "Expiring 60 days"]
+    assert wb.sheetnames == ["Summary", "All CSPs", "Label 1 All documents on file", "Label 2 1 document missing",
+                             "Label 3 2 documents missing", "Label 4 No documents", "Renewal due", "Expiring 60 days"]
     row = _rows(wb["All CSPs"], c.current_code)[0]
     head = [h.value for h in wb["All CSPs"][1]]
     assert row[head.index("PVR status")] == "EXPIRED" and row[head.index("Agreement days left")] == 25
     assert row[head.index("IIBF status")] == "MISSING" and row[head.index("RM")] == rm.name
-    assert _rows(wb["Slab 2 1 document missing"], c.current_code)      # 2 of 3 on file
+    assert _rows(wb["Label 2 1 document missing"], c.current_code)      # 2 of 3 on file
     assert _rows(wb["Renewal due"], c.current_code)                     # its PVR is expired
     exp = _rows(wb["Expiring 60 days"], c.current_code)
     assert exp and exp[0][4] == "CSP Agreement" and exp[0][7] == 25

@@ -4,14 +4,14 @@ yours, so the WhatsApp and the email reach you, you open the link, upload
 sample documents and see what the agent accepts or rejects.
 
 The test CSP (code 9T999999) is kept OFF the calling-sheet list, so it is in
-no count, slab, report or daily reminder, and the hourly sheet reload never
+no count, label, report or daily reminder, and the hourly sheet reload never
 touches it. Everything else is real: the link, the form, the checks, the
 folder in storage/documents/, the "Form uploads" page.
 
     python -m scripts.test_csp setup --phone 91XXXXXXXXXX --email you@eko.co.in
     python -m scripts.test_csp samples                  # sample documents -> data/test_docs/
     python -m scripts.test_csp send --whatsapp --email  # the onboarding message, to you
-    python -m scripts.test_csp status                   # slab, documents, what the form decided
+    python -m scripts.test_csp status                   # label, documents, what the form decided
     python -m scripts.test_csp reset --yes              # remove the test uploads, start again
 
 WhatsApp counts towards WHATSAPP_DAILY_LIMIT like any approval.
@@ -53,13 +53,13 @@ def setup(phone: str, email: str) -> None:
         if c is None:
             c = CSP(current_code=CODE, lookup_code=CODE)
             db.add(c)
-        # Off the calling-sheet list on purpose: no counts, slabs, reports or reminders.
+        # Off the calling-sheet list on purpose: no counts, labels, reports or reminders.
         c.name, c.phone, c.whatsapp_number, c.email = NAME, p, p, (email or "").strip().lower() or None
         c.is_active_in_calling_sheet, c.state = False, "TEST"
         db.flush()
         refresh_category(db, c)
         db.commit()
-        print(f"Test CSP {CODE} ready: WhatsApp ...{p[-4:]}, email {c.email or '(none)'}, slab {c.category}.")
+        print(f"Test CSP {CODE} ready: WhatsApp ...{p[-4:]}, email {c.email or '(none)'}, label {c.category}.")
     finally:
         db.close()
 
@@ -102,7 +102,7 @@ def status() -> None:
         c = _get(db)
         st = refresh_category(db, c)
         db.commit()
-        print(f"{CODE} {c.name}: slab {st.category} ({c.sub_slab}) - {st.reason}")
+        print(f"{CODE} {c.name}: label {st.category} ({c.sub_slab}) - {st.reason}")
         print("\nDocuments on record:")
         for d in db.query(Document).filter_by(csp_id=c.id).order_by(Document.uploaded_at):
             print(f"  {d.document_type:20} {d.status.value:13} {d.readability or '':10} issued {d.issue_date} "
@@ -113,7 +113,7 @@ def status() -> None:
             p = e.payload or {}
             parts = [f"{r.get('section')}: {'OK' if r.get('ok') else 'NO'} {r.get('reason', '')}"
                      + (f" (read as {r['read_as']})" if r.get("read_as") else "") for r in p.get("results", [])]
-            print(f"  {e.sent_at:%d-%m %H:%M}  slab {p.get('slab_before')} -> {p.get('slab_after')}  |  " + "  |  ".join(parts))
+            print(f"  {e.sent_at:%d-%m %H:%M}  label {p.get('slab_before')} -> {p.get('slab_after')}  |  " + "  |  ".join(parts))
         print("\nMessages:")
         for m in db.query(OutboundMessage).filter_by(csp_id=c.id).order_by(OutboundMessage.id.desc()).limit(10):
             print(f"  {m.channel:9} {m.template_name:15} {m.status.value:18} sent {m.sent_at}  {m.error_log or ''}")
@@ -153,7 +153,7 @@ def reset() -> None:
         db.flush()
         refresh_category(db, c)
         db.commit()
-        print(f"Reset: {len(docs)} documents and {files} files removed; links closed. Slab now {c.category}.")
+        print(f"Reset: {len(docs)} documents and {files} files removed; links closed. Label now {c.category}.")
     finally:
         db.close()
 

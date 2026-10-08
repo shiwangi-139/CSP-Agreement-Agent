@@ -89,7 +89,7 @@ def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
     staff = {u.id: u for u in db.query(InternalUser).all()}
     csps = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).order_by(CSP.current_code).all()
 
-    head = ["CSP code", "CSP name", "State", "Branch", "Phone", "Email", "RM", "DC", "Slab", "Slab name",
+    head = ["CSP code", "CSP name", "State", "Branch", "Phone", "Email", "RM", "DC", "Label", "Label name",
             "Sub-group", "Reason"]
     for t in REQUIRED_TYPES:
         head += [f"{SHORT[t]} status", f"{SHORT[t]} issued", f"{SHORT[t]} expires", f"{SHORT[t]} days left"]
@@ -125,7 +125,7 @@ def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
     queued = db.query(OutboundMessage).filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW).count()
     summary = [["Generated", datetime.now().strftime("%d-%m-%Y %H:%M")], ["Active CSPs (calling sheet)", len(csps)]]
     summary += [[slab_label(k), len(v)] for k, v in by_cat.items()]
-    summary += [["CSPs with an expired document (any slab)", len(renewal)]]
+    summary += [["CSPs with an expired document (any label)", len(renewal)]]
     summary += [[f"{DOC_LABELS[t][0]} missing or unreadable", missing[t]] for t in REQUIRED_TYPES]
     summary += [[f"Documents expiring within {EXPIRING_WITHIN_DAYS} days", len(expiring)],
                 ["Messages waiting for approval", queued]]
@@ -134,7 +134,7 @@ def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
     _sheet(wb, "Summary", ["Item", "Count"], summary, first=True)
     _sheet(wb, "All CSPs", head, rows, fills=fills)
     for k, items in by_cat.items():
-        _sheet(wb, f"Slab {k} {SLAB_NAMES[k]}", head, [r for r, _ in items], fills=[f for _, f in items])
+        _sheet(wb, f"Label {k} {SLAB_NAMES[k]}", head, [r for r, _ in items], fills=[f for _, f in items])
     _sheet(wb, "Renewal due", head, [r for r, _ in renewal], fills=[f for _, f in renewal])
     expiring.sort(key=lambda r: r[-1])
     _sheet(wb, f"Expiring {EXPIRING_WITHIN_DAYS} days",

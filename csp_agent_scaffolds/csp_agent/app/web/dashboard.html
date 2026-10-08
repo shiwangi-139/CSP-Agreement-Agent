@@ -27,7 +27,7 @@
       CSP Renewals</div>
     <div class="sub">SBI Kiosk Banking · document compliance</div>
     <button data-view="overview" class="active">Overview</button>
-    <button data-view="categories">Slabs <span class="count" id="n-cat"></span></button>
+    <button data-view="categories">Labels <span class="count" id="n-cat"></span></button>
     <button data-view="documents">Latest documents</button>
     <button data-view="comms">Communication Hub <span class="count" id="n-drafts"></span></button>
     <button data-view="contacts">Contacts &amp; gaps</button>
@@ -70,7 +70,7 @@
                2: ["1 document missing", "Two received, one missing or unreadable"],
                3: ["2 documents missing", "One received, two missing or unreadable"],
                4: ["No documents", "Nothing readable on file in 2 years"]};
-  const slab = (k) => `Slab ${k} · ${CAT[k][0]}`;
+  const slab = (k) => `Label ${k} · ${CAT[k][0]}`;          // "slab" is used elsewhere at Eko: users see "Label"
   // Find CSPs: one state per document; "" = any.
   const FSTATES = [["", "any"], ["VALID", "valid"], ["EXPIRING", "expiring ≤60d"], ["EXPIRED", "expired"], ["MISSING", "missing"], ["UNREADABLE", "unreadable"]];
   const FPRESETS = [
@@ -146,7 +146,7 @@
           ${cols.map(([v]) => { const n = m.counts[t][v]; return `<td class="num">${n ? `<a href="#" data-findset='${JSON.stringify({[key]: v})}'>${n}</a>` : `<span class="muted">0</span>`}</td>`; }).join("")}</tr>`).join("")}
         </tbody></table></div>`;
       state.rms = m.rms;
-      return matrix + `
+      return `
       <div class="grid k4">${[1,2,3,4].map((k) => `
         <div class="card kpi c${k}" data-cat="${k}"><div class="label">${slab(k)}</div>
           <div class="n">${c[k] ?? 0}</div><div class="small muted">${CAT[k][1]}</div>
@@ -154,12 +154,12 @@
           ${k < 4 ? `<div class="small" style="margin-top:6px">${badge("EXPIRED", (s.categories_with_expired?.[k] ?? 0) + " with an expired document")}</div>` : ""}</div>`).join("")}
       </div>
       <div class="card kpi" data-go="formuploads" style="margin-top:14px;cursor:pointer;border-top:4px solid var(--forest-light, #2f8f5b)">
-        <div class="label">Slab 5 · Uploaded through the form</div>
+        <div class="label">Label 5 · Uploaded through the form</div>
         <div style="display:flex;gap:28px;align-items:baseline;flex-wrap:wrap">
           <div class="n">${s.form_uploads?.csps ?? 0}</div>
           <div class="small">All accepted: <b>${s.form_uploads?.accepted ?? 0}</b> · Partly accepted: <b>${s.form_uploads?.partly ?? 0}</b>
             · <span style="color:var(--danger-ink)">Tried, nothing accepted: <b>${s.form_uploads?.rejected ?? 0}</b></span></div>
-          <div class="small muted">CSPs who used the upload page (by their latest try). They also stay in slab 1–4 above.</div></div></div>
+          <div class="small muted">CSPs who used the upload page (by their latest try). They also keep their label 1–4 above.</div></div></div>
       <div class="grid k3" style="margin-top:14px">
         <div class="card"><h2>Waiting for your approval</h2>
           <div class="kv"><dt>WhatsApp drafts</dt><dd class="num">${s.drafts_pending.WHATSAPP}</dd>
@@ -171,8 +171,8 @@
         <div class="card"><h2>Coming up</h2>
           <div class="kv"><dt>Documents expiring in 60 days</dt><dd class="num">${s.expiring_60_days}</dd>
           <dt>CSPs on calling sheet</dt><dd class="num">${s.total_csps}</dd>
-          <dt>Not yet in a slab</dt><dd class="num">${s.uncategorised}</dd></div>
-          <p class="small muted">Slabs refresh on every run of the daily engine (09:00 IST) and on every upload.</p></div>
+          <dt>Not yet labelled</dt><dd class="num">${s.uncategorised}</dd></div>
+          <p class="small muted">Labels refresh on every run of the daily engine (09:00 IST) and on every upload.</p></div>
         <div class="card"><h2>Contact gaps</h2>
           <div class="kv"><dt>CSP without phone</dt><dd class="num">${s.contact_gaps.csp_phone}</dd>
           <dt>CSP without email</dt><dd class="num">${s.contact_gaps.csp_email}</dd>
@@ -180,12 +180,13 @@
           <dt>No DC assigned</dt><dd class="num">${s.contact_gaps.dc_unassigned}</dd></div>
           <p><button class="btn" data-go="contacts">See contacts</button></p></div>
       </div>
+      ${matrix}
       <div class="card" style="margin-top:14px"><h2>Run now</h2>
         <p class="small muted">The worker runs these on schedule. In review mode, running the engine only creates drafts — nothing is sent until you approve it.</p>
         <div class="toolbar">
           <button class="btn" data-run="sheet">Reload calling sheet</button>
           <button class="btn" data-run="gmail">Scan Gmail</button>
-          <button class="btn forest" data-run="engine">Run slabs &amp; follow-ups</button>
+          <button class="btn forest" data-run="engine">Run labels &amp; follow-ups</button>
         </div>
         <div class="small mono muted">${Object.entries(s.jobs || {}).map(([k, v]) => `${esc(k)}: ${esc(v.status)} ${esc(v.finished_at || v.started_at || "")}`).join(" · ") || "No manual runs yet."}</div>
       </div>`;
@@ -198,7 +199,7 @@
       const pages = Math.max(1, Math.ceil(d.total / d.size));
       return `
       <div class="tabs">${[1,2,3,4].map((k) => `<button data-cat="${k}" class="${state.cat === k ? "active" : ""}">${slab(k)} (${state.summary.categories[k] ?? 0})</button>`).join("")}</div>
-      <div class="tabs"><button data-sub="" class="${!state.sub ? "active" : ""}">All in this slab</button>${subs.map(([k, v]) => `<button data-sub="${k}" class="${state.sub === k ? "active" : ""}">${k} · ${esc(v.label)} (${v.count})</button>`).join("")}</div>
+      <div class="tabs"><button data-sub="" class="${!state.sub ? "active" : ""}">All with this label</button>${subs.map(([k, v]) => `<button data-sub="${k}" class="${state.sub === k ? "active" : ""}">${k} · ${esc(v.label)} (${v.count})</button>`).join("")}</div>
       <div class="tabs small">${tags.map(([k, l]) => `<button data-tag="${k}" class="${(state.tag || "") === k ? "active" : ""}">${l}${k ? ` (${state.summary.tags?.[k] ?? 0} overall)` : ""}</button>`).join("")}</div>
       <div class="toolbar"><input type="search" id="q" placeholder="Search code, name or phone" value="${esc(state.q)}">
         ${state.cat < 4 ? `<label class="small"><input type="checkbox" id="expiredonly" ${state.expiredOnly ? "checked" : ""}> only with an expired document (${state.summary.categories_with_expired?.[state.cat] ?? 0})</label>` : ""}
@@ -210,7 +211,7 @@
           <td>${docCell(r.docs.AGREEMENT)}</td><td>${docCell(r.docs.POLICE_VERIFICATION)}</td><td>${docCell(r.docs.IIBF_CERTIFICATE)}</td>
           <td class="small">${esc(r.rm || "—")}<br><span class="muted">${esc(r.dc || "no DC")}</span></td>
           <td class="small mono">${fmt(r.next_action_at)}</td></tr>`).join("")}
-        </tbody></table>` : `<div class="empty">No CSPs in this slab.</div>`}</div>
+        </tbody></table>` : `<div class="empty">No CSPs with this label.</div>`}</div>
       ${pager(pages)}`;
     },
 
@@ -251,7 +252,7 @@
       <p class="small muted">${state.channel === "WHATSAPP" ? "The WhatsApp agent is send-only: it can't read replies, so a CSP's \"response\" is a new valid upload." : "Emails are sent from the connected Gmail account when approved."}
         Recipients are fixed to the calling sheet's contacts for that CSP, RM or DC; edits can change the text only.</p>
       <div class="tabs">${statuses.map(([k, l]) => `<button data-mstatus="${k}" class="${state.msgStatus === k ? "active" : ""}">${l} (${c[k] || 0})</button>`).join("")}</div>
-      <div class="tabs"><button data-mslab="" class="${!state.msgSlab ? "active" : ""}">All slabs (${allSlabs})</button>${[1,2,3,4].map((k) => `<button data-mslab="${k}" class="${+state.msgSlab === k ? "active" : ""}">${slab(k)} (${d.by_slab[k] || 0})</button>`).join("")}</div>
+      <div class="tabs"><button data-mslab="" class="${!state.msgSlab ? "active" : ""}">All labels (${allSlabs})</button>${[1,2,3,4].map((k) => `<button data-mslab="${k}" class="${+state.msgSlab === k ? "active" : ""}">${slab(k)} (${d.by_slab[k] || 0})</button>`).join("")}</div>
       <div class="tabs">${kinds.map(([k, l]) => `<button data-mkind="${k}" class="${(state.msgKind || "") === k ? "active" : ""}">${l} (${k ? d.by_kind[k] || 0 : allKinds})</button>`).join("")}</div>
       ${state.msgStatus === "QUEUED_FOR_REVIEW" && d.rows.length ? `<div class="toolbar"><button class="btn primary" id="approveall">Approve all ${d.rows.length} shown</button></div>` : ""}
       <div>${d.rows.map(msgCard).join("") || `<div class="card empty">Nothing here.</div>`}</div>`;
@@ -406,7 +407,7 @@
       <div class="tabs small">${FPRESETS.map(([l, p]) => `<button data-findset='${JSON.stringify(p)}'>${l}</button>`).join("")}<button data-findset='{}'>Clear</button></div>
       <div class="toolbar" style="flex-wrap:wrap;gap:12px">
         ${sel("agr", "Agreement", FSTATES)} ${sel("pvr", "PVR / Character", FSTATES)} ${sel("iibf", "IIBF", FSTATES.filter(([v]) => !["EXPIRING", "EXPIRED"].includes(v)))}
-        ${sel("slab", "Slab", [["", "any"], [1, "1"], [2, "2"], [3, "3"], [4, "4"]])}
+        ${sel("slab", "Label", [["", "any"], [1, "1"], [2, "2"], [3, "3"], [4, "4"]])}
         ${state.summary.me.role === "ADMIN" ? sel("rm", "RM", rms) : ""}
         ${sel("form", "Upload page", [["", "any"], ["yes", "used it"], ["no", "not used"], ["accepted", "all accepted"], ["partly", "partly accepted"], ["rejected", "tried, nothing accepted"]])}
         <span class="muted"><b>${d.total}</b> CSPs</span>
@@ -426,8 +427,8 @@
       const d = await api(`/api/hub/form-uploads?outcome=${out}&days=${days}`);
       const k = d.counts;
       const OUT = {accepted: ["VALID", "all accepted"], partly: ["REVIEW", "partly accepted"], rejected: ["EXPIRED", "nothing accepted"]};
-      const slabTxt = (n, sub) => n ? `Slab ${sub || n}` : "—";
-      return `<p class="small muted">Every time a CSP submitted the upload page: what they sent, what was accepted or turned away and why, and their slab now. <b>"Tried, nothing accepted"</b> are the CSPs to call first. Turned-away files are kept so you can see what they tried.</p>
+      const slabTxt = (n, sub) => n ? `Label ${sub || n}` : "—";
+      return `<p class="small muted">Every time a CSP submitted the upload page: what they sent, what was accepted or turned away and why, and their label now. <b>"Tried, nothing accepted"</b> are the CSPs to call first. Turned-away files are kept so you can see what they tried.</p>
       <div class="tabs">${[["", `All (${k.csps} CSPs)`], ["accepted", `All accepted (${k.accepted})`], ["partly", `Partly (${k.partly})`], ["rejected", `Tried, nothing accepted (${k.rejected})`]]
         .map(([v, l]) => `<button class="tab ${out === v ? "active" : ""}" data-fout="${v}">${l}</button>`).join("")}</div>
       <div class="tabs">${[[0, "Any time"], [1, "Today"], [7, "Last 7 days"], [30, "Last 30 days"]]
@@ -436,7 +437,7 @@
       ${d.rows.map((r) => `<div class="card" style="margin-bottom:10px">
         <div class="meta">${badge(OUT[r.outcome][0], OUT[r.outcome][1])}
           <a href="#" data-csp="${r.csp.id}"><b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)}</a> · RM ${esc(r.rm || "-")}
-          · now <b>${esc(slabTxt(r.csp.slab, r.csp.sub_slab))}</b>${r.slab_before && r.slab_after && r.slab_before !== r.slab_after ? ` <span class="muted">(was slab ${r.slab_before} → ${r.slab_after} after this upload)</span>` : ""}
+          · now <b>${esc(slabTxt(r.csp.slab, r.csp.sub_slab))}</b>${r.slab_before && r.slab_after && r.slab_before !== r.slab_after ? ` <span class="muted">(was label ${r.slab_before} → ${r.slab_after} after this upload)</span>` : ""}
           <span class="muted" style="margin-left:auto">${when(r.at)}</span></div>
         <div class="kv" style="margin-top:6px">${r.results.map((x) => `
           <dt>${esc(DOC[x.type] || x.section)}</dt>
@@ -639,9 +640,9 @@
   async function refreshAfterAction() { if ($("#drawer").classList.contains("open")) closeDrawer(); render(); }
 
   // ------------------------------------------------------------ render
-  const TITLES = {overview: "Overview", categories: "Slabs", documents: "Latest documents", comms: "Communication Hub",
+  const TITLES = {overview: "Overview", categories: "Labels", documents: "Latest documents", comms: "Communication Hub",
                   contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy",
-                  questions: "CSP questions", formuploads: "Form uploads (Slab 5)", find: "Find CSPs",
+                  questions: "CSP questions", formuploads: "Form uploads (Label 5)", find: "Find CSPs",
                   analytics: "Messaging analytics"};
   async function render() {
     try {

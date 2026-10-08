@@ -35,8 +35,9 @@ SLAB_NAMES = {1: "All documents on file", 2: "1 document missing", 3: "2 documen
 
 
 def slab_label(category: int) -> str:
-    """e.g. "Slab 3 · 2 documents missing"."""
-    return f"Slab {category} · {SLAB_NAMES.get(category, '')}"
+    """e.g. "Label 3 · 2 documents missing". Users see "Label": "slab" already
+    means something else on Eko's website (internally the code keeps "slab")."""
+    return f"Label {category} · {SLAB_NAMES.get(category, '')}"
 
 
 # Sub-groups inside each slab: what exactly is on file, so each group needs

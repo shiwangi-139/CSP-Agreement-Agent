@@ -254,7 +254,7 @@ def find_csps_xlsx(agr: str = "", pvr: str = "", iibf: str = "", slab: Optional[
     wb = Workbook()
     ws = wb.active
     ws.title = "CSPs"
-    head = ["CSP code", "Name", "Phone", "RM", "DC", "Slab", "Sub-group"]
+    head = ["CSP code", "Name", "Phone", "RM", "DC", "Label", "Sub-group"]
     for t in REQUIRED_TYPES:
         en = DOC_LABELS[t][0]
         head += [f"{en}: state", f"{en}: issued", f"{en}: expires"]
@@ -269,7 +269,7 @@ def find_csps_xlsx(agr: str = "", pvr: str = "", iibf: str = "", slab: Optional[
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    name = "csps_" + "_".join(f"{k}-{v}" for k, v in (("agreement", agr), ("pvr", pvr), ("iibf", iibf), ("slab", slab),
+    name = "csps_" + "_".join(f"{k}-{v}" for k, v in (("agreement", agr), ("pvr", pvr), ("iibf", iibf), ("label", slab),
                                                          ("rm", rm), ("form", form)) if v) or "csps_all"
     return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="{name[:80]}.xlsx"'})
@@ -584,7 +584,7 @@ def resolve_contact_change(req_id: int, action: str, db: Session = Depends(get_d
     return {"id": r.id, "status": r.status}
 
 
-# ------------------------------------------------- "Slab 5": form uploads
+# ------------------------------------------------ "Label 5": form uploads
 # Everyone who used the upload page, on top of their slab 1-4. One row per
 # submission (AgreementEvent PORTAL_UPLOAD, written by app/api/portal.py).
 REASON_TEXT = {
