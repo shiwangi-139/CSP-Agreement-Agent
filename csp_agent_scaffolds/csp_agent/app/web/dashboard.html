@@ -153,13 +153,6 @@
           <div class="small" style="margin-top:6px">${Object.entries(s.sub_slabs || {}).filter(([x]) => x.startsWith(k + ".")).map(([x, v]) => `${x} ${esc(v.label)}: <b>${v.count}</b>`).join("<br>")}</div>
           ${k < 4 ? `<div class="small" style="margin-top:6px">${badge("EXPIRED", (s.categories_with_expired?.[k] ?? 0) + " with an expired document")}</div>` : ""}</div>`).join("")}
       </div>
-      <div class="card kpi" data-go="formuploads" style="margin-top:14px;cursor:pointer;border-top:4px solid var(--forest-light, #2f8f5b)">
-        <div class="label">Label 5 · Uploaded through the form</div>
-        <div style="display:flex;gap:28px;align-items:baseline;flex-wrap:wrap">
-          <div class="n">${s.form_uploads?.csps ?? 0}</div>
-          <div class="small">All accepted: <b>${s.form_uploads?.accepted ?? 0}</b> · Partly accepted: <b>${s.form_uploads?.partly ?? 0}</b>
-            · <span style="color:var(--danger-ink)">Tried, nothing accepted: <b>${s.form_uploads?.rejected ?? 0}</b></span></div>
-          <div class="small muted">CSPs who used the upload page (by their latest try). They also keep their label 1–4 above.</div></div></div>
       <div class="grid k3" style="margin-top:14px">
         <div class="card"><h2>Waiting for your approval</h2>
           <div class="kv"><dt>WhatsApp drafts</dt><dd class="num">${s.drafts_pending.WHATSAPP}</dd>
@@ -642,7 +635,7 @@
   // ------------------------------------------------------------ render
   const TITLES = {overview: "Overview", categories: "Labels", documents: "Latest documents", comms: "Communication Hub",
                   contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy",
-                  questions: "CSP questions", formuploads: "Form uploads (Label 5)", find: "Find CSPs",
+                  questions: "CSP questions", formuploads: "Form uploads", find: "Find CSPs",
                   analytics: "Messaging analytics"};
   async function render() {
     try {
