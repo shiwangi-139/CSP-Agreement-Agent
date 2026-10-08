@@ -80,3 +80,25 @@ def test_only_the_agreement_expired(client):
     got = [row[0] for row in ws.iter_rows(min_row=2, values_only=True)]
     assert only_agr in got and agr_and_missing not in got
     assert ws.cell(1, 8).value == "CSP Agreement: state"
+
+
+def test_the_test_csp_never_shows_on_the_dashboard(client):
+    from app.models import OutboundMessage, OutboundStatus
+    c, Session = client
+    s = Session()
+    test = CSP(name="TEST CSP (not real)", current_code="9T" + f"{uuid.uuid4().int % 1000000:06d}", state="TEST",
+               phone="9876599999", is_active_in_calling_sheet=False)
+    real = CSP(name="Real one", current_code="7R" + f"{uuid.uuid4().int % 1000000:06d}", phone="9876588888",
+               is_active_in_calling_sheet=True)
+    s.add_all([test, real])
+    s.flush()
+    for x in (test, real):
+        s.add(OutboundMessage(csp_id=x.id, channel="WHATSAPP", recipient_role="CSP", template_name="ONBOARD_ALL",
+                              destination=x.phone, status=OutboundStatus.SENT, attempts=1,
+                              idempotency_key=uuid.uuid4().hex, payload_json={"body": "x"}))
+    s.commit()
+    ids = (test.id, real.id)
+    s.close()
+    rows = c.get("/api/hub/messages?channel=WHATSAPP&status=SENT&size=200", headers=KEY).json()["rows"]
+    shown = {r["csp_id"] for r in rows}
+    assert ids[1] in shown and ids[0] not in shown

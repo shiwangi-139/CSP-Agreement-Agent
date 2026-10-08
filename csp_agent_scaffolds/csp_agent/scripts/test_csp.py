@@ -13,6 +13,7 @@ folder in storage/documents/, the "Form uploads" page.
     python -m scripts.test_csp send --whatsapp --email  # the onboarding message, to you
     python -m scripts.test_csp status                   # label, documents, what the form decided
     python -m scripts.test_csp reset --yes              # remove the test uploads, start again
+    python -m scripts.test_csp reset --yes --messages   # ...and delete its messages too
 
 WhatsApp counts towards WHATSAPP_DAILY_LIMIT like any approval.
 """
@@ -121,8 +122,10 @@ def status() -> None:
         db.close()
 
 
-def reset() -> None:
-    """Remove the test CSP's documents, files, submissions and questions."""
+def reset(messages: bool = False) -> None:
+    """Remove the test CSP's documents, files, submissions and questions;
+    with messages=True also its messages (tests only: real CSPs' messages are
+    never deleted)."""
     db = SessionLocal()
     try:
         c = _get(db)
@@ -147,13 +150,19 @@ def reset() -> None:
         db.query(ContactChangeRequest).filter_by(csp_id=c.id).delete(synchronize_session=False)
         db.query(PortalToken).filter(PortalToken.csp_id == c.id, PortalToken.revoked_at.is_(None)).update(
             {"revoked_at": outbound._now(), "revoke_reason": "TEST_RESET"}, synchronize_session=False)
+        sent = 0
+        if messages:
+            sent = db.query(OutboundMessage).filter_by(csp_id=c.id).delete(synchronize_session=False)
+            db.query(AgreementEvent).filter_by(csp_id=c.id).delete(synchronize_session=False)
+            db.query(OutreachCycle).filter_by(csp_id=c.id).delete(synchronize_session=False)
         rejected = vault.ROOT / vault.PORTAL_REJECTED / CODE
         if rejected.is_dir():
             shutil.rmtree(rejected)
         db.flush()
         refresh_category(db, c)
         db.commit()
-        print(f"Reset: {len(docs)} documents and {files} files removed; links closed. Label now {c.category}.")
+        print(f"Reset: {len(docs)} documents and {files} files removed; links closed"
+              + (f"; {sent} messages deleted" if messages else "") + f". Label now {c.category}.")
     finally:
         db.close()
 
@@ -240,6 +249,7 @@ def main():
     sub.add_parser("status")
     s = sub.add_parser("reset")
     s.add_argument("--yes", action="store_true")
+    s.add_argument("--messages", action="store_true", help="also delete the test CSP's messages")
     s = sub.add_parser("samples")
     s.add_argument("--dir", default="data/test_docs")
     a = ap.parse_args()
@@ -252,7 +262,7 @@ def main():
     elif a.cmd == "reset":
         if not a.yes:
             sys.exit("This removes the test CSP's uploads. Run again with --yes.")
-        reset()
+        reset(a.messages)
     else:
         samples(Path(a.dir))
 

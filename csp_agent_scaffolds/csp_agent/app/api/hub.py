@@ -35,9 +35,15 @@ router = APIRouter(dependencies=[Depends(require_user)])
 _jobs: dict[str, dict] = {}
 
 
+# The test CSP (scripts/test_csp.py, state "TEST") never shows on the dashboard:
+# its messages, uploads and questions are tests, not work.
+NOT_TEST = or_(CSP.state.is_(None), CSP.state != "TEST")
+
+
 def _mine(query, me: Principal):
-    """An RM sees only their own CSPs; an admin sees all. `query` must
-    involve the CSP table."""
+    """An RM sees only their own CSPs; an admin sees all; nobody sees the
+    test CSP. `query` must involve the CSP table."""
+    query = query.filter(NOT_TEST)
     return query if me.is_admin else query.filter(CSP.rm_id == me.user_id)
 
 
@@ -400,7 +406,7 @@ def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = N
                   kind: str = "", page: int = 1, size: int = 50, me: Principal = Depends(require_user),
                   db: Session = Depends(get_db)):
     slab = int(slab) if slab.strip().isdigit() else None   # "" (All slabs) or a slab number
-    base = db.query(OutboundMessage).outerjoin(CSP, CSP.id == OutboundMessage.csp_id)
+    base = db.query(OutboundMessage).outerjoin(CSP, CSP.id == OutboundMessage.csp_id).filter(NOT_TEST)
     if not me.is_admin:
         base = base.filter(CSP.rm_id == me.user_id)
     if channel:
