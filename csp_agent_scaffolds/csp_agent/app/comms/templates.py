@@ -65,8 +65,8 @@ def _contact(ctx: dict, lang: str) -> str:
 # Documents a CSP gave to the RM earlier may never have reached us.
 EARLIER_HI = "अगर आपने ये डॉक्यूमेंट पहले अपने RM को दिए थे, तो हो सकता है वो हमारे रिकॉर्ड में नहीं आए।"
 EARLIER_EN = "If you gave them to your RM earlier, they may not have reached our records."
-FORM_HI = "फॉर्म में आपकी कोई जानकारी खाली या गलत हो तो सही भर दें। हमारी टीम पूरी जाँच के बाद ही उसे बदलेगी।"
-FORM_EN = "If any of your details in the form are missing or wrong, please correct them. Our team checks every change before it is applied."
+FORM_HI = "फॉर्म में आपका नाम, मोबाइल और RM हमारे रिकॉर्ड से भरे हैं। कुछ गलत हो तो अपने RM को बताएँ।"
+FORM_EN = "Your name, mobile and RM in the form come from our records. If anything is wrong, please tell your RM."
 
 
 def _link(ctx: dict, lang: str) -> str:

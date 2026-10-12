@@ -32,7 +32,7 @@
   input[type=text], input[type=email], input[type=tel], input[type=date] {
     width: 100%; padding: 12px; font-size: 1rem; border: 1px solid var(--border);
     border-radius: .6rem; background: #fff; color: var(--ink); }
-  input[readonly] { background: var(--mist); }
+  input[readonly] { background: var(--mist); cursor: not-allowed; }
   input[type=file] { width: 100%; padding: 10px; border: 2px dashed var(--border); border-radius: .6rem; background: #fff; }
   .badge { display: inline-block; font-size: .78rem; font-weight: 600; padding: 2px 10px; border-radius: 999px; }
   .VALID { background: var(--mist); color: var(--forest); }
@@ -112,17 +112,17 @@
       <h2>आपकी जानकारी <span class="en">/ Your details</span></h2>
       <label>सीएसपी कोड <span class="en">/ CSP ID</span></label>
       <input type="text" id="code" readonly class="code">
-      <label for="name">नाम <span class="en">/ Name</span> *</label>
-      <input type="text" id="name" name="name" required autocomplete="name">
-      <label for="mobile">मोबाइल <span class="en">/ Mobile</span> *</label>
-      <input type="tel" id="mobile" name="mobile" required inputmode="numeric" pattern="[6-9][0-9]{9}" maxlength="10">
+      <label for="name">नाम <span class="en">/ Name</span></label>
+      <input type="text" id="name" name="name" readonly>
+      <label for="mobile">मोबाइल <span class="en">/ Mobile</span></label>
+      <input type="tel" id="mobile" name="mobile" readonly>
       <label for="email">ईमेल <span class="en">/ Email</span></label>
       <input type="email" id="email" name="email" autocomplete="email">
       <label for="rm">आपके RM <span class="en">/ Assigned RM</span></label>
-      <input type="text" id="rm" name="rm">
+      <input type="text" id="rm" name="rm" readonly>
       <label for="dc">आपके DC <span class="en">/ Assigned DC</span></label>
-      <input type="text" id="dc" name="dc">
-      <div class="hint">कोई जानकारी खाली या गलत हो तो सही भर दें। हमारी टीम पूरी जाँच के बाद ही बदलाव करेगी। <span class="en">If anything is missing or wrong, fill it in correctly. Our team checks every change before it is applied.</span></div>
+      <input type="text" id="dc" name="dc" readonly>
+      <div class="hint">नाम, मोबाइल, RM और DC रिकॉर्ड से सुरक्षित हैं। अगर ईमेल खाली या गलत है तो आप भर सकते हैं। <span class="en">Name, mobile, RM, and DC are verified and locked. You can enter or update your email.</span></div>
     </section>
 
     <div id="docs"></div>
@@ -289,10 +289,6 @@
   $("f").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("formerr").textContent = "";
-    if (!$("name").value.trim() || !/^[6-9][0-9]{9}$/.test($("mobile").value.trim())) {
-      $("formerr").textContent = "नाम और सही 10 अंकों का मोबाइल नंबर भरें / Enter your name and a valid 10-digit mobile number.";
-      return;
-    }
     if (!ctx.docs.some((d) => $(d.section + "_file").files[0])) {
       $("formerr").textContent = "कम से कम एक डॉक्यूमेंट चुनें / Choose at least one document.";
       return;

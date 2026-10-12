@@ -208,17 +208,37 @@ def test_agent_can_fetch_a_csps_link(client, monkeypatch):
     assert r.status_code == 200 and r.json()["link"].endswith(token)
 
 
-def test_contact_edit_is_queued_not_applied(client):
+def test_locked_details_are_ignored_and_only_email_is_proposed(client):
+    """Name, mobile, RM and DC come only from the calling sheet: whatever is
+    sent for them is ignored. An email can be proposed, and goes to review."""
+    from app.models import ContactChangeRequest
     c, Session = client
     cid, _, token = _csp(Session)
     issue = date.today() - timedelta(days=5)
-    c.post("/api/portal/upload", data=_form(token, mobile="9123456789", pvr_issue_date=issue.isoformat()),
-           files={"pvr_file": ("pvr.pdf", _pvr_pdf(issue), "application/pdf")})
+    r = c.post("/api/portal/upload",
+               data=_form(token, name="Someone Else", mobile="9123456789", rm="Other RM", dc="Other DC",
+                          email="new.mail@example.com", pvr_issue_date=issue.isoformat()),
+               files={"pvr_file": ("pvr.pdf", _pvr_pdf(issue), "application/pdf")})
+    assert r.status_code == 200
     s = Session()
-    assert s.get(CSP, cid).phone == "9876500000"
-    from app.models import ContactChangeRequest
-    assert s.query(ContactChangeRequest).filter_by(csp_id=cid, field="mobile").one().new_value == "9123456789"
+    csp = s.get(CSP, cid)
+    assert csp.phone == "9876500000" and csp.name.startswith("Portal CSP")          # nothing changed
+    reqs = {q.field: q.new_value for q in s.query(ContactChangeRequest).filter_by(csp_id=cid)}
+    assert reqs == {"email": "new.mail@example.com"}                                 # only the email, for review
     s.close()
+
+
+def test_csp_without_a_phone_on_record_can_still_upload(client):
+    c, Session = client
+    cid, _, token = _csp(Session)
+    s = Session()
+    s.get(CSP, cid).phone = None
+    s.commit()
+    s.close()
+    issue = date.today() - timedelta(days=5)
+    r = c.post("/api/portal/upload", data={"token": token, "pvr_issue_date": issue.isoformat()},
+               files={"pvr_file": ("pvr.pdf", _pvr_pdf(issue), "application/pdf")})
+    assert r.status_code == 200 and r.json()["results"][0]["ok"]
 
 
 def test_admin_api_needs_key_when_set(client, monkeypatch):

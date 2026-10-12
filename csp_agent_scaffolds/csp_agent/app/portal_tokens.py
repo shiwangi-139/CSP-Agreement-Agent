@@ -68,14 +68,16 @@ def extend_for_sent_message(db: Session, link: Optional[str], days: int = PORTAL
 
 
 def live_link(db: Session, csp: CSP, link: Optional[str], fallback_types: list[str]) -> Optional[str]:
-    """`link` if its token still works, else the CSP's live link (created if
-    needed) asking for the same documents. Called just before sending, so a
-    message never carries a link that died while it waited for review."""
+    """The link to send: rebuilt on the current public address if its token
+    still works, else the CSP's live link (created if needed) asking for the
+    same documents. Called just before sending, so a message never carries a
+    link that died while it waited for review, or one written with an old
+    address (drafts from before PUBLIC_BASE_URL was set)."""
     if not link or "token=" not in link:
         return link
     old = db.get(PortalToken, link.split("token=", 1)[1].split("&")[0])
     if old is not None and old.revoked_at is None and old.expires_at > _now():
-        return link
+        return _url(old.jti)
     types = (old.requested_types if old is not None and old.requested_types else None) or fallback_types
     return issue_upload_link(db, csp, types)
 

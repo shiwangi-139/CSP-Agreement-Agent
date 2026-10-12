@@ -148,3 +148,20 @@ def test_review_mode_never_auto_approves(db_session, wabs_mode, monkeypatch):
     monkeypatch.setattr(outbound, "OUTBOUND_COMMUNICATION_MODE", "review")
     _, m = _draft(db_session)
     assert outbound.auto_approve(db_session) == {} and m.status == OutboundStatus.QUEUED_FOR_REVIEW
+
+
+def test_a_link_written_with_an_old_address_goes_out_on_the_real_one(db_session, wabs_mode, monkeypatch):
+    """What happened in the pilot: an old draft's link field still had the
+    placeholder address, and WhatsApp sends that field."""
+    from app.config import PUBLIC_BASE_URL
+    from app.portal_tokens import issue_upload_link
+    csp, m = _draft(db_session)
+    token = issue_upload_link(db_session, csp, ["AGREEMENT"]).split("token=")[1]
+    stale = f"http://server_lan_ip:8010/upload?token={token}"
+    m.payload_json = {"body": f"यहाँ अपलोड करें: {stale}", "link": stale}
+    _allow_more(db_session, monkeypatch)
+    outbound.approve(db_session, m, "tester")
+    outbound.send(db_session, m)
+    sent_link = wabs_mode[0][1][0]["link"]
+    assert sent_link == f"{PUBLIC_BASE_URL}/upload?token={token}"          # same token, real address
+    assert "server_lan_ip" not in m.payload_json["body"] and m.payload_json["link"] == sent_link
