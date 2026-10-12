@@ -417,28 +417,45 @@
 
     async formuploads() {
       const out = state.fout ?? "", days = state.fdays ?? 0;
-      const d = await api(`/api/hub/form-uploads?outcome=${out}&days=${days}`);
+      // All submissions (newest first), grouped one row per CSP; the outcome
+      // tabs filter CSPs by their latest submission.
+      const d = await api(`/api/hub/form-uploads?days=${days}`);
       const k = d.counts;
       const OUT = {accepted: ["VALID", "all accepted"], partly: ["REVIEW", "partly accepted"], rejected: ["EXPIRED", "nothing accepted"]};
       const slabTxt = (n, sub) => n ? `Label ${sub || n}` : "—";
-      return `<p class="small muted">Every time a CSP submitted the upload page: what they sent, what was accepted or turned away and why, and their label now. <b>"Tried, nothing accepted"</b> are the CSPs to call first. Turned-away files are kept so you can see what they tried.</p>
+      const groups = [];
+      const byCsp = {};
+      for (const r of d.rows) {
+        if (!byCsp[r.csp.id]) { byCsp[r.csp.id] = {csp: r.csp, rm: r.rm, attempts: []}; groups.push(byCsp[r.csp.id]); }
+        byCsp[r.csp.id].attempts.push(r);
+      }
+      const shown = groups.filter((g) => !out || g.attempts[0].outcome === out);
+      const open = state.fopen || (state.fopen = new Set());
+      const results = (r) => `<div class="kv" style="margin-top:6px">${r.results.map((x) => `
+          <dt>${esc(DOC[x.type] || x.section)}</dt>
+          <dd>${x.ok ? "✅" : "❌"} ${esc(x.reason)}${x.read_as && !x.ok ? ` <span class="muted">(read as ${esc(DOC[x.read_as] || x.read_as)})</span>` : ""}
+            ${x.document_id ? ` · <a href="#" data-file="${x.document_id}">view</a>` : ""}${x.kept_file ? ` · <a href="#" data-keptfile="${r.id}/${x.i}">view what they sent</a>` : ""}
+            ${x.filename ? `<span class="small muted"> · ${esc(x.filename)}</span>` : ""}</dd>`).join("")}</div>`;
+      const attempt = (r, n) => `<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
+          <div class="meta small">${badge(OUT[r.outcome][0], OUT[r.outcome][1])} <b>Attempt ${n}</b>
+            ${r.slab_before && r.slab_after && r.slab_before !== r.slab_after ? ` <span class="muted">· label ${r.slab_before} → ${r.slab_after}</span>` : ""}
+            <span class="muted" style="margin-left:auto">${when(r.at)}</span></div>
+          ${results(r)}
+          ${r.contact_changes ? `<div class="small" style="margin-top:6px">Also changed ${r.contact_changes} contact detail(s): see <a href="#" data-go="contacts">Contacts</a>.</div>` : ""}</div>`;
+      return `<p class="small muted">One row per CSP who used the upload page: their latest result and their label now. Click <b>Show all attempts</b> to see every try — what they sent, what was accepted or turned away and why. <b>"Tried, nothing accepted"</b> are the CSPs to call first.</p>
       <div class="tabs">${[["", `All (${k.csps} CSPs)`], ["accepted", `All accepted (${k.accepted})`], ["partly", `Partly (${k.partly})`], ["rejected", `Tried, nothing accepted (${k.rejected})`]]
         .map(([v, l]) => `<button class="tab ${out === v ? "active" : ""}" data-fout="${v}">${l}</button>`).join("")}</div>
       <div class="tabs">${[[0, "Any time"], [1, "Today"], [7, "Last 7 days"], [30, "Last 30 days"]]
         .map(([v, l]) => `<button class="tab ${days === v ? "active" : ""}" data-fdays="${v}">${l}</button>`).join("")}</div>
-      <p class="small muted">Counts in brackets are CSPs, by their latest submission; the list below shows every submission.</p>
-      ${d.rows.map((r) => `<div class="card" style="margin-bottom:10px">
-        <div class="meta">${badge(OUT[r.outcome][0], OUT[r.outcome][1])}
-          <a href="#" data-csp="${r.csp.id}"><b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)}</a> · RM ${esc(r.rm || "-")}
-          · now <b>${esc(slabTxt(r.csp.slab, r.csp.sub_slab))}</b>${r.slab_before && r.slab_after && r.slab_before !== r.slab_after ? ` <span class="muted">(was label ${r.slab_before} → ${r.slab_after} after this upload)</span>` : ""}
-          <span class="muted" style="margin-left:auto">${when(r.at)}</span></div>
-        <div class="kv" style="margin-top:6px">${r.results.map((x) => `
-          <dt>${esc(DOC[x.type] || x.section)}</dt>
-          <dd>${x.ok ? "✅" : "❌"} ${esc(x.reason)}${x.read_as && !x.ok ? ` <span class="muted">(read as ${esc(DOC[x.read_as] || x.read_as)})</span>` : ""}
-            ${x.document_id ? ` · <a href="#" data-file="${x.document_id}">view</a>` : ""}${x.kept_file ? ` · <a href="#" data-keptfile="${r.id}/${x.i}">view what they sent</a>` : ""}
-            ${x.filename ? `<span class="small muted"> · ${esc(x.filename)}</span>` : ""}</dd>`).join("")}</div>
-        ${r.contact_changes ? `<div class="small" style="margin-top:6px">Also changed ${r.contact_changes} contact detail(s): see <a href="#" data-go="contacts">Contacts</a>.</div>` : ""}
-      </div>`).join("") || `<div class="card empty">No form submissions here yet.</div>`}`;
+      ${shown.map((g) => { const last = g.attempts[0], n = g.attempts.length, isOpen = open.has(g.csp.id);
+        return `<div class="card" style="margin-bottom:10px">
+        <div class="meta">${badge(OUT[last.outcome][0], OUT[last.outcome][1])}
+          <a href="#" data-csp="${g.csp.id}"><b class="mono">${esc(g.csp.code)}</b> ${esc(g.csp.name)}</a> · RM ${esc(g.rm || "-")}
+          · now <b>${esc(slabTxt(g.csp.slab, g.csp.sub_slab))}</b>
+          <span class="muted" style="margin-left:auto">${n} attempt${n > 1 ? "s" : ""} · last ${when(last.at)}</span></div>
+        ${isOpen ? g.attempts.map((r, i) => attempt(r, n - i)).join("") : results(last)}
+        <div style="margin-top:8px"><button class="btn" data-fcsp="${g.csp.id}">${isOpen ? "Hide attempts ▴" : (n > 1 ? `Show all ${n} attempts ▾` : "Show details ▾")}</button></div>
+      </div>`; }).join("") || `<div class="card empty">No form submissions here yet.</div>`}`;
     },
 
     async questions() {
@@ -546,7 +563,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -587,6 +604,7 @@
         const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
         a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "csps.xlsx"; a.click(); return;
       }
+      if (ds.fcsp) { const id = +ds.fcsp, o = state.fopen || (state.fopen = new Set()); o.has(id) ? o.delete(id) : o.add(id); return render(); }
       if (ds.fout !== undefined) { state.fout = ds.fout; return render(); }
       if (ds.fdays !== undefined) { state.fdays = +ds.fdays; return render(); }
       if (ds.keptfile) { e.preventDefault(); const [ev, i] = ds.keptfile.split("/"); return openPath(`api/hub/form-uploads/${ev}/file/${i}`); }
