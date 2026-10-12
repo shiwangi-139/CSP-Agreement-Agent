@@ -438,7 +438,9 @@ def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = N
 
 
 def _get_msg(db: Session, message_id: int, me: Principal) -> OutboundMessage:
-    m = db.get(OutboundMessage, message_id)
+    # Locked until this request commits: a second click (or a second tab) waits,
+    # then sees the message already approved and is refused, so it is sent once.
+    m = db.query(OutboundMessage).filter(OutboundMessage.id == message_id).with_for_update().first()
     if m is None or not (me.is_admin or (m.csp_id and db.get(CSP, m.csp_id).rm_id == me.user_id)):
         raise HTTPException(404, "message not found")
     return m
@@ -473,7 +475,7 @@ def approve_bulk(ids: list[int] = Body(..., embed=True), me: Principal = Depends
                  db: Session = Depends(get_db)):
     done, reviewer = {}, me.name
     for mid in ids[:200]:
-        m = db.get(OutboundMessage, mid)
+        m = db.query(OutboundMessage).filter(OutboundMessage.id == mid).with_for_update().first()   # see _get_msg
         if m is None or m.status != OutboundStatus.QUEUED_FOR_REVIEW:
             continue
         if not me.is_admin and (m.csp_id is None or db.get(CSP, m.csp_id).rm_id != me.user_id):

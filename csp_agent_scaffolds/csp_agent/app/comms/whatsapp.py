@@ -37,7 +37,9 @@ class SendOutcome:
 
 
 def send_wabs(message_id: int, phone10: str, template_key: str, name: str, code: str,
-              link: Optional[str], rm: str) -> SendOutcome:
+              link: Optional[str], rm: str, extra: Optional[dict] = None) -> SendOutcome:
+    """`extra`: the layout's other values (document, date, days), from
+    wabs.layout_values."""
     from . import wabs
     kind = wabs.KIND_FOR_TEMPLATE.get(template_key)
     if kind is None:
@@ -45,16 +47,17 @@ def send_wabs(message_id: int, phone10: str, template_key: str, name: str, code:
     if not link:
         return SendOutcome("FAILED", error="The message has no upload link.")
     try:
-        r = wabs.send_clean(kind, [{"phone": f"91{phone10}", "name": name, "code": code, "link": link, "rm": rm}],
-                            f"csp-agent-{template_key}-{message_id}")
+        contact = {"phone": f"91{phone10}", "name": name, "code": code, "link": link, "rm": rm, **(extra or {})}
+        r = wabs.send_clean(kind, [contact], f"csp-agent-{template_key}-{message_id}")
     except Exception as e:
         return SendOutcome("FAILED", error=f"Bulk Sender error: {e}", retryable=True)
     action = r.get("action") if isinstance(r, dict) else None
     if action == "sent":
         return SendOutcome("SENT", provider_message_id=str(r.get("job_id") or ""))
     if action in ("created", "pending"):
-        # Retried by the worker; it goes out as soon as Meta approves the layout.
-        return SendOutcome("FAILED", error="Waiting for Meta to approve the WhatsApp template.", retryable=True)
+        # Meta is reviewing the layout (the Bulk Sender submitted it on first
+        # use): the worker tries again, and it goes out once approved.
+        return SendOutcome("WAITING_META", error="Waiting for Meta to approve the WhatsApp template.")
     reason = r.get("reason") or r.get("text") or json.dumps(r, ensure_ascii=False)[:300] if isinstance(r, dict) else str(r)
     return SendOutcome("FAILED", error=f"Bulk Sender: {reason}"[:1000])
 

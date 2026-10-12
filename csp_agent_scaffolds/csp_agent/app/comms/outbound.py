@@ -35,6 +35,7 @@ from .whatsapp import send_wabs, send_whatsapp
 logger = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 5
+META_WAIT_HOURS = 48                # how long a message may wait for Meta to approve its layout
 RETRY_BACKOFF_MINUTES = [5, 15, 60, 180, 720]
 
 
@@ -211,8 +212,15 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
             if WHATSAPP_MODE == "wabs":
                 rm = _staff(db, csp, "RM")
                 rm_text = (f"RM {rm.name}" + (f" ({rm.phone})" if rm.phone else "")) if rm else "आपके RM / your RM"
+                try:
+                    from ..compliance import evaluate
+                    from .wabs import layout_values
+                    extra = layout_values(msg.template_name, csp, evaluate(db, csp), msg.document_type)
+                except ValueError as e:
+                    _fail(msg, f"Can't fill the WhatsApp layout: {e}", retryable=False)
+                    return msg
                 out = send_wabs(msg.id, _phone10(msg.destination), msg.template_name, csp.name, csp.current_code,
-                                payload.get("link"), rm_text)
+                                payload.get("link"), rm_text, extra)
             else:
                 out = send_whatsapp(msg.id, _phone10(msg.destination), payload.get("body", ""),
                                     msg.idempotency_key or str(msg.id), msg.template_name, payload.get("link"))
@@ -223,6 +231,14 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
                 extend_for_sent_message(db, payload.get("link"))
             elif out.status == "READY_NOT_SENT":
                 msg.status, msg.error_log = OutboundStatus.READY_NOT_SENT, "WhatsApp agent not connected yet (stub mode)."
+            elif out.status == "WAITING_META":
+                # Not a failure: retried every 30 minutes for up to META_WAIT_HOURS.
+                msg.error_log = out.error
+                if msg.reviewed_at and _now() - msg.reviewed_at > timedelta(hours=META_WAIT_HOURS):
+                    msg.status = OutboundStatus.FAILED
+                    msg.error_log = f"Meta did not approve the WhatsApp template within {META_WAIT_HOURS} hours."
+                else:
+                    msg.next_retry_at = _now() + timedelta(minutes=30)
             elif out.status == "AWAITING_PULL":
                 pass  # stays APPROVED until the WhatsApp agent pulls and acks it
             else:
@@ -253,6 +269,8 @@ def _with_live_link(db: Session, csp: CSP, msg: OutboundMessage) -> dict:
 
 
 def _fail(msg: OutboundMessage, error: Optional[str], retryable: bool) -> None:
+    if msg.status == OutboundStatus.SENT:
+        return                      # a later error never turns a sent message into a failed one
     msg.error_log = (error or "send failed")[:1000]
     if retryable and (msg.attempts or 0) < MAX_ATTEMPTS:
         msg.next_retry_at = _now() + timedelta(minutes=RETRY_BACKOFF_MINUTES[(msg.attempts or 1) - 1])
