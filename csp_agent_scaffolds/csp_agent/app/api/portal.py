@@ -320,14 +320,10 @@ def _typed_date_problem(doc_type: str, typed: Optional[date], today: date) -> Op
     return None
 
 
-# Name, mobile, RM and DC are locked on the page and come only from the
-# calling sheet; the server ignores them whatever is sent. Only the email can
-# be proposed (many CSPs have none), and that goes to review, never straight in.
-EDITABLE_CONTACT_FIELDS = ("email",)
-
-
 def _record_contact_changes(db: Session, csp: CSP, form: dict) -> int:
-    current = {"email": csp.email}
+    rm, dc = _staff(db, csp.rm_id), _staff(db, csp.dc_id)
+    current = {"name": csp.name, "email": csp.email, "mobile": csp.phone,
+               "rm": rm.name if rm else None, "dc": dc.name if dc else None}
     n = 0
     for field, old in current.items():
         new = (form.get(field) or "").strip()[:200]
@@ -345,6 +341,11 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
         raise HTTPException(403, detail=_msg("bad_link"))
     csp = db.get(CSP, row.csp_id)
     today = date.today()
+
+    for field in ("name", "mobile"):
+        if not str(form.get(field) or "").strip():
+            raise HTTPException(422, detail={"hi": "नाम और मोबाइल नंबर ज़रूरी हैं।",
+                                              "en": "Name and mobile number are required."})
 
     results = []
     for section, doc_type in SECTIONS.items():
@@ -442,7 +443,7 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
     if not results:
         raise HTTPException(422, detail={"hi": "कम से कम एक डॉक्यूमेंट चुनें।", "en": "Please choose at least one document."})
 
-    changes = _record_contact_changes(db, csp, {k: form.get(k) for k in EDITABLE_CONTACT_FIELDS})
+    changes = _record_contact_changes(db, csp, {k: form.get(k) for k in ("name", "email", "mobile", "rm", "dc")})
     slab_before = csp.category
     # Category, and the follow-up cycles this upload satisfies, update now
     # (queued reminders for them are cancelled), not at the next daily run.

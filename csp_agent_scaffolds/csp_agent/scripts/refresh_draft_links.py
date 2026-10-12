@@ -36,8 +36,7 @@ def main():
         for m in db.query(OutboundMessage).filter(OutboundMessage.status.in_(UNSENT)):
             p = dict(m.payload_json or {})
             touched = False
-            # "link" too: the WhatsApp layout sends that field, not the text.
-            for key in ("body", "body_hi", "body_en", "html", "link"):
+            for key in ("body", "body_hi", "body_en", "html"):
                 if isinstance(p.get(key), str) and "/upload?token=" in p[key]:
                     for found in LINK.findall(p[key]):
                         if found != base:
