@@ -185,9 +185,17 @@ def extract_document_fields_deterministic(
     filename: str = "",
     allow_llm_fallback: bool = True,
     today: Optional[date] = None,
+    expected_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Read one file (PDF, JPEG or PNG) and return the final decision plus
-    every extracted field. The name is historical; it now handles photos."""
+    every extracted field. The name is historical; it now handles photos.
+
+    expected_type: the section a CSP uploaded the file in (upload page only).
+    A readable file whose wording the rules don't recognise, or whose date
+    they can't find, is then NOT rejected: it is returned READABLE with
+    `type_review` set, and goes to a person (app/document_service.py).
+    A file the model or the rules identify as ANOTHER document is still
+    reported as that document (so the page can say "wrong document")."""
     today = today or date.today()
     scan = scan_document(pdf_bytes, stop_when=lambda t: _enough(t, today))
     text = scan.text
@@ -212,16 +220,25 @@ def extract_document_fields_deterministic(
                        confidence=gate_conf, extraction_method="ALLOWLIST_GATE_REJECTED", **common)
 
     model_ans = None
+    type_review = None
+    hinted = expected_type in ALLOWED_TYPES
     if doc_type not in ALLOWED_TYPES:
         # Unreadable text can hide an allowed document (a blurry photo of an
-        # agreement). Only then ask the model what it is.
-        if readable:
+        # agreement), and a CSP's upload may use wording the rules don't
+        # know: then ask the model what it is.
+        if readable and not hinted:
             return _result(NOT_ALLOWED, document_type=doc_type, rejection_reason=gate_reason,
                            extraction_method="ALLOWLIST_GATE_UNKNOWN", **common)
         if allow_llm_fallback:
             model_ans = _ask_model(scan, "UNKNOWN")
         if model_ans and model_ans.get("is_legible") and model_ans.get("document_type") in ALLOWED_TYPES:
             doc_type, gate_conf = model_ans["document_type"], 0.75
+        elif readable and hinted:
+            # Readable, but neither the rules nor the model could name it:
+            # a person decides; never "wrong document" for unknown wording.
+            doc_type, gate_conf = expected_type, 0.5
+            type_review = (f"The wording wasn't recognised as a {expected_type.replace('_', ' ').lower()}; "
+                           "the CSP uploaded it in that section. Check it is the right document.")
         else:
             reason = why if not readable else "Document type could not be identified."
             return _result(UNREADABLE, readability_reason=reason, rejection_reason=reason,
@@ -260,6 +277,14 @@ def extract_document_fields_deterministic(
     code_match = CSP_CODE_PATTERN.search(text.upper())
     csp_code = normalize_csp_code(code_match.group(0)) if code_match else None
 
+    if issue is None and readable and hinted and doc_type == expected_type:
+        # Readable upload, date not found (blank, or a format the rules don't
+        # know): a person reads the date (and rejects a blank one).
+        return _result(READABLE, document_type=doc_type, csp_code=csp_code, readability_reason=why,
+                       type_review=(type_review or "") + (" " if type_review else "")
+                       + "The issue date could not be read: enter it, or reject the document if it is blank.",
+                       confidence=gate_conf, extraction_method="NEEDS_PERSON_" + scan.method,
+                       model_provider=(model_ans or {}).get("provider"), **common)
     if issue is None and readable and doc_type == "AGREEMENT" and not AGREEMENT_STRUCTURE.search(text):
         # Readable, mentions the agreement, but has none of its structure:
         # a questionnaire, BCP or letter that refers to the agreement.
@@ -315,5 +340,6 @@ def extract_document_fields_deterministic(
         field_confidences=field_conf,
         extraction_method=method,
         model_provider=(model_ans or {}).get("provider"),
+        type_review=type_review,
         **common,
     )

@@ -369,7 +369,7 @@ def test_photos_of_pages_become_one_small_pdf(client, monkeypatch):
     seen = {}
     issue = date.today() - timedelta(days=20)
 
-    def fake_read(data, filename):
+    def fake_read(data, filename, **kw):
         seen["data"] = data
         return {"readability": "READABLE", "document_type": "POLICE_VERIFICATION", "compliance_status": "VALID",
                 "start_date": issue.isoformat(), "expiry_date": (issue + timedelta(days=365)).isoformat(),
@@ -407,3 +407,79 @@ def test_shrink_photo_keeps_it_readable_and_small():
     raw = _page_photo(w=3000, h=4000)
     small = shrink_photo(raw)
     assert max(Image.open(io.BytesIO(small)).size) == MAX_SIDE_PX and len(small) < len(raw)
+
+
+# ------------------- readable but not recognised: a person decides, not "wrong"
+def _plain_pdf(lines: list[str]) -> bytes:
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page()
+    for i, line in enumerate(lines):
+        page.insert_text((50, 80 + 16 * i), line, fontsize=10)
+    return doc.tobytes()
+
+
+UNKNOWN_WORDING = ["OFFICE OF THE SUPERINTENDENT OF POLICE, DISTRICT EXAMPLE",
+                   "Ref No. 1234/SB  Dated: 12-08-2026",
+                   "Subject: Report regarding the person named below.",
+                   "The above named person resides at the given address and was enquired by the beat staff.",
+                   "Signed and sealed by the officer in charge of the special branch office of the district."]
+
+
+def test_readable_upload_with_unknown_wording_goes_to_review_not_rejected(client, monkeypatch):
+    import app.ai.extraction.deterministic_extractor as ex
+    from app.models import ManualReviewQueue
+    monkeypatch.setattr(ex, "_ask_model", lambda scan, t: None)       # no model: rules alone can't name it
+    c, Session = client
+    cid, _, token = _csp(Session)
+    typed = date.today() - timedelta(days=30)
+    r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=typed.isoformat()),
+               files={"pvr_file": ("pvr.pdf", _plain_pdf(UNKNOWN_WORDING), "application/pdf")})
+    res = r.json()["results"][0]
+    assert res["ok"] and "team will check" in res["message"]["en"]
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    assert d.status == DocumentStatus.NEEDS_REVIEW and not d.is_current      # doesn't count yet
+    q = s.query(ManualReviewQueue).filter_by(document_id=d.id).one()
+    assert "wasn't recognised" in q.reason and typed.strftime("%d-%m-%Y") in q.reason
+    assert s.get(CSP, cid).category == 4
+    s.close()
+
+
+def test_another_known_document_in_the_wrong_box_is_still_wrong(client):
+    c, Session = client
+    _, _, token = _csp(Session)
+    issue = date.today() - timedelta(days=30)
+    res = c.post("/api/portal/upload", data=_form(token, iibf_issue_date=issue.isoformat()),
+                 files={"iibf_file": ("x.pdf", _pvr_pdf(issue), "application/pdf")}).json()["results"][0]
+    assert not res["ok"] and "not the right document" in res["message"]["en"]
+
+
+def test_hyphenated_hindi_title_is_recognised():
+    from app.ocr_service import classify_allowlist_gate
+    assert classify_allowlist_gate("कार्यालय पुलिस अधीक्षक चरित्र प्रमाण-पत्र")[1] == "POLICE_VERIFICATION"
+    assert classify_allowlist_gate("आचरण प्रमाण पत्र")[1] == "POLICE_VERIFICATION"
+
+
+def test_a_review_without_a_date_cannot_be_accepted(client, monkeypatch):
+    import app.ai.extraction.deterministic_extractor as ex
+    from app.models import ManualReviewQueue
+    monkeypatch.setattr(ex, "_ask_model", lambda scan, t: None)
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    c, Session = client
+    cid, _, token = _csp(Session)
+    no_date = [l for l in UNKNOWN_WORDING if "Dated" not in l]
+    c.post("/api/portal/upload", data=_form(token, pvr_issue_date=(date.today() - timedelta(days=3)).isoformat()),
+           files={"pvr_file": ("pvr.pdf", _plain_pdf(no_date), "application/pdf")})
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    qid = s.query(ManualReviewQueue).filter_by(document_id=d.id).one().id
+    s.close()
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    assert c.post(f"/api/hub/review/{qid}/resolve", json={"accept": True}, headers=hdr).status_code == 422
+    ok = c.post(f"/api/hub/review/{qid}/resolve", json={"accept": True, "issue_date": "2026-08-12"}, headers=hdr)
+    assert ok.status_code == 200
+    s = Session()
+    d = s.get(Document, d.id)
+    assert d.status == DocumentStatus.MANUAL_VERIFIED and d.expiry_date is not None and d.is_current
+    s.close()

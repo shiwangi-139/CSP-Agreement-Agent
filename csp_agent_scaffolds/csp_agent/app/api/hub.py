@@ -597,7 +597,7 @@ def resolve_contact_change(req_id: int, action: str, db: Session = Depends(get_d
 # submission (AgreementEvent PORTAL_UPLOAD, written by app/api/portal.py).
 REASON_TEXT = {
     "accepted": "accepted", "review": "accepted, date checked by the team", "duplicate": "already on file",
-    "unreadable": "unreadable (counts as missing)", "wrong_doc": "wrong document", "expired": "expired",
+    "unreadable": "unreadable (counts as missing)", "received_check": "received, our team is checking it", "wrong_doc": "wrong document", "expired": "expired",
     "too_small": "photo too small", "too_dark": "photo too dark", "washed_out": "photo washed out",
     "blurry": "photo blurry", "no_date": "no issue date", "future": "date in the future",
     "too_big": "file too large", "file_type": "not a PDF/JPG/PNG",
@@ -741,6 +741,8 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
     # "Corrected" only when the reviewer actually changed the date (the field
     # is pre-filled with the stored date): that is what accuracy counts.
     changed = bool(issue_date) and date.fromisoformat(issue_date) != d.issue_date
+    if accept and d.issue_date is None and not issue_date:
+        raise HTTPException(422, "Enter the document's issue date before accepting it (or reject it if the date is blank).")
     if accept:
         if changed:
             d.issue_date = date.fromisoformat(issue_date)

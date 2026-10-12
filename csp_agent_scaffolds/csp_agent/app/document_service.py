@@ -127,9 +127,13 @@ def store_extracted_document(
     if owner_review:
         fields["owner_check"] = owner_review
         fields["owner_seen_name"] = extraction.get("owner_seen_name")
+    # Upload page: readable, but type or date not confirmed by the rules.
+    type_review = extraction.get("type_review") if decision == "READABLE" else None
+    if type_review:
+        fields["needs_confirmation"] = type_review
     if decision != "READABLE":
         status = DocumentStatus.UNREADABLE
-    elif owner_review:
+    elif owner_review or type_review:
         status = DocumentStatus.NEEDS_REVIEW
     else:
         status = _status_for(extraction)
@@ -149,8 +153,9 @@ def store_extracted_document(
     )
     db.add(doc)
     db.flush()
-    if owner_review:
-        db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=owner_review[:500]))
+    if owner_review or type_review:
+        db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
+                                 reason=" ".join(r for r in (owner_review, type_review) if r)[:500]))
     else:
         from .accuracy import maybe_spot_check
         maybe_spot_check(db, doc)
@@ -171,7 +176,9 @@ def recompute_current(db: Session, csp: CSP, doc_type: str) -> Optional[Document
             if canonical_type(d.document_type) == t]
     # A copy that may belong to another CSP counts only once a reviewer accepts it.
     usable = [d for d in same if d.status in USABLE and d.readability != "UNREADABLE"
-              and not (d.status == DocumentStatus.NEEDS_REVIEW and (d.extracted_fields or {}).get("owner_check"))]
+              and not (d.status == DocumentStatus.NEEDS_REVIEW
+                       and ((d.extracted_fields or {}).get("owner_check")
+                            or (d.extracted_fields or {}).get("needs_confirmation")))]
     today = date.today()
 
     def rank(d: Document) -> int:

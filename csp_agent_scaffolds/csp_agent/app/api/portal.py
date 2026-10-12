@@ -105,6 +105,8 @@ MSG = {
     "too_many": ("बहुत बार कोशिश हो चुकी है। कृपया थोड़ी देर बाद फिर कोशिश करें या अपने RM से बात करें।",
                  "Too many attempts. Please try again later or talk to your RM."),
     "accepted": ("डॉक्यूमेंट मिल गया और ठीक है। धन्यवाद!", "Document accepted. Thank you!"),
+    "received_check": ("डॉक्यूमेंट मिल गया। हमारी टीम इसे जाँचेगी, 1-2 दिन में आपका रिकॉर्ड अपडेट हो जाएगा।",
+                       "Document received. Our team will check it and update your record in 1-2 days."),
     "review": ("डॉक्यूमेंट मिल गया। आपकी भरी हुई तारीख और डॉक्यूमेंट पर लिखी तारीख अलग है, हमारी टीम इसे चेक करेगी।",
                "Document received. The date you entered differs from the document, so our team will check it."),
 }
@@ -403,7 +405,10 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
             # Photos -> one small PDF (shrunk, upright, pages in order).
             data = await run_in_threadpool(lambda: pages.photos_to_pdf([pages.shrink_photo(f) for f in files]))
             mime = "application/pdf"
-        ex = await run_in_threadpool(extract_document_fields_deterministic, data, upload.filename)
+        # The section is a hint: a readable file whose wording or date the
+        # rules don't recognise goes to a person instead of being turned away.
+        ex = await run_in_threadpool(lambda: extract_document_fields_deterministic(
+            data, upload.filename, expected_type=doc_type))
         if ex["readability"] == "UNREADABLE":
             ex["document_type"] = ex.get("document_type") if ex.get("document_type") != "UNKNOWN" else doc_type
             kept = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel="CSP_UPLOAD_PORTAL")
@@ -418,6 +423,8 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
             turn_away("expired", data, mime)
             continue
 
+        if ex.get("type_review") and typed:
+            ex["type_review"] += f" The CSP typed issue date {typed.strftime('%d-%m-%Y')}."
         read_date = _parse_date(ex.get("start_date"))
         needs_review = False
         if read_date and typed != read_date:
@@ -436,8 +443,8 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
             doc.status = DocumentStatus.NEEDS_REVIEW
             db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
                                      reason=f"Typed issue date {typed} differs from date read by model {read_date}."))
-        res.update(ok=True, message=_msg("review" if needs_review else "accepted"),
-                   reason="review" if needs_review else "accepted", document_id=doc.id,
+        said = "received_check" if ex.get("type_review") else ("review" if needs_review else "accepted")
+        res.update(ok=True, message=_msg(said), reason=said, document_id=doc.id,
                    issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))
 
     if not results:

@@ -196,6 +196,10 @@ STRONG_PVR = [
     r"character\s+verification",
     r"police\s+clearance", r"\bpvr\b", r"\bpcc\b", r"\bcctns\b",
     r"चरित्र\s*प्रमाण\s*पत्र", r"पुलिस\s*सत्यापन", r"चरित्र\s*सत्यापन",
+    # variants seen on CSP uploads: hyphenated / OCR-split Hindi, other names
+    r"चरित्र\s*[-–—]?\s*प्रमाण\s*[-–—]?\s*पत्र", r"आचरण\s*[-–—]?\s*प्रमाण\s*[-–—]?\s*पत्र",
+    r"चाल\s*चलन", r"पुलिस\s*[-–—]?\s*(?:वेरिफिकेशन|सत्यापन)", r"antecedents?\s+verification",
+    r"conduct\s+certificate", r"character\s*(?:&|and)\s*conduct", r"police\s+character",
 ]
 # A PVR / character certificate / PCC *application or fee receipt*, not the
 # certificate: UP Police "Service Request Receipt" (Request Type, Current
