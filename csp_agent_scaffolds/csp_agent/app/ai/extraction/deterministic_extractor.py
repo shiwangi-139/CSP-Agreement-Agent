@@ -214,7 +214,7 @@ def extract_document_fields_deterministic(
                        rejection_reason="File could not be opened.", extraction_method="OPEN_FAILED", **common)
 
     readable, why = scan.readability()
-    is_allowed, doc_type, gate_reason, gate_conf = classify_allowlist_gate(text, filename)
+    is_allowed, doc_type, gate_reason, gate_conf = classify_allowlist_gate(text, filename, expected_type=expected_type)
     if doc_type == "REJECTED_UNAUTHORIZED":
         return _result(NOT_ALLOWED, document_type=doc_type, rejection_reason=gate_reason,
                        confidence=gate_conf, extraction_method="ALLOWLIST_GATE_REJECTED", **common)
@@ -233,9 +233,9 @@ def extract_document_fields_deterministic(
             model_ans = _ask_model(scan, "UNKNOWN")
         if model_ans and model_ans.get("is_legible") and model_ans.get("document_type") in ALLOWED_TYPES:
             doc_type, gate_conf = model_ans["document_type"], 0.75
-        elif readable and hinted:
-            # Readable, but neither the rules nor the model could name it:
-            # a person decides; never "wrong document" for unknown wording.
+        elif hinted and (readable or len(text.strip()) >= 40):
+            # Readable or has text, but neither the rules nor the model could name it:
+            # a person decides; never "wrong document" for unknown wording in expected section.
             doc_type, gate_conf = expected_type, 0.5
             type_review = (f"The wording wasn't recognised as a {expected_type.replace('_', ' ').lower()}; "
                            "the CSP uploaded it in that section. Check it is the right document.")

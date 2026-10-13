@@ -190,16 +190,24 @@ STRONG_AGREEMENT = [
     r"kiosk\s+banking\s+agreement", r"business\s+correspondent\s+agreement",
     r"agreement\s+for\s+customer\s+service\s+point", r"article\s*[5§]\s*agreement",
     r"memorandum\s+of\s+an?\s+agreement", r"appointment\s+of\s+csp\s+of\s+eko",
+    r"customer\s*service\s*point", r"kiosk\s*banking", r"appointment\s+of\s+csp",
+    r"eko\s+india\s+financial", r"eko\s+bharat",
 ]
 STRONG_PVR = [
     r"police\s+verification", r"character\s+certificate", r"character\s*(?:&|and)\s*antecedent",
     r"character\s+verification",
+    r"character\s+certif\w*", r"character\s+cerlificale",
     r"police\s+clearance", r"\bpvr\b", r"\bpcc\b", r"\bcctns\b",
+    r"superintendent\s+of\s+p[os]li[ec]e", r"sr\.?\s*superintendent",
+    r"office\s+of\s+superintendent", r"sp\s+office",
+    r"serviceonline(?:\.bihar)?", r"grahak\s+sewa\s+kendra",
+    r"charaeter\s+verilicaticn",
     r"चरित्र\s*प्रमाण\s*पत्र", r"पुलिस\s*सत्यापन", r"चरित्र\s*सत्यापन",
     # variants seen on CSP uploads: hyphenated / OCR-split Hindi, other names
     r"चरित्र\s*[-–—]?\s*प्रमाण\s*[-–—]?\s*पत्र", r"आचरण\s*[-–—]?\s*प्रमाण\s*[-–—]?\s*पत्र",
     r"चाल\s*चलन", r"पुलिस\s*[-–—]?\s*(?:वेरिफिकेशन|सत्यापन)", r"antecedents?\s+verification",
     r"conduct\s+certificate", r"character\s*(?:&|and)\s*conduct", r"police\s+character",
+    r"police\s+records?",
 ]
 # A PVR / character certificate / PCC *application or fee receipt*, not the
 # certificate: UP Police "Service Request Receipt" (Request Type, Current
@@ -239,12 +247,15 @@ AGREEMENT_MARKERS = [
 ]
 PVR_ISSUED = [
     r"(?:it\s+is|is\s+hereby|this\s+is\s+to)\s+certif", r"no\s+adverse", r"nothing\s+adverse",
+    r"no\s+adverse\s+entry", r"has\s+been\s+issued", r"character\s+certificate\s+(?:grahak|has)",
     r"not\s+(?:been\s+)?found\s+involved", r"police\s+records?\s+(?:show|reveal)", r"valid\s+(?:only\s+)?for",
     r"प्रमाणित\s*किया\s*जाता", r"कोई\s*प्रतिकूल",
 ]
 STRONG_IIBF = [
     r"indian\s+institute\s+of\s+banking", r"institute\s+of\s+banking\s*(?:&|and)\s*finance",
-    r"\biibf\b", r"\bbc\s*/\s*bf\b", r"\bbcbf\b", r"certificate\s+examination\s+for\s+business\s+correspondents",
+    r"\biibf\b", r"\bbc\s*/\s*bf\b", r"\bbcbf\b", r"business\s+correspondents?",
+    r"certificate\s+examination\s+for\s+business\s+correspondents",
+    r"certificate\s+examination", r"bc\s*[/&]\s*bf", r"banking\s*(?:&|and)\s*finance",
 ]
 
 
@@ -252,7 +263,7 @@ def _matches(patterns, text):
     return [p for p in patterns if re.search(p, text)]
 
 
-def classify_allowlist_gate(text: str, filename: str = "") -> Tuple[bool, str, str, float]:
+def classify_allowlist_gate(text: str, filename: str = "", expected_type: Optional[str] = None) -> Tuple[bool, str, str, float]:
     """
     Is this one of the three permitted documents?
     Returns (is_allowed, document_type, reason, confidence).
@@ -280,19 +291,26 @@ def classify_allowlist_gate(text: str, filename: str = "") -> Tuple[bool, str, s
             conf = 0.95 if len(hits) >= 2 else 0.9
             return True, doc_type, f"Matched {doc_type} phrases: {hits[:3]}", conf
 
-    # Filename-only hints are weak but useful for photos OCR couldn't read.
+    # Filename hints: useful for photos or scans OCR couldn't read cleanly.
     fn = (filename or "").lower()
-    for doc_type, words in (("AGREEMENT", ("agreement", "agrmnt", "csp_agr")),
-                            ("POLICE_VERIFICATION", ("pvr", "police", "character", "charitra")),
+    for doc_type, words in (("AGREEMENT", ("agreement", "agrmnt", "csp_agr", "magriment", "agrement")),
+                            ("POLICE_VERIFICATION", ("pvr", "police", "character", "charitra", "verification")),
                             ("IIBF_CERTIFICATE", ("iibf", "bcbf", "bc_bf"))):
-        if any(w in fn for w in words) and len(body.strip()) < 200:
-            return True, doc_type, f"Filename suggests {doc_type}; text too short to confirm.", 0.6
+        if any(w in fn for w in words):
+            # Check unauthorized before accepting filename match
+            if not any(unauth in combined for unauth in UNAUTHORIZED_SIGNATURES) and not any(k in fn for k in ["pan", "aadhaar", "adhar", "passbook", "statement", "resume"]):
+                if expected_type == doc_type or len(body.strip()) < 500 or not body.strip():
+                    return True, doc_type, f"Filename suggests {doc_type}.", 0.75
 
     for unauth in UNAUTHORIZED_SIGNATURES:
         if unauth in combined:
             return False, "REJECTED_UNAUTHORIZED", f"Contains unauthorized document pattern: '{unauth}'", 0.99
     if any(k in fn for k in ["pan", "aadhaar", "adhar", "passbook", "statement", "resume"]):
         return False, "REJECTED_UNAUTHORIZED", f"Filename indicates unauthorized document: '{filename}'", 0.99
+
+    # If the user uploaded to a specific expected section and it's not unauthorized, give benefit of the doubt
+    if expected_type in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"):
+        return True, expected_type, f"Uploaded in {expected_type} section; wording needs manual review.", 0.6
 
     return False, "UNKNOWN", "Document did not match any permitted document types (Agreement, PVR, IIBF)", 0.0
 

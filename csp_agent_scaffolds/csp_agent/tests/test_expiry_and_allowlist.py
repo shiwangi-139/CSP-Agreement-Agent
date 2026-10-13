@@ -202,3 +202,75 @@ def test_bank_due_diligence_form_is_not_a_pvr():
     text = ("Branch Name & Code: SBI FORMAT FOR DUE DILIGENCE REPORT AND KYC VERIFICATION ENGAGEMENT OF CSP/SUB AGENT "
             "Name of proposed CSP RAJNI DEVI ... Verification Details: Police verification done")
     assert _gate(text) == "NOT_A_PVR"
+
+
+def test_bihar_police_pvr_with_spaced_certificate_and_ocr_artifacts():
+    from app.ocr_service import classify_allowlist_gate
+    from app.ai.extraction.rules.pvr import extract_pvr
+    bihar_text = (
+        "Government of Bihar\n"
+        "Office of Superintendent of Psliee / Sr. Superintendent of Poliee\n"
+        "District : SUPAUL\n"
+        "Character Certif icate\n"
+        "Appl. Ref. No : BCHCl20261529572\n"
+        "Place: SUPAUL\n"
+        "*ate :07i0512026\n"
+        "Candidate Murtaza, Father- Mustaqim, Resident AHRAHA\n"
+        "character verification been done by SHO Karjain\n"
+        "They work Grahak Sewa Kendra and no adverse entry has been found\n"
+        "https://serviceonline.bihar.gov.in"
+    )
+    ok, doc_type, _, conf = classify_allowlist_gate(bihar_text, "MD MURTAZA PVR.pdf", expected_type="POLICE_VERIFICATION")
+    assert ok is True
+    assert doc_type == "POLICE_VERIFICATION"
+    assert conf >= 0.9
+
+    fields = extract_pvr(bihar_text)
+    assert fields["issue_date"] == date(2026, 5, 7)
+    assert fields["validity_months"] == 12
+
+
+def test_csp_filename_and_expected_type_allowlist_gate():
+    from app.ocr_service import classify_allowlist_gate
+    # Low quality scan with misspelled agreement filename
+    ok_agr, dt_agr, _, _ = classify_allowlist_gate("", "MD MURTAZA EKO MAGRIMENT.pdf", expected_type="AGREEMENT")
+    assert ok_agr is True
+    assert dt_agr == "AGREEMENT"
+
+    # PVR filename
+    ok_pvr, dt_pvr, _, _ = classify_allowlist_gate("", "MD MURTAZA PVR.pdf", expected_type="POLICE_VERIFICATION")
+    assert ok_pvr is True
+    assert dt_pvr == "POLICE_VERIFICATION"
+
+    # IIBF filename
+    ok_iibf, dt_iibf, _, _ = classify_allowlist_gate("", "MD MURTAZA IIBF.pdf", expected_type="IIBF_CERTIFICATE")
+    assert ok_iibf is True
+    assert dt_iibf == "IIBF_CERTIFICATE"
+
+
+def test_upload_success_and_rejected_templates():
+    from app.comms.templates import render
+    ctx = {
+        "csp_name": "Md Murtaza",
+        "csp_code": "1A850946",
+        "upload_link": "https://example.com/upload?token=abc",
+        "rejected_reasons_hi": "• पुलिस वेरिफिकेशन: फोटो धुंधली है",
+        "rejected_reasons_en": "• Police Verification: Blurry image",
+        "rm_name": "Rajesh Kumar",
+        "rm_phone": "9876543210"
+    }
+
+    # All accepted message
+    success_msg = render("UPLOAD_SUCCESS_ALL", "WHATSAPP", ctx)
+    assert "All documents accepted" in success_msg["subject"]
+    assert "बधाई हो" in success_msg["body"]
+    assert "1A850946" in success_msg["body"]
+    assert "Congratulations" in success_msg["body"]
+
+    # Rejection alert message
+    reject_msg = render("UPLOAD_PARTIAL_REJECTED", "WHATSAPP", ctx)
+    assert "Action Required: Upload rejected" in reject_msg["subject"]
+    assert "फोटो धुंधली है" in reject_msg["body"]
+    assert "Blurry image" in reject_msg["body"]
+    assert "https://example.com/upload?token=abc" in reject_msg["body"]
+

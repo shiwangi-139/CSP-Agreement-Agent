@@ -206,6 +206,12 @@ def submit_manual_correction(queue_id: int, payload: dict = Body(...), db: Sessi
         notes=f"Corrected by {operator_name}. Notes: {operator_notes}"
     ))
 
+    if csp:
+        from ..document_service import recompute_current
+        from ..compliance import refresh_category
+        recompute_current(db, csp, doc.document_type)
+        refresh_category(db, csp)
+
     db.commit()
     logger.info(f"Manual correction saved for document {doc.id}, queue item {queue_id}")
     return {
@@ -291,6 +297,20 @@ def approve_renewal(queue_id: int, payload: RenewalApproval, db: Session = Depen
         source="DASHBOARD_REVIEW_CONSOLE",
         notes=f"Approved by {reviewer.name} ({reviewer.role})"
     ))
+
+    csp = db.query(CSP).filter(CSP.id == doc.csp_id).first()
+    if csp:
+        from ..document_service import recompute_current
+        from ..compliance import refresh_category
+        recompute_current(db, csp, doc.document_type)
+        state = refresh_category(db, csp)
+        if len(state.needs_upload) == 0:
+            try:
+                from .portal import _send_upload_status
+                _send_upload_status(csp.id, "UPLOAD_SUCCESS_ALL", {})
+            except Exception as e:
+                logger.warning(f"Could not dispatch UPLOAD_SUCCESS_ALL after review approval: {e}")
+
     db.commit()
     return {"status": "RENEWED", "document_id": doc.id, "agreement_id": agr.id}
 

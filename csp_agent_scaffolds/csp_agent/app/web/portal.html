@@ -32,7 +32,7 @@
   input[type=text], input[type=email], input[type=tel], input[type=date] {
     width: 100%; padding: 12px; font-size: 1rem; border: 1px solid var(--border);
     border-radius: .6rem; background: #fff; color: var(--ink); }
-  input[readonly] { background: var(--mist); }
+  input[readonly] { background: var(--mist); cursor: not-allowed; }
   input[type=file] { width: 100%; padding: 10px; border: 2px dashed var(--border); border-radius: .6rem; background: #fff; }
   .badge { display: inline-block; font-size: .78rem; font-weight: 600; padding: 2px 10px; border-radius: 999px; }
   .VALID { background: var(--mist); color: var(--forest); }
@@ -108,21 +108,27 @@
   </section>
 
   <form id="f" novalidate>
+    <div id="rejection_alert" class="card" style="display:none; background:#fff2f2; border:2px solid #e53e3e; margin-bottom:14px;">
+      <h2 style="color:#c53030; margin-bottom:8px;">❌ कुछ दस्तावेज़ स्वीकार नहीं हुए <span class="en" style="color:#9b2c2c">/ Some documents were not accepted</span></h2>
+      <div id="rejection_list" style="margin:8px 0; font-size:0.95rem; line-height:1.6; color:#9b2c2c;"></div>
+      <p style="margin:8px 0 0; font-size:0.88rem; font-weight:600; color:#742a2a;">कृपया इन दस्तावेज़ों को सही और साफ़ रूप में पुनः अपलोड करें। <span class="en" style="font-weight:400; color:#9b2c2c;">/ Please strictly re-upload clear and correct copies of these documents.</span></p>
+    </div>
+
     <section class="card">
       <h2>आपकी जानकारी <span class="en">/ Your details</span></h2>
       <label>सीएसपी कोड <span class="en">/ CSP ID</span></label>
       <input type="text" id="code" readonly class="code">
-      <label for="name">नाम <span class="en">/ Name</span> *</label>
-      <input type="text" id="name" name="name" required autocomplete="name">
-      <label for="mobile">मोबाइल <span class="en">/ Mobile</span> *</label>
-      <input type="tel" id="mobile" name="mobile" required inputmode="numeric" pattern="[6-9][0-9]{9}" maxlength="10">
+      <label for="name">नाम <span class="en">/ Name</span></label>
+      <input type="text" id="name" name="name" readonly>
+      <label for="mobile">मोबाइल <span class="en">/ Mobile</span></label>
+      <input type="tel" id="mobile" name="mobile" readonly>
       <label for="email">ईमेल <span class="en">/ Email</span></label>
       <input type="email" id="email" name="email" autocomplete="email">
       <label for="rm">आपके RM <span class="en">/ Assigned RM</span></label>
-      <input type="text" id="rm" name="rm">
+      <input type="text" id="rm" name="rm" readonly>
       <label for="dc">आपके DC <span class="en">/ Assigned DC</span></label>
-      <input type="text" id="dc" name="dc">
-      <div class="hint">कोई जानकारी खाली या गलत हो तो सही भर दें। हमारी टीम पूरी जाँच के बाद ही बदलाव करेगी। <span class="en">If anything is missing or wrong, fill it in correctly. Our team checks every change before it is applied.</span></div>
+      <input type="text" id="dc" name="dc" readonly>
+      <div class="hint">नाम, मोबाइल, RM और DC रिकॉर्ड से सुरक्षित हैं। अगर ईमेल खाली या गलत है तो आप भर सकते हैं। <span class="en">Name, mobile, RM, and DC are verified and locked. You can enter or update your email.</span></div>
     </section>
 
     <div id="docs"></div>
@@ -309,17 +315,36 @@
       const j = await r.json();
       if (!r.ok) { const m = j.detail || {}; $("formerr").textContent = (m.hi || "") + " / " + (m.en || "Upload failed."); return; }
       let allOk = true;
+      const rejectedItems = [];
       for (const res of j.results) {
+        const okEl = $(res.section + "_ok");
+        const errEl = $(res.section + "_err");
+        if (okEl) okEl.textContent = "";
+        if (errEl) errEl.textContent = "";
+
         const el = $(res.section + (res.ok ? "_ok" : "_err"));
-        el.textContent = (res.message.hi || "") + " / " + (res.message.en || "");
-        if (!res.ok) allOk = false;
+        if (el) el.textContent = (res.message.hi || "") + " / " + (res.message.en || "");
+        if (!res.ok) {
+          allOk = false;
+          const dObj = ctx.docs.find(d => d.section === res.section);
+          const lblHi = dObj ? dObj.label_hi : res.section;
+          const lblEn = dObj ? dObj.label_en : res.section;
+          rejectedItems.push(`• <b>${esc(lblHi)} <span class="en">/ ${esc(lblEn)}</span>:</b> ${esc(res.message.hi || "")} <span class="en">(${esc(res.message.en || "")})</span>`);
+          const finp = $(res.section + "_file");
+          if (finp) finp.value = "";
+        }
       }
       if (allOk) {
+        $("rejection_alert").style.display = "none";
         $("f").style.display = "none";
         $("done").style.display = "block";
         $("summary").innerHTML = j.still_needed.length
           ? `<p>अभी भी चाहिए: ${esc(j.still_needed.join(", "))}</p><p class="en">Still needed: ${esc(j.still_needed.join(", "))}</p>`
           : `<p>आपके सारे डॉक्यूमेंट मिल गए हैं।</p><p class="en">We have all your documents.</p>`;
+      } else {
+        $("rejection_alert").style.display = "block";
+        $("rejection_list").innerHTML = rejectedItems.join("<br>");
+        $("rejection_alert").scrollIntoView({ behavior: "smooth", block: "start" });
       }
     } catch (err) {
       $("formerr").textContent = "नेटवर्क समस्या, दोबारा कोशिश करें / Network problem, please try again.";

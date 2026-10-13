@@ -161,6 +161,28 @@ def _escalation(role):
     return build
 
 
+def _upload_success_all(c):
+    return (f"All documents accepted: compliance complete | KO {c['csp_code']}",
+            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}),\n"
+            f"बधाई हो! आपके सभी सीएसपी दस्तावेज़ (एग्रीमेंट, पुलिस वेरिफिकेशन, आईआईबीएफ) सफलतापूर्वक प्राप्त हो गए हैं और स्वीकार कर लिए गए हैं।\n"
+            f"आपका रिकॉर्ड पूरी तरह अपडेट और सक्रिय है। आपका कियोस्क टर्मिनल बिना किसी रुकावट के चालू रहेगा।",
+            f"Hello {c['csp_name']} (KO {c['csp_code']}),\n"
+            f"Congratulations! All your CSP documents (Agreement, Police Verification, IIBF) have been successfully received and accepted.\n"
+            f"Your record is fully compliant and active. Your kiosk terminal will continue operating smoothly.")
+
+
+def _upload_partial_rejected(c):
+    reasons_hi = c.get("rejected_reasons_hi", "डॉक्यूमेंट साफ़ नहीं है या सही नहीं है।")
+    reasons_en = c.get("rejected_reasons_en", "Document is not clear or incorrect.")
+    return (f"Action Required: Upload rejected | KO {c['csp_code']}",
+            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}),\n"
+            f"आपके द्वारा अपलोड किए गए दस्तावेज़ स्वीकार नहीं किए जा सके:\n{reasons_hi}\n\n"
+            f"⚠️ कृपया ध्यान दें: अपने टर्मिनल को चालू रखने के लिए सही और साफ़ स्कैन किया हुआ दस्तावेज़ नीचे दिए गए लिंक से तुरंत दोबारा अपलोड करें।",
+            f"Hello {c['csp_name']} (KO {c['csp_code']}),\n"
+            f"The following document(s) uploaded by you could not be accepted:\n{reasons_en}\n\n"
+            f"⚠️ Please note: To prevent terminal deactivation, please strictly re-upload a clear scanned copy immediately using the link below.")
+
+
 TEMPLATES = {
     "RENEWAL_NOTICE": _renewal_notice,
     "RENEWAL_FOLLOWUP": _renewal_followup,
@@ -170,11 +192,14 @@ TEMPLATES = {
     "ONBOARD_ALL": _onboard_all,
     "UNREADABLE_REUPLOAD": _unreadable_reupload,
     "LINK_REQUEST": _link_request,
+    "UPLOAD_SUCCESS_ALL": _upload_success_all,
+    "UPLOAD_PARTIAL_REJECTED": _upload_partial_rejected,
     "ESCALATION_RM": _escalation("RM"),
     "ESCALATION_DC": _escalation("DC"),
 }
 CSP_FACING = {"RENEWAL_NOTICE", "RENEWAL_FOLLOWUP", "RENEWAL_FINAL", "UPLOAD_MISSING",
-              "UPLOAD_EXPIRED", "ONBOARD_ALL", "UNREADABLE_REUPLOAD", "LINK_REQUEST"}
+              "UPLOAD_EXPIRED", "ONBOARD_ALL", "UNREADABLE_REUPLOAD", "LINK_REQUEST",
+              "UPLOAD_SUCCESS_ALL", "UPLOAD_PARTIAL_REJECTED"}
 
 
 def render(key: str, channel: str, ctx: dict[str, Any]) -> dict[str, str]:

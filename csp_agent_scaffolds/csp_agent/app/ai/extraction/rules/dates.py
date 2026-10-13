@@ -69,6 +69,8 @@ def normalize(text: str) -> str:
     text = (text or "").translate(DEVANAGARI_DIGITS)
     for pat, rep in _OCR_FIXES:
         text = pat.sub(rep, text)
+    # Recover dates with garbled OCR separators (e.g. 07i0512026 -> 07/05/2026)
+    text = re.sub(r"(?<!\d)(\d{1,2})[i|!](\d{1,2})[1/|]((?:19|20)\d{2})(?!\d)", r"\1/\2/\3", text)
     return text
 
 

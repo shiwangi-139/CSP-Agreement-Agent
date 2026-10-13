@@ -227,6 +227,38 @@ def _send_link(csp_id: int, phone10: str) -> None:
         db.close()
 
 
+def _send_upload_status(csp_id: int, template_name: str, payload_data: dict) -> None:
+    """Draft and send automated upload status notification (all accepted or rejection notice)."""
+    from ..comms import outbound
+    db = SessionLocal()
+    try:
+        csp = db.get(CSP, csp_id)
+        if not csp:
+            return
+        state = evaluate(db, csp)
+        link = issue_upload_link(db, csp, state.needs_upload) if state.needs_upload else None
+        rm = _staff(db, csp.rm_id)
+        phone = outbound._phone10(csp.phone or "")
+        if not phone:
+            return
+        ctx = {"csp_name": csp.name, "csp_code": csp.current_code, "docs": [], "upload_link": link,
+               "rm_name": rm.name if rm else None, "rm_phone": rm.phone if rm else None, **payload_data}
+        [m] = outbound.draft(db, csp=csp, role="CSP", template_key=template_name, ctx=ctx,
+                             key_base=f"UPLOAD_{template_name}:{csp.id}:{uuid.uuid4().hex[:12]}", channels=("WHATSAPP",),
+                             stage="PORTAL_UPLOAD")
+        if m.status != OutboundStatus.BLOCKED:
+            m.destination = phone
+            m.status, m.reviewed_by, m.reviewed_at = OutboundStatus.APPROVED, "Automated CSP upload notification", outbound._now()
+            outbound.send(db, m)
+        db.commit()
+        logger.info("upload_status_sent csp_id=%s template=%s status=%s", csp_id, template_name, m.status.value)
+    except Exception:
+        db.rollback()
+        logger.exception("upload_status_failed csp_id=%s template=%s", csp_id, template_name)
+    finally:
+        db.close()
+
+
 QUESTION_CATEGORIES = {"AGREEMENT", "UPLOAD_PROBLEM", "OTHER"}
 QUESTIONS_PER_CSP_DAY = 5
 
@@ -336,7 +368,7 @@ def _record_contact_changes(db: Session, csp: CSP, form: dict) -> int:
 
 
 @router.post("/api/portal/upload")
-async def portal_upload(request: Request, db: Session = Depends(get_db)):
+async def portal_upload(request: Request, background: BackgroundTasks, db: Session = Depends(get_db)):
     form = await request.form()
     row = resolve_token(db, str(form.get("token") or ""))
     if row is None:
@@ -410,18 +442,55 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
         ex = await run_in_threadpool(lambda: extract_document_fields_deterministic(
             data, upload.filename, expected_type=doc_type))
         if ex["readability"] == "UNREADABLE":
-            ex["document_type"] = ex.get("document_type") if ex.get("document_type") != "UNKNOWN" else doc_type
-            kept = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel="CSP_UPLOAD_PORTAL")
-            turn_away("unreadable")
-            res["document_id"] = kept.document.id if kept.document is not None else None
+            # If the file has pages and the CSP provided an issue date, route to human review
+            if ex.get("page_count", 0) > 0 and typed:
+                ex["readability"] = "READABLE"
+                ex["document_type"] = doc_type
+                ex["type_review"] = f"Low OCR readability in {doc_type} section. Human review required."
+            else:
+                ex["document_type"] = ex.get("document_type") if ex.get("document_type") != "UNKNOWN" else doc_type
+                kept = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel="CSP_UPLOAD_PORTAL")
+                turn_away("unreadable")
+                res["document_id"] = kept.document.id if kept.document is not None else None
+                continue
+
+        # If it is explicitly an unauthorized document (Aadhaar, PAN, etc.)
+        if ex.get("document_type") == "REJECTED_UNAUTHORIZED":
+            turn_away("wrong_doc", data, mime)
+            res["read_as"] = "UNAUTHORIZED"
             continue
-        if ex["readability"] != "READABLE" or ex["document_type"] != doc_type:
+
+        # If it clearly belongs to another section (e.g. IIBF uploaded in Agreement section)
+        if ex.get("document_type") in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE") and ex["document_type"] != doc_type:
             turn_away("wrong_doc", data, mime)
             res["read_as"] = ex.get("document_type")
             continue
+
+        # If document_type was UNKNOWN, fall back to human review for the expected section
+        if ex.get("document_type") not in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"):
+            ex["document_type"] = doc_type
+            ex["type_review"] = (ex.get("type_review") or "") + f" Document wording in {doc_type} section needs human verification."
+
         if ex.get("compliance_status") == "EXPIRED":
             turn_away("expired", data, mime)
             continue
+
+        # If OCR could not read the issue date, take the date typed by the CSP and compute expiry
+        if typed and not ex.get("start_date"):
+            ex["start_date"] = typed.isoformat()
+            ex["date_source"] = "CSP_PORTAL_TYPED"
+            from ..expiry_engine import calculate_document_expiry
+            exp = calculate_document_expiry(
+                doc_type=doc_type,
+                issue_date=typed,
+                has_explicit_3year_clause=ex.get("has_explicit_3year_clause", False),
+                today=today,
+                validity_months=ex.get("validity_months"),
+            )
+            ex["expiry_date"] = exp["calculated_expiry"].isoformat() if exp.get("calculated_expiry") else (
+                "LIFETIME_NO_EXPIRY" if doc_type == "IIBF_CERTIFICATE" else None
+            )
+            ex["type_review"] = (ex.get("type_review") or "") + f" Issue date entered as {typed.strftime('%d-%m-%Y')} by CSP; verify on document."
 
         if ex.get("type_review") and typed:
             ex["type_review"] += f" The CSP typed issue date {typed.strftime('%d-%m-%Y')}."
@@ -465,6 +534,27 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
                                    "still_needed": state.needs_upload}))
     revoke_if_complete(db, row, state.needs_upload)
     db.commit()
+
+    # Automated WhatsApp notifications to CSP
+    has_rejected = any(not r.get("ok") for r in results)
+    if len(state.needs_upload) == 0 and not has_rejected:
+        background.add_task(_send_upload_status, csp.id, "UPLOAD_SUCCESS_ALL", {})
+    elif has_rejected:
+        rejections_hi = []
+        rejections_en = []
+        for r in results:
+            if not r.get("ok"):
+                sec_label_en, sec_label_hi = DOC_LABELS.get(SECTIONS.get(r["section"], ""), (r["section"], r["section"]))
+                msg_hi = r.get("message", {}).get("hi", r.get("reason", "अस्वीकृत"))
+                msg_en = r.get("message", {}).get("en", r.get("reason", "Rejected"))
+                rejections_hi.append(f"• {sec_label_hi}: {msg_hi}")
+                rejections_en.append(f"• {sec_label_en}: {msg_en}")
+        payload = {
+            "rejected_reasons_hi": "\n".join(rejections_hi),
+            "rejected_reasons_en": "\n".join(rejections_en),
+        }
+        background.add_task(_send_upload_status, csp.id, "UPLOAD_PARTIAL_REJECTED", payload)
+
     shown = ("section", "ok", "message", "issue_date", "expiry_date")       # nothing internal to the browser
     return {"results": [{k: r[k] for k in shown if k in r} for r in results], "category": state.category,
             "still_needed": [DOC_LABELS[t][0] for t in state.needs_upload]}
