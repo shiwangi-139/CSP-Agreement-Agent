@@ -609,13 +609,22 @@ ACCEPTED_NOW = {DocumentStatus.VALID, DocumentStatus.MANUAL_VERIFIED, DocumentSt
                 DocumentStatus.EXTRACTED_DETERMINISTIC, DocumentStatus.EXTRACTED_AI}
 
 
-def _now_states(db: Session, results: list[dict]) -> list[dict]:
+def _now_states(db: Session, results: list[dict], csp: Optional[CSP] = None) -> list[dict]:
     """Each result as it stands NOW: a document later accepted (re-check or
     review), still in review, or rejected by the team, overrides how the
-    upload went at the time."""
+    upload went at the time. And if the CSP has a valid copy of that
+    document on record now (from any source), it counts as accepted."""
+    on_record = set()
+    if csp is not None:
+        st = evaluate(db, csp)
+        on_record = {t for t, x in st.docs.items() if x.status == "VALID"}
     out = []
     for r in results:
         r = dict(r)
+        if not r.get("ok") and SECTION_TYPE.get(r.get("section")) in on_record:
+            r["ok"], r["now"] = True, "a valid copy is on record now"
+            out.append(r)
+            continue
         did = r.get("rechecked_document_id") or r.get("document_id")
         d = db.get(Document, did) if did else None
         now = None
@@ -653,7 +662,7 @@ def _form_upload_counts(db: Session, me: Principal) -> dict:
     latest: dict[int, str] = {}
     for e, c in _form_events(db, me):                         # newest first: keep each CSP's latest
         if c.id not in latest:
-            latest[c.id] = _outcome(_now_states(db, (e.payload or {}).get("results") or []))
+            latest[c.id] = _outcome(_now_states(db, (e.payload or {}).get("results") or [], c))
     return {"csps": len(latest), "accepted": sum(v == "accepted" for v in latest.values()),
             "partly": sum(v == "partly" for v in latest.values()),
             "rejected": sum(v == "rejected" for v in latest.values())}
@@ -666,7 +675,7 @@ def form_uploads(outcome: str = "", days: int = 0, me: Principal = Depends(requi
     rows = []
     for e, c in _form_events(db, me, days).limit(1000):
         p = e.payload or {}
-        results = _now_states(db, p.get("results") or [])
+        results = _now_states(db, p.get("results") or [], c)
         out = _outcome(results)
         if outcome and out != outcome:
             continue

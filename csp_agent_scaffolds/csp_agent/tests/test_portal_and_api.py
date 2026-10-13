@@ -553,3 +553,21 @@ def test_csp_gets_a_receipt_right_after_upload(client):
     assert m.reviewed_by == "agent (reply to upload)"           # automatic, recorded like every message
     assert "पहले अपने DC" in m.payload_json["body"] or "RM" in m.payload_json["body"]
     s.close()
+
+
+def test_form_uploads_show_accepted_when_the_documents_are_on_record_now(client, monkeypatch):
+    from app.models import AgreementEvent
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    c, Session = client
+    cid, _, _ = _csp(Session)
+    s = Session()
+    s.add(AgreementEvent(csp_id=cid, event_type="PORTAL_UPLOAD", payload={"results": [
+        {"section": "pvr", "ok": False, "reason": "wrong_doc"}, {"section": "iibf", "ok": False, "reason": "wrong_doc"}]}))
+    for t, exp in (("POLICE_VERIFICATION", date.today() + timedelta(days=200)), ("IIBF_CERTIFICATE", None)):
+        s.add(Document(csp_id=cid, document_type=t, sha256=uuid.uuid4().hex, status=DocumentStatus.VALID,
+                       issue_date=date.today() - timedelta(days=10), expiry_date=exp, is_current=True,
+                       readability="READABLE"))
+    s.commit()
+    s.close()
+    [row] = [r for r in c.get("/api/hub/form-uploads", headers={"X-API-Key": "k"}).json()["rows"] if r["csp"]["id"] == cid]
+    assert row["outcome"] == "accepted" and all(x["ok"] and x["now"] for x in row["results"])
