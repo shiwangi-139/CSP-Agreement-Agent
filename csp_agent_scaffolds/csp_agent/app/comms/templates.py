@@ -55,11 +55,23 @@ def _needed(ctx: dict, lang: str) -> str:
 
 
 def _contact(ctx: dict, lang: str) -> str:
-    if not ctx.get("rm_name"):
+    """Help line: the DC first, then the RM (with numbers when known)."""
+    def who(role):
+        if ctx.get(f"{role}_help"):
+            return ctx[f"{role}_help"]
+        name = ctx.get(f"{role}_name")
+        if not name:
+            return None
+        phone = ctx.get(f"{role}_phone")
+        return f"{role.upper()} {name}" + (f" ({phone})" if phone else "")
+    dc, rm = who("dc"), who("rm")
+    if not (dc or rm):
         return ""
-    phone = f" ({ctx['rm_phone']})" if ctx.get("rm_phone") else ""
-    return (f"मदद के लिए अपने RM {ctx['rm_name']}{phone} से संपर्क करें।" if lang == "hi"
-            else f"For help, contact your RM {ctx['rm_name']}{phone}.")
+    if dc and rm:
+        return (f"मदद के लिए पहले अपने {dc} से, फिर {rm} से बात करें।" if lang == "hi"
+                else f"For help, first contact your {dc}, then your {rm}.")
+    one = dc or rm
+    return f"मदद के लिए अपने {one} से बात करें।" if lang == "hi" else f"For help, contact your {one}."
 
 
 # Documents a CSP gave to the RM earlier may never have reached us.
@@ -162,13 +174,25 @@ def _escalation(role):
 
 
 def _upload_success_all(c):
-    return (f"All documents accepted: compliance complete | KO {c['csp_code']}",
-            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}),\n"
-            f"बधाई हो! आपके सभी सीएसपी दस्तावेज़ (एग्रीमेंट, पुलिस वेरिफिकेशन, आईआईबीएफ) सफलतापूर्वक प्राप्त हो गए हैं और स्वीकार कर लिए गए हैं।\n"
-            f"आपका रिकॉर्ड पूरी तरह अपडेट और सक्रिय है। आपका कियोस्क टर्मिनल बिना किसी रुकावट के चालू रहेगा।",
+    return (f"All your documents are recorded | KO {c['csp_code']}",
+            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}) 🙏\n"
+            f"बधाई हो! आपके तीनों डॉक्यूमेंट (सीएसपी एग्रीमेंट, पुलिस वेरिफिकेशन, आईआईबीएफ सर्टिफिकेट) हमारे रिकॉर्ड में दर्ज हो गए हैं।\n"
+            f"अब आपको कुछ और करने की ज़रूरत नहीं है। किसी डॉक्यूमेंट की तारीख खत्म होने से पहले हम आपको याद दिला देंगे।",
             f"Hello {c['csp_name']} (KO {c['csp_code']}),\n"
-            f"Congratulations! All your CSP documents (Agreement, Police Verification, IIBF) have been successfully received and accepted.\n"
-            f"Your record is fully compliant and active. Your kiosk terminal will continue operating smoothly.")
+            f"All three of your documents (CSP Agreement, Police Verification, IIBF Certificate) are now on our records.\n"
+            f"Nothing more is needed. We will remind you before any of them expires.")
+
+
+def _upload_receipt(c):
+    return (f"Your documents: what we recorded | KO {c['csp_code']}",
+            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}) 🙏\nआपके भेजे डॉक्यूमेंट की जानकारी:\n"
+            f"✅ रिकॉर्ड हो गए: {c.get('ok_hi', 'कोई नहीं')}\n"
+            f"🔍 हमारी टीम जाँच रही है: {c.get('check_hi', 'कोई नहीं')}\n"
+            f"❌ रिकॉर्ड नहीं हुए: {c.get('bad_hi', 'कोई नहीं')}\n"
+            f"जो रिकॉर्ड नहीं हुए, उन्हें ठीक करके इसी लिंक से फिर से अपलोड करें।",
+            f"Hello {c['csp_name']} (KO {c['csp_code']}),\nRecorded: {c.get('ok_en', 'none')}\n"
+            f"Being checked by our team: {c.get('check_en', 'none')}\nNot recorded: {c.get('bad_en', 'none')}\n"
+            f"Please fix and upload the ones not recorded again, using the same link.")
 
 
 def _upload_partial_rejected(c):
@@ -193,13 +217,14 @@ TEMPLATES = {
     "UNREADABLE_REUPLOAD": _unreadable_reupload,
     "LINK_REQUEST": _link_request,
     "UPLOAD_SUCCESS_ALL": _upload_success_all,
+    "UPLOAD_RECEIPT": _upload_receipt,
     "UPLOAD_PARTIAL_REJECTED": _upload_partial_rejected,
     "ESCALATION_RM": _escalation("RM"),
     "ESCALATION_DC": _escalation("DC"),
 }
 CSP_FACING = {"RENEWAL_NOTICE", "RENEWAL_FOLLOWUP", "RENEWAL_FINAL", "UPLOAD_MISSING",
               "UPLOAD_EXPIRED", "ONBOARD_ALL", "UNREADABLE_REUPLOAD", "LINK_REQUEST",
-              "UPLOAD_SUCCESS_ALL", "UPLOAD_PARTIAL_REJECTED"}
+              "UPLOAD_SUCCESS_ALL", "UPLOAD_PARTIAL_REJECTED", "UPLOAD_RECEIPT"}
 
 
 def render(key: str, channel: str, ctx: dict[str, Any]) -> dict[str, str]:

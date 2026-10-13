@@ -433,7 +433,7 @@
       const open = state.fopen || (state.fopen = new Set());
       const results = (r) => `<div class="kv" style="margin-top:6px">${r.results.map((x) => `
           <dt>${esc(DOC[x.type] || x.section)}</dt>
-          <dd>${x.ok ? "✅" : "❌"} ${esc(x.reason)}${x.read_as && !x.ok ? ` <span class="muted">(read as ${esc(DOC[x.read_as] || x.read_as)})</span>` : ""}
+          <dd>${x.ok ? "✅" : "❌"} ${esc(x.now ? x.now : x.reason)}${x.now ? ` <span class="muted">(at upload: ${esc(x.reason)})</span>` : ""}${x.read_as && !x.ok ? ` <span class="muted">(read as ${esc(DOC[x.read_as] || x.read_as)})</span>` : ""}
             ${x.document_id ? ` · <a href="#" data-file="${x.document_id}">view</a>` : ""}${x.kept_file ? ` · <a href="#" data-keptfile="${r.id}/${x.i}">view what they sent</a>` : ""}
             ${x.filename ? `<span class="small muted"> · ${esc(x.filename)}</span>` : ""}</dd>`).join("")}</div>`;
       const attempt = (r, n) => `<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">

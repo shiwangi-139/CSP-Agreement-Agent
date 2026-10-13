@@ -82,6 +82,21 @@ CLEAN.update({
         "Hello {{4}},\nThe {{5}} we received could not be read (blurry or incomplete). It is mandatory; please upload a "
         "clear copy again." + _END.format(link="{{6}}", rm="{{7}}")),
 })
+# Replies right after an upload (app/comms/upload_receipt.py).
+CLEAN.update({
+    "receipt": (
+        "नमस्ते {{1}} (KO {{2}}) 🙏\n\nआपके भेजे डॉक्यूमेंट की जानकारी:\n"
+        "✅ रिकॉर्ड हो गए: {{3}}\n🔍 हमारी टीम जाँच रही है: {{4}}\n❌ रिकॉर्ड नहीं हुए: {{5}}\n"
+        "जो रिकॉर्ड नहीं हुए, उन्हें ठीक करके इसी लिंक से फिर से अपलोड करें।\n\n"
+        "Hello {{6}},\nRecorded: {{7}}\nBeing checked: {{8}}\nNot recorded: {{9}}\n"
+        "Please fix and upload the ones not recorded again." + _END.format(link="{{10}}", rm="{{11}}")),
+    "all_done": (
+        "नमस्ते {{1}} (KO {{2}}) 🙏\n\nबधाई हो! आपके तीनों डॉक्यूमेंट (सीएसपी एग्रीमेंट, पुलिस वेरिफिकेशन, "
+        "आईआईबीएफ सर्टिफिकेट) हमारे रिकॉर्ड में दर्ज हो गए हैं। अब आपको कुछ और करने की ज़रूरत नहीं है। "
+        "किसी डॉक्यूमेंट की तारीख खत्म होने से पहले हम आपको याद दिला देंगे।\n\n"
+        "Hello {{3}}, all three of your documents are now on our records. Nothing more is needed; "
+        "we will remind you before any of them expires.\n\nमदद / Help: {{4}}\n— Eko"),
+})
 _RENEWAL = {"1": "name", "2": "code", "3": "doc_hi", "4": "date", "5": "name", "6": "doc_en", "7": "date",
             "8": "link", "9": "rm"}
 _DOCS = {"1": "name", "2": "code", "3": "doc_hi", "4": "name", "5": "doc_en", "6": "link", "7": "rm"}
@@ -90,13 +105,18 @@ CLEAN_MAP = {"onboard": {"1": "name", "2": "code", "3": "name", "4": "link", "5"
              "renewal_notice": _RENEWAL, "renewal_reminder": _RENEWAL,
              "renewal_final": {"1": "name", "2": "code", "3": "doc_hi", "4": "days", "5": "date", "6": "name",
                                "7": "doc_en", "8": "days", "9": "link", "10": "rm"},
-             "expired": _DOCS, "missing": _DOCS, "unreadable": _DOCS}
+             "expired": _DOCS, "missing": _DOCS, "unreadable": _DOCS,
+             "receipt": {"1": "name", "2": "code", "3": "ok_hi", "4": "check_hi", "5": "bad_hi", "6": "name",
+                         "7": "ok_en", "8": "check_en", "9": "bad_en", "10": "link", "11": "rm"},
+             "all_done": {"1": "name", "2": "code", "3": "name", "4": "rm"}}
 # Message type (OutboundMessage.template_name) -> layout above. RM / DC
 # escalations go to staff and have no WhatsApp layout (yet).
 KIND_FOR_TEMPLATE = {"ONBOARD_ALL": "onboard", "LINK_REQUEST": "link",
                      "RENEWAL_NOTICE": "renewal_notice", "RENEWAL_FOLLOWUP": "renewal_reminder",
                      "RENEWAL_FINAL": "renewal_final", "UPLOAD_EXPIRED": "expired",
-                     "UPLOAD_MISSING": "missing", "UNREADABLE_REUPLOAD": "unreadable"}
+                     "UPLOAD_MISSING": "missing", "UNREADABLE_REUPLOAD": "unreadable",
+                     "UPLOAD_RECEIPT": "receipt", "UPLOAD_PARTIAL_REJECTED": "receipt",
+                     "UPLOAD_SUCCESS_ALL": "all_done"}
 
 
 def layout_values(template_key: str, csp, state, document_type: str) -> dict:

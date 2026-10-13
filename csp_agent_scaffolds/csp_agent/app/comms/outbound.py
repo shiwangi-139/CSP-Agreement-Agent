@@ -210,12 +210,14 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
             extend_for_sent_message(db, payload.get("link"))
         elif msg.channel == "WHATSAPP":
             if WHATSAPP_MODE == "wabs":
-                rm = _staff(db, csp, "RM")
-                rm_text = (f"RM {rm.name}" + (f" ({rm.phone})" if rm.phone else "")) if rm else "आपके RM / your RM"
+                # Help: the DC first, then the RM (the layouts' "rm" value).
+                from .upload_receipt import help_line
+                rm_text = help_line(db, csp)
                 try:
                     from ..compliance import evaluate
                     from .wabs import layout_values
-                    extra = layout_values(msg.template_name, csp, evaluate(db, csp), msg.document_type)
+                    extra = {**layout_values(msg.template_name, csp, evaluate(db, csp), msg.document_type),
+                             **(payload.get("layout_values") or {})}
                 except ValueError as e:
                     _fail(msg, f"Can't fill the WhatsApp layout: {e}", retryable=False)
                     return msg

@@ -441,7 +441,7 @@ def test_readable_upload_with_unknown_wording_goes_to_review_not_rejected(client
     d = s.query(Document).filter_by(csp_id=cid).one()
     assert d.status == DocumentStatus.NEEDS_REVIEW and not d.is_current      # doesn't count yet
     q = s.query(ManualReviewQueue).filter_by(document_id=d.id).one()
-    assert "wasn't recognised" in q.reason and typed.strftime("%d-%m-%Y") in q.reason
+    assert "check it is the right document" in q.reason and typed.strftime("%d-%m-%Y") in q.reason
     assert s.get(CSP, cid).category == 4
     s.close()
 
@@ -476,6 +476,10 @@ def test_a_review_without_a_date_cannot_be_accepted(client, monkeypatch):
     qid = s.query(ManualReviewQueue).filter_by(document_id=d.id).one().id
     s.close()
     hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    s = Session()
+    s.get(Document, d.id).issue_date = None                  # e.g. an e-mailed copy with no date at all
+    s.commit()
+    s.close()
     assert c.post(f"/api/hub/review/{qid}/resolve", json={"accept": True}, headers=hdr).status_code == 422
     ok = c.post(f"/api/hub/review/{qid}/resolve", json={"accept": True, "issue_date": "2026-08-12"}, headers=hdr)
     assert ok.status_code == 200
@@ -531,3 +535,21 @@ def test_a_scan_with_a_garbage_text_layer_is_read_from_the_image(monkeypatch):
     r = ex.extract_document_fields_deterministic(_scan_with_garbage_layer(issue), "pvr.pdf")
     assert r["readability"] == "READABLE" and r["document_type"] == "POLICE_VERIFICATION", r
     assert r["start_date"] == issue.isoformat() and "OCR" in r["ocr_method"]
+
+
+def test_csp_gets_a_receipt_right_after_upload(client):
+    from app.models import OutboundMessage
+    c, Session = client
+    cid, _, token = _csp(Session)
+    issue = date.today() - timedelta(days=30)
+    c.post("/api/portal/upload", data=_form(token, pvr_issue_date=issue.isoformat(), iibf_issue_date=issue.isoformat()),
+           files={"pvr_file": ("pvr.pdf", _pvr_pdf(issue), "application/pdf"),
+                  "iibf_file": ("x.pdf", _pvr_pdf(issue), "application/pdf")})       # a PVR in the IIBF box
+    s = Session()
+    [m] = s.query(OutboundMessage).filter_by(csp_id=cid, template_name="UPLOAD_RECEIPT").all()
+    v = m.payload_json["layout_values"]
+    assert v["ok_en"] == "Police Verification / Character Certificate"
+    assert v["bad_en"].startswith("IIBF Certificate (not the right document")
+    assert m.reviewed_by == "agent (reply to upload)"           # automatic, recorded like every message
+    assert "पहले अपने DC" in m.payload_json["body"] or "RM" in m.payload_json["body"]
+    s.close()

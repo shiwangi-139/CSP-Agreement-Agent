@@ -44,7 +44,7 @@ def send_wabs(message_id: int, phone10: str, template_key: str, name: str, code:
     kind = wabs.KIND_FOR_TEMPLATE.get(template_key)
     if kind is None:
         return SendOutcome("FAILED", error=f"No WhatsApp layout approved for {template_key} yet.")
-    if not link:
+    if not link and "link" in wabs.CLEAN_MAP[kind].values():
         return SendOutcome("FAILED", error="The message has no upload link.")
     try:
         contact = {"phone": f"91{phone10}", "name": name, "code": code, "link": link, "rm": rm, **(extra or {})}

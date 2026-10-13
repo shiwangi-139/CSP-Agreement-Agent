@@ -82,10 +82,10 @@
   </section>
 
   <section class="card rmcard" id="rmcard" style="display:none">
-    <h2>आपके RM: <span id="rmname"></span> <span class="en">/ Your RM</span></h2>
-    <p class="hint" style="margin:0">एग्रीमेंट, डॉक्यूमेंट या किसी और सवाल के लिए अपने RM से बात करें।
-      <span class="en">For questions about the agreement, documents or anything else, talk to your RM.</span></p>
-    <div class="actions" id="rmactions"></div>
+    <h2>मदद के लिए <span class="en">/ For help</span></h2>
+    <p class="hint" style="margin:0">एग्रीमेंट, डॉक्यूमेंट या किसी और सवाल के लिए <b>पहले अपने DC</b> से बात करें, फिर RM से।
+      <span class="en">For questions about the agreement, documents or anything else, talk to your DC first, then your RM.</span></p>
+    <div id="helpers"></div>
   </section>
 
   <section class="card">
@@ -176,15 +176,20 @@
     const st = STATUS[d.status] || [d.status, d.status];
     return `<span class="chip ${esc(d.status)}">${d.status === "VALID" ? "✅" : d.status === "MISSING" ? "⏳" : "⚠️"} ${esc(d.label_hi)} · ${esc(st[0])}</span>`;
   }).join("");
-  if (ctx.csp.rm) {
-    $("rmname").textContent = ctx.csp.rm;
+  // Help: the DC first, then the RM, each with call / WhatsApp buttons.
+  const hello = encodeURIComponent(`नमस्ते, मैं ${ctx.csp.name} (KO ${ctx.csp.code}) हूँ। मुझे डॉक्यूमेंट के बारे में मदद चाहिए।`);
+  const helper = (n, role, name, phone) => {
+    const p = (phone || "").replace(/\D/g, "").slice(-10);
+    return `<div style="margin-top:10px"><b>${n}. ${role}: ${esc(name)}</b>${p.length === 10 ? `<div class="actions">
+        <a class="call" href="tel:+91${p}">📞 कॉल करें / Call</a>
+        <a class="wa" href="https://wa.me/91${p}?text=${hello}" target="_blank" rel="noopener">💬 WhatsApp</a></div>` : ""}</div>`;
+  };
+  const people = [];
+  if (ctx.csp.dc) people.push(["DC", ctx.csp.dc, ctx.csp.dc_phone]);
+  if (ctx.csp.rm) people.push(["RM", ctx.csp.rm, ctx.csp.rm_phone]);
+  if (people.length) {
+    $("helpers").innerHTML = people.map(([r, n, p], i) => helper(i + 1, r, n, p)).join("");
     $("rmcard").style.display = "block";
-    const p = (ctx.csp.rm_phone || "").replace(/\D/g, "").slice(-10);
-    if (p.length === 10) {
-      const hello = encodeURIComponent(`नमस्ते, मैं ${ctx.csp.name} (KO ${ctx.csp.code}) हूँ। मुझे डॉक्यूमेंट के बारे में मदद चाहिए।`);
-      $("rmactions").innerHTML = `<a class="call" href="tel:+91${p}">📞 कॉल करें / Call</a>
-        <a class="wa" href="https://wa.me/91${p}?text=${hello}" target="_blank" rel="noopener">💬 WhatsApp</a>`;
-    }
   }
 
   $("qsend").addEventListener("click", async () => {
@@ -217,6 +222,8 @@
       <h2>${esc(d.label_hi)} <span class="en">/ ${esc(d.label_en)}</span></h2>
       <span class="badge ${esc(d.status)}">${esc(st[0])} / ${esc(st[1])}</span>
       ${current}
+      ${d.last_problem ? `<div class="err" style="margin-top:6px">❌ पिछली बार (${esc(d.last_problem.at)}) यह डॉक्यूमेंट स्वीकार नहीं हुआ: ${esc(d.last_problem.hi)}। कृपया सही डॉक्यूमेंट फिर से अपलोड करें।
+        <span class="en">Last time (${esc(d.last_problem.at)}) this document was not accepted: ${esc(d.last_problem.en)}. Please upload the correct one again.</span></div>` : ""}
       ${d.requested ? "" : `<details><summary>नया डॉक्यूमेंट अपलोड करें <span class="en">/ Upload a newer copy</span></summary>`}
       <label for="${d.section}_file">फ़ाइल चुनें <span class="en">/ Choose file (PDF, max ${ctx.max_upload_mb} MB)</span></label>
       <input type="file" id="${d.section}_file" name="${d.section}_file" accept="application/pdf,image/jpeg,image/png">

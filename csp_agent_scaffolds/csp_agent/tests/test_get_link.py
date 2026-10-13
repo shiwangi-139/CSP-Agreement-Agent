@@ -96,7 +96,7 @@ def test_a_csp_question_reaches_the_dashboard_and_can_be_answered(world, monkeyp
     s.commit()
     s.close()
     page = c.get(f"/upload?token={token}", headers=PUBLIC).text
-    assert "Have a question?" in page and "Your RM" in page
+    assert "Have a question?" in page and "For help" in page
 
     r = c.post("/upload", data={"action": "question", "token": token, "category": "AGREEMENT",
                                 "text": "एग्रीमेंट कहाँ से मिलेगा?", "mobile": "9876501234"}, headers=PUBLIC)

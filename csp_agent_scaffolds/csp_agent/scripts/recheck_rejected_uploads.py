@@ -12,6 +12,10 @@ since uploaded successfully is skipped.
     python -m scripts.recheck_rejected_uploads            # dry run: what would happen, nothing changes
     python -m scripts.recheck_rejected_uploads --apply
     python -m scripts.recheck_rejected_uploads --apply --no-model   # faster: skip the local AI model
+    python -m scripts.recheck_rejected_uploads --apply --no-message # don't message the CSPs
+
+With --apply, each CSP whose documents changed gets the usual WhatsApp
+reply at once: "all recorded", or what is recorded / being checked / not.
 """
 import argparse
 from collections import defaultdict
@@ -62,6 +66,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--no-model", action="store_true", help="don't ask the local AI model (faster)")
+    ap.add_argument("--no-message", action="store_true", help="don't send the CSPs their WhatsApp reply")
     a = ap.parse_args()
     db = SessionLocal()
     try:
@@ -77,7 +82,7 @@ def main():
                         and r.get("section") in SECTION_TYPE and key not in todo:
                     todo[key] = (e, i, r)
         counts = defaultdict(int)
-        touched = set()
+        touched = {}                                 # csp_id -> results for the WhatsApp reply
         for (csp_id, section), (e, i, r) in sorted(todo.items(), key=lambda kv: kv[0]):
             csp = db.get(CSP, csp_id)
             doc_type = SECTION_TYPE[section]
@@ -108,18 +113,24 @@ def main():
                 outcome = f"-> ACCEPTED (issued {ex.get('start_date')}, valid till {ex.get('expiry_date')})"
             counts[outcome.split(" (")[0]] += 1
             print(f"{label} {outcome}")
+            filed_id = None
             if a.apply and outcome.startswith("->") and doc is not None:
                 _make_readable(db, csp, doc, ex)                     # the stored "unreadable" copy, updated in place
-                touched.add(csp_id)
+                filed_id = doc.id
             elif a.apply and outcome.startswith("->"):
-                store_extracted_document(db, csp, data, r.get("filename") or path.name,
-                                         detect_mime(data) or "application/pdf", ex,
-                                         channel="CSP_UPLOAD_PORTAL", sender_on_sheet=True)
-                touched.add(csp_id)
+                out = store_extracted_document(db, csp, data, r.get("filename") or path.name,
+                                               detect_mime(data) or "application/pdf", ex,
+                                               channel="CSP_UPLOAD_PORTAL", sender_on_sheet=True)
+                filed_id = out.document.id if out.document is not None else None
+            if filed_id:
+                touched.setdefault(csp_id, []).append(
+                    {"section": section, "ok": True, "reason": "received_check" if ex.get("type_review") else "accepted"})
             if a.apply:
                 p = dict(e.payload)
                 results = [dict(x) for x in p["results"]]
                 results[i]["rechecked"] = outcome[:120]
+                if filed_id:
+                    results[i]["rechecked_document_id"] = filed_id      # Form uploads shows its state now
                 p["results"] = results
                 e.payload = p
         if a.apply:
@@ -128,6 +139,10 @@ def main():
                 on_documents_received(db, db.get(CSP, cid))
                 refresh_category(db, db.get(CSP, cid))
             db.commit()
+            if not a.no_message:
+                from app.comms.upload_receipt import send_upload_receipt
+                for cid, res in touched.items():
+                    print(f"  message to {db.get(CSP, cid).current_code}: {send_upload_receipt(cid, res)}")
         else:
             db.rollback()
         print("\nSummary:")

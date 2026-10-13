@@ -121,9 +121,29 @@ def _staff(db: Session, uid: Optional[int]) -> Optional[InternalUser]:
     return db.get(InternalUser, uid) if uid else None
 
 
+def _last_problems(db: Session, csp_id: int) -> dict:
+    """Per section, the reason the CSP's latest upload of it was turned
+    away (only when that latest upload was not accepted)."""
+    from ..comms.upload_receipt import SHORT_REASON
+    out, seen = {}, set()
+    for e in (db.query(AgreementEvent).filter(AgreementEvent.csp_id == csp_id,
+                                              AgreementEvent.event_type == "PORTAL_UPLOAD")
+              .order_by(AgreementEvent.sent_at.desc()).limit(20)):
+        for r in (e.payload or {}).get("results") or []:
+            sec = r.get("section")
+            if sec in seen:
+                continue
+            seen.add(sec)
+            if not r.get("ok") and not r.get("rechecked", "").startswith("->"):
+                hi, en = SHORT_REASON.get(r.get("reason"), SHORT_REASON["wrong_doc"])
+                out[sec] = {"hi": hi, "en": en, "at": e.sent_at.strftime("%d-%m-%Y") if e.sent_at else ""}
+    return out
+
+
 def _context(db: Session, csp: CSP, requested: list[str]) -> dict:
     state = evaluate(db, csp)
     rm, dc = _staff(db, csp.rm_id), _staff(db, csp.dc_id)
+    problems = _last_problems(db, csp.id)
     docs = []
     for key, t in SECTIONS.items():
         s = state.docs[t]
@@ -132,10 +152,11 @@ def _context(db: Session, csp: CSP, requested: list[str]) -> dict:
                      "issue_date": s.issue_date.isoformat() if s.issue_date else None,
                      "expiry_date": s.expiry_date.isoformat() if s.expiry_date else None,
                      "requested": t in requested or s.status != "VALID",
+                     "last_problem": problems.get(key) if s.status != "VALID" else None,
                      "max_validity_years": MAX_VALIDITY_YEARS[t]})
     return {"csp": {"code": csp.current_code, "name": csp.name, "email": csp.email or "",
                     "mobile": csp.phone or "", "rm": rm.name if rm else "", "dc": dc.name if dc else "",
-                    "rm_phone": (rm.phone or "") if rm else ""},
+                    "rm_phone": (rm.phone or "") if rm else "", "dc_phone": (dc.phone or "") if dc else ""},
             "docs": docs, "today": date.today().isoformat(),
             "max_upload_mb": round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)}
 
@@ -227,36 +248,13 @@ def _send_link(csp_id: int, phone10: str) -> None:
         db.close()
 
 
-def _send_upload_status(csp_id: int, template_name: str, payload_data: dict) -> None:
-    """Draft and send automated upload status notification (all accepted or rejection notice)."""
-    from ..comms import outbound
-    db = SessionLocal()
-    try:
-        csp = db.get(CSP, csp_id)
-        if not csp:
-            return
-        state = evaluate(db, csp)
-        link = issue_upload_link(db, csp, state.needs_upload) if state.needs_upload else None
-        rm = _staff(db, csp.rm_id)
-        phone = outbound._phone10(csp.phone or "")
-        if not phone:
-            return
-        ctx = {"csp_name": csp.name, "csp_code": csp.current_code, "docs": [], "upload_link": link,
-               "rm_name": rm.name if rm else None, "rm_phone": rm.phone if rm else None, **payload_data}
-        [m] = outbound.draft(db, csp=csp, role="CSP", template_key=template_name, ctx=ctx,
-                             key_base=f"UPLOAD_{template_name}:{csp.id}:{uuid.uuid4().hex[:12]}", channels=("WHATSAPP",),
-                             stage="PORTAL_UPLOAD")
-        if m.status != OutboundStatus.BLOCKED:
-            m.destination = phone
-            m.status, m.reviewed_by, m.reviewed_at = OutboundStatus.APPROVED, "Automated CSP upload notification", outbound._now()
-            outbound.send(db, m)
-        db.commit()
-        logger.info("upload_status_sent csp_id=%s template=%s status=%s", csp_id, template_name, m.status.value)
-    except Exception:
-        db.rollback()
-        logger.exception("upload_status_failed csp_id=%s template=%s", csp_id, template_name)
-    finally:
-        db.close()
+def _send_upload_status(csp_id: int, template_name: str = "", payload_data: Optional[dict] = None,
+                        results: Optional[list] = None, session_factory=None) -> None:
+    """Reply to the CSP right after their documents were handled: "all
+    recorded", or what was recorded / is being checked / was not (and why).
+    Kept under this name for callers elsewhere (app/api/review.py)."""
+    from ..comms.upload_receipt import send_upload_receipt
+    send_upload_receipt(csp_id, results, session_factory=session_factory)
 
 
 QUESTION_CATEGORIES = {"AGREEMENT", "UPLOAD_PROBLEM", "OTHER"}
@@ -535,25 +533,12 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
     revoke_if_complete(db, row, state.needs_upload)
     db.commit()
 
-    # Automated WhatsApp notifications to CSP
-    has_rejected = any(not r.get("ok") for r in results)
-    if len(state.needs_upload) == 0 and not has_rejected:
-        background.add_task(_send_upload_status, csp.id, "UPLOAD_SUCCESS_ALL", {})
-    elif has_rejected:
-        rejections_hi = []
-        rejections_en = []
-        for r in results:
-            if not r.get("ok"):
-                sec_label_en, sec_label_hi = DOC_LABELS.get(SECTIONS.get(r["section"], ""), (r["section"], r["section"]))
-                msg_hi = r.get("message", {}).get("hi", r.get("reason", "अस्वीकृत"))
-                msg_en = r.get("message", {}).get("en", r.get("reason", "Rejected"))
-                rejections_hi.append(f"• {sec_label_hi}: {msg_hi}")
-                rejections_en.append(f"• {sec_label_en}: {msg_en}")
-        payload = {
-            "rejected_reasons_hi": "\n".join(rejections_hi),
-            "rejected_reasons_en": "\n".join(rejections_en),
-        }
-        background.add_task(_send_upload_status, csp.id, "UPLOAD_PARTIAL_REJECTED", payload)
+    # Reply to the CSP at once: what was recorded and what wasn't (and why).
+    # Same database as this request (its own session: it runs after the reply).
+    from sqlalchemy.orm import sessionmaker
+    background.add_task(_send_upload_status, csp.id, results=[{k: r.get(k) for k in ("section", "ok", "reason")}
+                                                             for r in results],
+                        session_factory=sessionmaker(bind=db.get_bind()))
 
     shown = ("section", "ok", "message", "issue_date", "expiry_date")       # nothing internal to the browser
     return {"results": [{k: r[k] for k in shown if k in r} for r in results], "category": state.category,

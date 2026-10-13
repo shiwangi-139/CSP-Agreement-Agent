@@ -129,7 +129,7 @@ def _ctx(db: Session, csp: CSP, state: ComplianceState, link: Optional[str] = No
     ctx = {"csp_name": csp.name, "csp_code": csp.current_code, "csp_phone": csp.phone,
            "docs": docs, "upload_link": link,
            "rm_name": rm.name if rm else None, "rm_phone": rm.phone if rm else None,
-           "dc_name": dc.name if dc else None}
+           "dc_name": dc.name if dc else None, "dc_phone": dc.phone if dc else None}
     ctx.update(extra)
     return ctx
 

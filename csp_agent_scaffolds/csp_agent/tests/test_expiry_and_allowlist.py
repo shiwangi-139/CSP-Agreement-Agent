@@ -262,10 +262,20 @@ def test_upload_success_and_rejected_templates():
 
     # All accepted message
     success_msg = render("UPLOAD_SUCCESS_ALL", "WHATSAPP", ctx)
-    assert "All documents accepted" in success_msg["subject"]
+    assert "All your documents are recorded" in success_msg["subject"]
     assert "बधाई हो" in success_msg["body"]
     assert "1A850946" in success_msg["body"]
-    assert "Congratulations" in success_msg["body"]
+    assert "Nothing more is needed" in success_msg["body"]
+    assert "RM Rajesh Kumar (9876543210)" in success_msg["body"]
+
+    # The receipt after an upload: recorded / being checked / not recorded
+    receipt = render("UPLOAD_RECEIPT", "WHATSAPP", {**ctx, "ok_hi": "सीएसपी एग्रीमेंट", "ok_en": "CSP Agreement",
+                                                    "check_hi": "कोई नहीं", "check_en": "none",
+                                                    "bad_hi": "पुलिस वेरिफिकेशन (फोटो धुंधली है)",
+                                                    "bad_en": "Police Verification (photo blurry)",
+                                                    "dc_help": "DC Sunil (9000000002)", "rm_help": "RM Rajesh Kumar (9876543210)"})
+    assert "✅ रिकॉर्ड हो गए: सीएसपी एग्रीमेंट" in receipt["body"] and "photo blurry" in receipt["body"]
+    assert receipt["body"].index("DC Sunil") < receipt["body"].index("RM Rajesh")      # DC first
 
     # Rejection alert message
     reject_msg = render("UPLOAD_PARTIAL_REJECTED", "WHATSAPP", ctx)

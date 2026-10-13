@@ -222,6 +222,12 @@ def extract_document_fields_deterministic(
     model_ans = None
     type_review = None
     hinted = expected_type in ALLOWED_TYPES
+    if hinted and doc_type in ALLOWED_TYPES and (gate_reason or "").startswith(("Filename suggests", "Uploaded in")):
+        # Named only by the file name or the section it was uploaded in, not
+        # by its wording: a person confirms before it counts.
+        type_review = (f"Taken as a {doc_type.replace('_', ' ').lower()} only from "
+                       f"{'its file name' if gate_reason.startswith('Filename') else 'the section it was uploaded in'}; "
+                       "check it is the right document.")
     if doc_type not in ALLOWED_TYPES:
         # Unreadable text can hide an allowed document (a blurry photo of an
         # agreement), and a CSP's upload may use wording the rules don't

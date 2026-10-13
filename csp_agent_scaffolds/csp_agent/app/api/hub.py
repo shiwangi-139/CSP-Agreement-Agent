@@ -605,6 +605,37 @@ REASON_TEXT = {
 SECTION_TYPE = {"agreement": "AGREEMENT", "pvr": "POLICE_VERIFICATION", "iibf": "IIBF_CERTIFICATE"}
 
 
+ACCEPTED_NOW = {DocumentStatus.VALID, DocumentStatus.MANUAL_VERIFIED, DocumentStatus.NEEDS_APPROVAL,
+                DocumentStatus.EXTRACTED_DETERMINISTIC, DocumentStatus.EXTRACTED_AI}
+
+
+def _now_states(db: Session, results: list[dict]) -> list[dict]:
+    """Each result as it stands NOW: a document later accepted (re-check or
+    review), still in review, or rejected by the team, overrides how the
+    upload went at the time."""
+    out = []
+    for r in results:
+        r = dict(r)
+        did = r.get("rechecked_document_id") or r.get("document_id")
+        d = db.get(Document, did) if did else None
+        now = None
+        if d is not None and d.readability == "READABLE":
+            if d.status in ACCEPTED_NOW or (d.status == DocumentStatus.EXPIRED and r.get("ok")):
+                now = "accepted"
+            elif d.status == DocumentStatus.NEEDS_REVIEW:
+                now = "in_review"
+            elif d.status == DocumentStatus.REJECTED:
+                now = "rejected_by_team"
+        if now == "accepted" and not r.get("ok"):
+            r["ok"], r["now"] = True, "accepted later (re-check / review)"
+        elif now == "in_review":
+            r["now"] = "our team is checking it"
+        elif now == "rejected_by_team" and r.get("ok"):
+            r["ok"], r["now"] = False, "rejected by our team on review"
+        out.append(r)
+    return out
+
+
 def _outcome(results: list[dict]) -> str:
     oks = [bool(r.get("ok")) for r in results]
     return "accepted" if oks and all(oks) else "rejected" if not any(oks) else "partly"
@@ -621,7 +652,8 @@ def _form_events(db: Session, me: Principal, days: int = 0):
 def _form_upload_counts(db: Session, me: Principal) -> dict:
     latest: dict[int, str] = {}
     for e, c in _form_events(db, me):                         # newest first: keep each CSP's latest
-        latest.setdefault(c.id, _outcome((e.payload or {}).get("results") or []))
+        if c.id not in latest:
+            latest[c.id] = _outcome(_now_states(db, (e.payload or {}).get("results") or []))
     return {"csps": len(latest), "accepted": sum(v == "accepted" for v in latest.values()),
             "partly": sum(v == "partly" for v in latest.values()),
             "rejected": sum(v == "rejected" for v in latest.values())}
@@ -634,7 +666,7 @@ def form_uploads(outcome: str = "", days: int = 0, me: Principal = Depends(requi
     rows = []
     for e, c in _form_events(db, me, days).limit(1000):
         p = e.payload or {}
-        results = p.get("results") or []
+        results = _now_states(db, p.get("results") or [])
         out = _outcome(results)
         if outcome and out != outcome:
             continue
@@ -647,7 +679,8 @@ def form_uploads(outcome: str = "", days: int = 0, me: Principal = Depends(requi
                          "type": SECTION_TYPE.get(r.get("section"), r.get("section")), "ok": bool(r.get("ok")),
                          "reason": REASON_TEXT.get(r.get("reason"), "accepted" if r.get("ok") else "rejected"),
                          "read_as": r.get("read_as"), "filename": r.get("filename"),
-                         "document_id": r.get("document_id"), "kept_file": bool(r.get("kept_file"))}
+                         "document_id": r.get("rechecked_document_id") or r.get("document_id"),
+                         "kept_file": bool(r.get("kept_file")), "now": r.get("now")}
                         for i, r in enumerate(results)]})
     return {"rows": rows[:500], "counts": _form_upload_counts(db, me)}
 
@@ -776,6 +809,14 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
         # The rejected copy no longer counts: ask the CSP again right away.
         run_for_csp(db, c)
     db.commit()
+    # A CSP's own upload that waited for a person: tell them the outcome now
+    # (not for spot / reference checks of documents already accepted).
+    if d.upload_channel == "CSP_UPLOAD_PORTAL" and not (q.reason or "").startswith(("Spot check", "Reference check")):
+        from ..comms.upload_receipt import send_upload_receipt
+        from sqlalchemy.orm import sessionmaker
+        send_upload_receipt(c.id, [{"type": canonical_type(d.document_type), "ok": accept,
+                                    "reason": "accepted" if accept else "rejected_by_team"}],
+                            session_factory=sessionmaker(bind=db.get_bind()))
     return {"id": q.id, "status": q.status.value}
 
 
