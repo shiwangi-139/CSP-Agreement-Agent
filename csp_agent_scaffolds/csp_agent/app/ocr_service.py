@@ -387,6 +387,22 @@ MIN_PAGE_TEXT_LAYER = 200   # below this, a PDF page is treated as scanned
 # A text layer shorter than this may be just a stamp or signature over an
 # image (IIBF certificates), so the page image is OCR'd as well.
 SHORT_TEXT_LAYER = 700
+# Many CSP scans are PDFs whose text layer was made by the scanner's own
+# OCR and is mostly garbage ("Character Certif icate", "On ths day of").
+# A page with an image whose layer has fewer real words than this is
+# treated as scanned: the agent reads the image itself. Clean PDFs score
+# about 0.7-0.8; the bad scanner layers seen were 0.1-0.5.
+TEXT_LAYER_MIN_QUALITY = 0.6
+
+
+def text_layer_quality(text: str) -> float:
+    """Share of tokens that look like real words or numbers (0-1)."""
+    toks = re.findall(r"\S+", text or "")
+    if not toks:
+        return 0.0
+    good = sum(1 for w in toks if re.fullmatch(
+        r"[A-Za-z][a-z]{2,}[.,;:)]?|[A-Z]{3,}[.,;:)]?|[\u0900-\u097F]{2,}[।,]?|\d[\d/.\-:,]*", w))
+    return good / len(toks)
 MIN_READABLE_CHARS = 60
 MIN_OCR_CONFIDENCE = 45.0   # mean Tesseract word confidence, 0-100
 
@@ -558,7 +574,7 @@ SEQUENTIAL_PAGES = 3
 # An English page read this well needs no Hindi pass.
 ENGLISH_CONFIDENT = 75.0
 ENGLISH_MAX_LOW_WORDS = 0.10
-CACHE_VERSION = "ocr-v2"
+CACHE_VERSION = "ocr-v3"   # v3: garbage text layers of scanned PDFs are OCR'd again
 _cache_on = OCR_CACHE
 
 
@@ -688,13 +704,19 @@ def _render_gray(pdf_page, dpi: int):
 
 
 def _ocr_page(gray, layer: str) -> tuple[str, float, float, str]:
-    """OCR one rendered page: (text, confidence, blur, source)."""
+    """OCR one rendered page: (text, confidence, blur, source). A garbage
+    text layer (scanner OCR) counts as no layer: it's appended last, never
+    trusted."""
+    if text_layer_quality(layer) < TEXT_LAYER_MIN_QUALITY and len(layer.strip()) >= MIN_PAGE_TEXT_LAYER:
+        layer_trusted, short_layer = False, ""
+    else:
+        layer_trusted, short_layer = len(layer.strip()) >= MIN_PAGE_TEXT_LAYER, layer
     t0 = time.perf_counter()
     blur = _blur_score(gray)
     prepared = _prepare_for_ocr(gray)
     _timed("prepare", t0)
     text, conf = _ocr_image(prepared)
-    if conf < OCR_SECOND_ENGINE_BELOW and len(layer.strip()) < MIN_PAGE_TEXT_LAYER:
+    if conf < OCR_SECOND_ENGINE_BELOW and not layer_trusted:
         second = _ocr_second(gray)
         if second is not None:
             # Keep both readings, the more confident one first (the rules
@@ -702,11 +724,12 @@ def _ocr_page(gray, layer: str) -> tuple[str, float, float, str]:
             s_text, s_conf = second
             text = f"{s_text}\n{text}" if s_conf > conf else f"{text}\n{s_text}"
             conf = max(conf, s_conf)
-    # Keep any small text layer too (e.g. the IIBF digital signature).
-    if layer.strip():
-        text = f"{text}\n{layer}"
+    # Keep any small text layer too (e.g. the IIBF digital signature); a
+    # garbage scanner layer is dropped (its stray "dates" would mislead).
+    if short_layer.strip():
+        text = f"{text}\n{short_layer}"
     source = "OCR"
-    if len(layer.strip()) >= MIN_PAGE_TEXT_LAYER:
+    if layer_trusted:
         source, conf = "DIGITAL", max(conf, 90.0)  # the text layer alone is trustworthy
     return text, conf, blur, source
 
@@ -823,7 +846,9 @@ def scan_document(file_bytes: bytes,
         layer = pdf_page.get_text() or ""
         has_images = bool(pdf_page.get_images(full=False))
         w, h = int(pdf_page.rect.width * OCR_DPI / 72), int(pdf_page.rect.height * OCR_DPI / 72)
-        if len(layer.strip()) >= SHORT_TEXT_LAYER or (len(layer.strip()) >= MIN_PAGE_TEXT_LAYER and not has_images):
+        poor_layer = has_images and text_layer_quality(layer) < TEXT_LAYER_MIN_QUALITY
+        if not poor_layer and (len(layer.strip()) >= SHORT_TEXT_LAYER
+                               or (len(layer.strip()) >= MIN_PAGE_TEXT_LAYER and not has_images)):
             ps = PageScan(idx, layer, "DIGITAL", None, None, w, h)
             new_pages.append(ps)
             return ps, None, None

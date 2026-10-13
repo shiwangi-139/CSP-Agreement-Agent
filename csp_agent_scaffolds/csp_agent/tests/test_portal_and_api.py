@@ -419,7 +419,7 @@ def _plain_pdf(lines: list[str]) -> bytes:
     return doc.tobytes()
 
 
-UNKNOWN_WORDING = ["OFFICE OF THE SUPERINTENDENT OF POLICE, DISTRICT EXAMPLE",
+UNKNOWN_WORDING = ["OFFICE OF THE DISTRICT WELFARE BOARD, DISTRICT EXAMPLE",
                    "Ref No. 1234/SB  Dated: 12-08-2026",
                    "Subject: Report regarding the person named below.",
                    "The above named person resides at the given address and was enquired by the beat staff.",
@@ -434,7 +434,7 @@ def test_readable_upload_with_unknown_wording_goes_to_review_not_rejected(client
     cid, _, token = _csp(Session)
     typed = date.today() - timedelta(days=30)
     r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=typed.isoformat()),
-               files={"pvr_file": ("pvr.pdf", _plain_pdf(UNKNOWN_WORDING), "application/pdf")})
+               files={"pvr_file": ("scan_0042.pdf", _plain_pdf(UNKNOWN_WORDING), "application/pdf")})
     res = r.json()["results"][0]
     assert res["ok"] and "team will check" in res["message"]["en"]
     s = Session()
@@ -470,7 +470,7 @@ def test_a_review_without_a_date_cannot_be_accepted(client, monkeypatch):
     cid, _, token = _csp(Session)
     no_date = [l for l in UNKNOWN_WORDING if "Dated" not in l]
     c.post("/api/portal/upload", data=_form(token, pvr_issue_date=(date.today() - timedelta(days=3)).isoformat()),
-           files={"pvr_file": ("pvr.pdf", _plain_pdf(no_date), "application/pdf")})
+           files={"pvr_file": ("scan_0042.pdf", _plain_pdf(no_date), "application/pdf")})
     s = Session()
     d = s.query(Document).filter_by(csp_id=cid).one()
     qid = s.query(ManualReviewQueue).filter_by(document_id=d.id).one().id
@@ -483,3 +483,51 @@ def test_a_review_without_a_date_cannot_be_accepted(client, monkeypatch):
     d = s.get(Document, d.id)
     assert d.status == DocumentStatus.MANUAL_VERIFIED and d.expiry_date is not None and d.is_current
     s.close()
+
+
+# --------------- scanned PDFs whose hidden text layer is scanner garbage
+def _scan_with_garbage_layer(issue: date) -> bytes:
+    """A scanned page (an image of a clean certificate) plus the kind of
+    invisible text layer some scanners add: mostly garbage."""
+    import fitz
+    from PIL import Image, ImageDraw, ImageFont
+    img = Image.new("L", (1700, 2200), 255)
+    draw = ImageDraw.Draw(img)
+    try:
+        font = ImageFont.truetype("DejaVuSans.ttf", 34)
+    except OSError:
+        font = ImageFont.load_default()
+    lines = ["Government of Uttar Pradesh  CHARACTER CERTIFICATE",
+             f"Application No. 202503277853   Date: {issue.strftime('%d-%m-%Y')}",
+             "This is to certify that no adverse entry was found against the candidate",
+             "in the police records. This certificate is valid only for one year.",
+             f"Digitally signed by TEST OFFICER Date: {issue.strftime('%Y.%m.%d')} 18:29:17"]
+    for i, line in enumerate(lines):
+        draw.text((80, 200 + 90 * i), line, fill=0, font=font)
+    buf = io.BytesIO()
+    img.save(buf, "PNG")
+    doc = fitz.open()
+    page = doc.new_page(width=612, height=792)
+    page.insert_image(page.rect, stream=buf.getvalue())
+    garbage = ("ft_rrq q{fir( gm\"q a\"ft$e I Eflc gft{ el$e&a 6r qilqfaq Oftiee $uperintendent of Psliee "
+               "qke c.{rsr-qd Certif icate <isqrl fqqia 0?/0512026 &d€:2828.O5-87 t2:46:84 ") * 6
+    page.insert_text((20, 40), garbage, fontsize=4, render_mode=3)          # invisible, like a scanner's layer
+    return doc.tobytes()
+
+
+def test_text_layer_quality_tells_garbage_from_real_text():
+    from app.ocr_service import TEXT_LAYER_MIN_QUALITY, text_layer_quality
+    assert text_layer_quality("ft_rrq q{fir( gm\"q a\"ft$e I Eflc gft{ el$e&a 6r qilqfaq") < TEXT_LAYER_MIN_QUALITY
+    assert text_layer_quality("This is to certify that no adverse entry was found against the candidate "
+                              "in the police records dated 12-05-2025.") >= TEXT_LAYER_MIN_QUALITY
+
+
+def test_a_scan_with_a_garbage_text_layer_is_read_from_the_image(monkeypatch):
+    import app.ai.extraction.deterministic_extractor as ex
+    import app.ocr_service as o
+    monkeypatch.setattr(ex, "_ask_model", lambda scan, t: None)
+    monkeypatch.setattr(o, "_cache_on", False)
+    issue = date.today() - timedelta(days=40)
+    r = ex.extract_document_fields_deterministic(_scan_with_garbage_layer(issue), "pvr.pdf")
+    assert r["readability"] == "READABLE" and r["document_type"] == "POLICE_VERIFICATION", r
+    assert r["start_date"] == issue.isoformat() and "OCR" in r["ocr_method"]

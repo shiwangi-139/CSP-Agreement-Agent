@@ -1,6 +1,7 @@
 """
-Re-check files the upload page turned away as "wrong document", with the
-current rules (section hint, more wording, review instead of rejection).
+Re-check files the upload page turned away as "wrong document" or stored as
+"unreadable", with the current rules (section hint, more wording, garbage
+scanner text layers OCR'd again, review instead of rejection).
 
 For each CSP and document section, the newest turned-away file is read
 again. If it is now that document, it is filed exactly as a fresh upload:
@@ -19,8 +20,8 @@ from app import vault
 from app.ai.extraction.deterministic_extractor import extract_document_fields_deterministic
 from app.compliance import USABLE, canonical_type, refresh_category
 from app.db import SessionLocal
-from app.document_service import store_extracted_document
-from app.models import CSP, AgreementEvent, Document
+from app.document_service import _d, _status_for, recompute_current, store_extracted_document, sync_agreement_row
+from app.models import CSP, AgreementEvent, Document, DocumentStatus, ManualReviewQueue, ReviewStatus
 from app.ocr_service import detect_mime
 
 SECTION_TYPE = {"agreement": "AGREEMENT", "pvr": "POLICE_VERIFICATION", "iibf": "IIBF_CERTIFICATE"}
@@ -31,6 +32,30 @@ def _has_good_copy(db, csp_id: int, doc_type: str) -> bool:
         if canonical_type(d.document_type) == doc_type and d.status in USABLE and d.readability == "READABLE":
             return True
     return False
+
+
+def _make_readable(db, csp, doc: Document, ex: dict) -> None:
+    """A copy stored as unreadable that reads correctly now: same rules as a
+    fresh upload (review when the type or date isn't confirmed)."""
+    doc.readability = "READABLE"
+    doc.document_type = ex["document_type"]
+    doc.issue_date, doc.expiry_date = _d(ex.get("start_date")), _d(ex.get("expiry_date"))
+    doc.date_source, doc.validity_rule_used = ex.get("date_source"), ex.get("validity_rule_used")
+    doc.validity_months, doc.extraction_method = ex.get("validity_months"), ex.get("extraction_method")
+    doc.has_explicit_3year_clause = bool(ex.get("has_explicit_3year_clause"))
+    fields = dict(doc.extracted_fields or {}, start_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"),
+                  rechecked="re-read with the current rules")
+    if ex.get("type_review"):
+        fields["needs_confirmation"] = ex["type_review"]
+        doc.status = DocumentStatus.NEEDS_REVIEW
+        db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=ex["type_review"][:500]))
+    else:
+        doc.status = _status_for(ex)
+    doc.extracted_fields = fields
+    db.flush()
+    recompute_current(db, csp, doc.document_type)
+    sync_agreement_row(db, csp)
+    vault.place_csp(db, csp)
 
 
 def main():
@@ -46,7 +71,9 @@ def main():
                   .order_by(AgreementEvent.sent_at.desc())):
             for i, r in enumerate((e.payload or {}).get("results") or []):
                 key = (e.csp_id, r.get("section"))
-                if r.get("reason") == "wrong_doc" and r.get("kept_file") and not r.get("rechecked") \
+                kept = r.get("reason") == "wrong_doc" and r.get("kept_file")
+                stored_unreadable = r.get("reason") == "unreadable" and r.get("document_id")
+                if (kept or stored_unreadable) and not r.get("rechecked") \
                         and r.get("section") in SECTION_TYPE and key not in todo:
                     todo[key] = (e, i, r)
         counts = defaultdict(int)
@@ -59,7 +86,11 @@ def main():
                 counts["already has a good copy"] += 1
                 print(f"{label} skip: a good copy is already on file")
                 continue
-            path = vault.abs_path(r["kept_file"])
+            doc = db.get(Document, r["document_id"]) if r.get("document_id") else None
+            if doc is not None and doc.readability != "UNREADABLE":
+                counts["already re-read"] += 1
+                continue
+            path = vault.abs_path(doc.storage_path if doc is not None else r["kept_file"])
             if path is None or not path.exists():
                 counts["file missing"] += 1
                 print(f"{label} skip: kept file not found")
@@ -77,7 +108,10 @@ def main():
                 outcome = f"-> ACCEPTED (issued {ex.get('start_date')}, valid till {ex.get('expiry_date')})"
             counts[outcome.split(" (")[0]] += 1
             print(f"{label} {outcome}")
-            if a.apply and outcome.startswith("->"):
+            if a.apply and outcome.startswith("->") and doc is not None:
+                _make_readable(db, csp, doc, ex)                     # the stored "unreadable" copy, updated in place
+                touched.add(csp_id)
+            elif a.apply and outcome.startswith("->"):
                 store_extracted_document(db, csp, data, r.get("filename") or path.name,
                                          detect_mime(data) or "application/pdf", ex,
                                          channel="CSP_UPLOAD_PORTAL", sender_on_sheet=True)
