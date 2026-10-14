@@ -85,6 +85,30 @@ def test_valid_from_to_range_sets_expiry():
     assert r["validity_source"] == "AGREEMENT_RANGE_FROM_TO"
 
 
+def test_printed_end_and_close_date_sets_expiry():
+    # Scanned Maharashtra agreement: the start date lost a separator and the
+    # end date is on the next line.
+    text = ("On this day of, 01-07-2025 (\"Effective Date\"), MOHAMMAD MOHSIN\n"
+            "S.B.1. C.S.P. KIOSK ID 14851804, VALIDATION FOR YEAR's:- START DATE ON 01 07-2025 (७ —\n"
+            "TO END AND CLOSE DATE 01-06-2028 Full 3 year agreement.\n")
+    r = extract_agreement("CUSTOMER SERVICE POINT AGREEMENT\n" + text, TODAY)
+    assert r["issue_date"] == date(2025, 7, 1)
+    assert r["explicit_expiry"] == date(2028, 6, 1)
+
+
+def test_full_3_year_agreement_wording():
+    plain = "CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 29/11/2025 (\"Effective Date\")\n"
+    assert extract_agreement(plain, TODAY)["validity_years"] == 1
+    r = extract_agreement(plain + "This is a Full 3 year agreement.", TODAY)
+    assert r["validity_years"] == 3
+
+
+def test_end_date_too_far_or_before_issue_is_ignored():
+    plain = "CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 29/11/2025 (\"Effective Date\")\n"
+    for end in ("01-01-2040", "01-01-2024"):
+        assert extract_agreement(plain + f"End Date: {end}", TODAY)["explicit_expiry"] is None
+
+
 def test_hindi_range():
     r = extract_agreement("यह अनुबंध 01/04/2024 से 31/03/2025 तक मान्य है", TODAY)
     assert r["explicit_expiry"] == date(2025, 3, 31)

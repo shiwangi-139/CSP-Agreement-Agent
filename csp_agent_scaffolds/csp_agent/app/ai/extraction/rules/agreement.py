@@ -12,7 +12,10 @@ Issue date, first match wins:
   3. A labelled "Effective Date : <date>" anywhere.
 
 Validity, first match wins:
-  a. "valid for a period of three (3) years" (or Hindi) anywhere -> 3 years.
+  0. A printed end date: "... TO END AND CLOSE DATE 01-06-2028" / "End Date:
+     ..." (30 days to 6 years after the issue date) -> expiry = that date.
+  a. "valid for a period of three (3) years" / "Full 3 year agreement" (or
+     Hindi) anywhere -> 3 years.
   b. A range "valid from X to Y" / "from X till Y" / "for the period X to Y"
      / "X से Y तक" -> expiry = Y.
   c. Validity not stated anywhere: default 1 year (AGREEMENT_DEFAULT_YEARS).
@@ -36,6 +39,8 @@ THREE_YEAR = [
     re.compile(r"(?:valid|va\w?id|period|per\s?od|remain|validity|duration)[^.\n]{0,40}?\b(?:three|thr[e3]{2}|3)\b\s*(?:\(\s*3\s*\))?\s*y\w{1,4}", re.I),
     re.compile(r"\(\s*3\s*\)\s*y[ea]\w{0,3}", re.I),
     re.compile(r"(?:तीन|3)\s*(?:वर्ष|वर्षों|साल)"),
+    # "Full 3 year agreement", "three years agreement".
+    re.compile(r"\b(?:three|thr[e3]{2}|3)\s*(?:\(\s*3\s*\)\s*)?y[ea]\w{0,3}'?s?\s+agreement", re.I),
     # OCR on a slanted heading often moves "years" to another line, leaving
     # "...shall remain valid for a period of three (3)". The clause is
     # unambiguous without the word, as long as it isn't "three months".
@@ -109,6 +114,20 @@ def _short_year_date(raw: str, end_year: int) -> Optional[date]:
         return None
 
 
+END_DATE = re.compile(r"\bend\s*(?:and\s*close\s*)?date\s*(?:on\b)?\s*[:\-–]?\s*", re.I)
+
+
+def find_end_date(text: str, issue: date) -> Optional[date]:
+    """A printed "End Date" / "END AND CLOSE DATE <date>" between 30 days
+    and 6 years after the issue date (the scan may break the line before it)."""
+    flat = re.sub(r"\s+", " ", normalize(text))
+    for m in END_DATE.finditer(flat):
+        found = find_dates(flat[m.end():m.end() + 30])
+        if found and 30 <= (found[0].value - issue).days <= 6 * 366:
+            return found[0].value
+    return None
+
+
 def find_validity_range(text: str, today: Optional[date] = None) -> Optional[tuple[date, date]]:
     """(start, end) of an explicit validity range between 30 days and 6 years."""
     flat = re.sub(r"[ \t]+", " ", normalize(text))
@@ -143,7 +162,11 @@ def extract_agreement(text: str, today: Optional[date] = None) -> dict:
         if labelled:
             out["issue_date"], out["date_source"] = labelled[0].value, "AGREEMENT_EFFECTIVE_DATE_LABEL"
 
-    if has_three_year_clause(text):
+    end = find_end_date(text, out["issue_date"]) if out["issue_date"] else None
+    if end:
+        out["explicit_expiry"] = end
+        out["validity_source"] = "AGREEMENT_RANGE_FROM_TO"
+    elif has_three_year_clause(text):
         out["has_explicit_3year_clause"] = True
         out["validity_years"] = 3
         out["validity_source"] = "AGREEMENT_EXPLICIT_3_YEAR"
