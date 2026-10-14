@@ -60,3 +60,32 @@ def test_reread_fixes_an_agreement_stored_with_the_one_year_default(db_session, 
     doc = db.get(Document, doc.id)
     assert doc.expiry_date == date(2028, 6, 1) and doc.status == DocumentStatus.VALID
     assert doc.validity_rule_used != "AGREEMENT_DEFAULT_1_YEAR"
+
+
+def test_recheck_files_an_agreement_turned_away_as_expired_by_older_rules(db_session, monkeypatch, capsys):
+    """The upload page turned the agreement away as "expired" (1-year default);
+    with the printed end date it is valid till 2028 and gets filed."""
+    from app import vault
+    from app.models import AgreementEvent
+    import scripts.recheck_rejected_uploads as rc
+    db = db_session
+    code = f"9E{uuid.uuid4().int % 1000000:06d}"
+    csp = CSP(name="Expired-by-mistake CSP", current_code=code, lookup_code=code, phone="9876543210",
+              whatsapp_number="9876543210", is_active_in_calling_sheet=True)
+    db.add(csp)
+    db.flush()
+    kept = vault.ROOT / "_rejected" / code / "agreement.pdf"
+    kept.parent.mkdir(parents=True)
+    _pdf(kept)
+    db.add(AgreementEvent(csp_id=csp.id, event_type="PORTAL_UPLOAD", source="CSP_UPLOAD_PORTAL", channel="WEB",
+                          payload={"results": [{"section": "agreement", "ok": False, "reason": "expired",
+                                                "filename": "agreement.pdf", "kept_file": vault.rel(kept)}]}))
+    db.commit()
+
+    monkeypatch.setattr(rc, "SessionLocal", sessionmaker(bind=db.get_bind()))
+    monkeypatch.setattr(sys, "argv", ["recheck", "--apply", "--no-model", "--no-message"])
+    rc.main()
+    assert "ACCEPTED (issued 2025-07-01, valid till 2028-06-01)" in capsys.readouterr().out
+    db.expire_all()
+    docs = db.query(Document).filter(Document.csp_id == csp.id, Document.document_type == "AGREEMENT").all()
+    assert [(d.expiry_date, d.status) for d in docs] == [(date(2028, 6, 1), DocumentStatus.VALID)]

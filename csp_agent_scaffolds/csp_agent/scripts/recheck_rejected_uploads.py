@@ -1,6 +1,6 @@
 """
-Re-check files the upload page turned away as "wrong document" or stored as
-"unreadable", with the current rules (section hint, more wording, garbage
+Re-check files the upload page turned away as "wrong document" or "expired",
+or stored as "unreadable", with the current rules (section hint, more wording, garbage
 scanner text layers OCR'd again, review instead of rejection).
 
 For each CSP and document section, the newest turned-away file is read
@@ -76,7 +76,9 @@ def main():
                   .order_by(AgreementEvent.sent_at.desc())):
             for i, r in enumerate((e.payload or {}).get("results") or []):
                 key = (e.csp_id, r.get("section"))
-                kept = r.get("reason") == "wrong_doc" and r.get("kept_file")
+                # "expired": read with older rules (e.g. a printed end date missed); a
+                # file that really is expired stays turned away.
+                kept = r.get("reason") in ("wrong_doc", "expired") and r.get("kept_file")
                 stored_unreadable = r.get("reason") == "unreadable" and r.get("document_id")
                 if (kept or stored_unreadable) and not r.get("rechecked") \
                         and r.get("section") in SECTION_TYPE and key not in todo:
