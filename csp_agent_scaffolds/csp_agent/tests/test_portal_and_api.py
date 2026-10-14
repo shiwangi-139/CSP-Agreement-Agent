@@ -551,7 +551,7 @@ def test_csp_gets_a_receipt_right_after_upload(client):
     assert v["ok_en"] == "Police Verification / Character Certificate"
     assert v["bad_en"].startswith("IIBF Certificate (not the right document")
     assert m.reviewed_by == "agent (reply to upload)"           # automatic, recorded like every message
-    assert "पहले अपने DC" in m.payload_json["body"] or "RM" in m.payload_json["body"]
+    assert "कोई सवाल है?" in m.payload_json["body"] and "पहले अपने DC" not in m.payload_json["body"]
     s.close()
 
 

@@ -155,8 +155,7 @@ def _context(db: Session, csp: CSP, requested: list[str]) -> dict:
                      "last_problem": problems.get(key) if s.status != "VALID" else None,
                      "max_validity_years": MAX_VALIDITY_YEARS[t]})
     return {"csp": {"code": csp.current_code, "name": csp.name, "email": csp.email or "",
-                    "mobile": csp.phone or "", "rm": rm.name if rm else "", "dc": dc.name if dc else "",
-                    "rm_phone": (rm.phone or "") if rm else "", "dc_phone": (dc.phone or "") if dc else ""},
+                    "mobile": csp.phone or "", "rm": rm.name if rm else "", "dc": dc.name if dc else ""},
             "docs": docs, "today": date.today().isoformat(),
             "max_upload_mb": round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)}
 
@@ -231,7 +230,7 @@ def _send_link(csp_id: int, phone10: str) -> None:
         link = issue_upload_link(db, csp, state.needs_upload)
         rm = _staff(db, csp.rm_id)
         ctx = {"csp_name": csp.name, "csp_code": csp.current_code, "docs": [], "upload_link": link,
-               "rm_name": rm.name if rm else None, "rm_phone": rm.phone if rm else None}
+               "rm_name": rm.name if rm else None}
         [m] = outbound.draft(db, csp=csp, role="CSP", template_key="LINK_REQUEST", ctx=ctx,
                              key_base=f"LINK:{csp.id}:{uuid.uuid4().hex[:12]}", channels=("WHATSAPP",),
                              stage="LINK_REQUEST")

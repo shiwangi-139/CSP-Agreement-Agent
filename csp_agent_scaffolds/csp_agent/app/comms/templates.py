@@ -55,23 +55,10 @@ def _needed(ctx: dict, lang: str) -> str:
 
 
 def _contact(ctx: dict, lang: str) -> str:
-    """Help line: the DC first, then the RM (with numbers when known)."""
-    def who(role):
-        if ctx.get(f"{role}_help"):
-            return ctx[f"{role}_help"]
-        name = ctx.get(f"{role}_name")
-        if not name:
-            return None
-        phone = ctx.get(f"{role}_phone")
-        return f"{role.upper()} {name}" + (f" ({phone})" if phone else "")
-    dc, rm = who("dc"), who("rm")
-    if not (dc or rm):
-        return ""
-    if dc and rm:
-        return (f"मदद के लिए पहले अपने {dc} से, फिर {rm} से बात करें।" if lang == "hi"
-                else f"For help, first contact your {dc}, then your {rm}.")
-    one = dc or rm
-    return f"मदद के लिए अपने {one} से बात करें।" if lang == "hi" else f"For help, contact your {one}."
+    """Help line for CSPs: the question box on their upload page. Staff
+    names and numbers are never given to CSPs."""
+    from .upload_receipt import HELP_EN, HELP_HI
+    return HELP_HI if lang == "hi" else HELP_EN
 
 
 # Documents a CSP gave to the RM earlier may never have reached us.

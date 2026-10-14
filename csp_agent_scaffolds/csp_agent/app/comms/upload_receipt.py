@@ -10,7 +10,7 @@ Sent automatically (no approval: the CSP has just acted) after an upload on
 the upload page, after a re-check (scripts/recheck_rejected_uploads.py) and
 after a reviewer's decision. Every one is an OutboundMessage, so it is on
 the dashboard (Communication Hub) and in the database like any other
-message. Help lines name the DC first, then the RM.
+message. Help lines point to the question box (no staff numbers).
 """
 import logging
 import uuid
@@ -19,7 +19,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from ..compliance import DOC_LABELS, evaluate
-from ..models import CSP, InternalUser, OutboundStatus
+from ..models import CSP, OutboundStatus
 
 logger = logging.getLogger(__name__)
 
@@ -44,22 +44,15 @@ SHORT_REASON = {
 NONE_HI, NONE_EN = "कोई नहीं", "none"
 
 
-def _staff_text(db: Session, uid: Optional[int], role: str) -> str:
-    u = db.get(InternalUser, uid) if uid else None
-    if u is None:
-        return f"आपके {role} / your {role}"
-    return f"{role} {u.name}" + (f" ({u.phone})" if u.phone else "")
+# CSPs are not given staff names or numbers: questions go through the
+# "Have a question?" box on their upload page (dashboard: Questions).
+HELP_HI = "कोई सवाल हो तो अपने अपलोड लिंक पर 'कोई सवाल है?' में लिखें, हमारी टीम जवाब देगी।"
+HELP_EN = "Any question? Write it under 'Have a question?' on your upload link; our team will reply."
 
 
-def help_values(db: Session, csp: CSP) -> tuple[str, str]:
-    """(DC text, RM text): CSPs should call their DC first, then their RM."""
-    return _staff_text(db, csp.dc_id, "DC"), _staff_text(db, csp.rm_id, "RM")
-
-
-def help_line(db: Session, csp: CSP) -> str:
+def help_line(db: Session = None, csp: CSP = None) -> str:
     """One line for message layouts (no line breaks: Meta allows none in a value)."""
-    dc, rm = help_values(db, csp)
-    return f"पहले {dc}, फिर {rm} / First {dc}, then {rm}"
+    return f"{HELP_HI} / {HELP_EN}"
 
 
 def summarize(results: list[dict]) -> dict:
@@ -104,7 +97,6 @@ def send_upload_receipt(csp_id: int, results: Optional[list[dict]] = None, sessi
         if csp is None:
             return None
         state = evaluate(db, csp)
-        dc, rm = help_values(db, csp)
         if not state.needs_upload:
             key, values, ctx_extra = "UPLOAD_SUCCESS_ALL", {}, {}
         elif results:
@@ -115,13 +107,13 @@ def send_upload_receipt(csp_id: int, results: Optional[list[dict]] = None, sessi
             return None
         link = issue_upload_link(db, csp, state.needs_upload) if state.needs_upload else None
         ctx = {"csp_name": csp.name, "csp_code": csp.current_code, "docs": [], "upload_link": link,
-               "rm_name": None, "dc_help": dc, "rm_help": rm, **ctx_extra}
+               "rm_name": None, **ctx_extra}
         drafted = outbound.draft(db, csp=csp, role="CSP", template_key=key, ctx=ctx,
                                  key_base=f"{key}:{csp.id}:{uuid.uuid4().hex[:12]}", channels=("WHATSAPP",),
                                  stage="AFTER_UPLOAD")
         m = drafted[0]
-        # The layout's other values; its help line (DC first, then RM) is
-        # filled in at send time like every other message.
+        # The layout's other values; its help line is filled in at send
+        # time like every other message.
         m.payload_json = {**(m.payload_json or {}), "layout_values": values}
         if m.status != OutboundStatus.BLOCKED:
             # The CSP has just acted: this reply goes out at once, no approval

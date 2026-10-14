@@ -267,16 +267,17 @@ def test_upload_success_and_rejected_templates():
     assert "scanned PDF" not in success_msg["body"]                 # nothing left to upload
     assert "1A850946" in success_msg["body"]
     assert "Nothing more is needed" in success_msg["body"]
-    assert "RM Rajesh Kumar (9876543210)" in success_msg["body"]
+    # No staff names or numbers for CSPs: only the question box.
+    assert "9876543210" not in success_msg["body"] and "Rajesh" not in success_msg["body"]
+    assert "Have a question?" in success_msg["body"]
 
     # The receipt after an upload: recorded / being checked / not recorded
     receipt = render("UPLOAD_RECEIPT", "WHATSAPP", {**ctx, "ok_hi": "सीएसपी एग्रीमेंट", "ok_en": "CSP Agreement",
                                                     "check_hi": "कोई नहीं", "check_en": "none",
                                                     "bad_hi": "पुलिस वेरिफिकेशन (फोटो धुंधली है)",
-                                                    "bad_en": "Police Verification (photo blurry)",
-                                                    "dc_help": "DC Sunil (9000000002)", "rm_help": "RM Rajesh Kumar (9876543210)"})
+                                                    "bad_en": "Police Verification (photo blurry)"})
     assert "✅ रिकॉर्ड हो गए: सीएसपी एग्रीमेंट" in receipt["body"] and "photo blurry" in receipt["body"]
-    assert receipt["body"].index("DC Sunil") < receipt["body"].index("RM Rajesh")      # DC first
+    assert "9876543210" not in receipt["body"] and "कोई सवाल है?" in receipt["body"]
 
     # Rejection alert message
     reject_msg = render("UPLOAD_PARTIAL_REJECTED", "WHATSAPP", ctx)

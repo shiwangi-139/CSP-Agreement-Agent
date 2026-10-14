@@ -210,7 +210,7 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
             extend_for_sent_message(db, payload.get("link"))
         elif msg.channel == "WHATSAPP":
             if WHATSAPP_MODE == "wabs":
-                # Help: the DC first, then the RM (the layouts' "rm" value).
+                # Help (the layouts' "rm" value): the question box, no staff numbers.
                 from .upload_receipt import help_line
                 rm_text = help_line(db, csp)
                 try:
