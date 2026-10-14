@@ -101,6 +101,13 @@ def due_renewal_steps(ladder_key: str, days_left: int) -> list[dict]:
     return [s for s in LADDERS[ladder_key] if days_left <= s["days_before"]]
 
 
+def in_daily_push(today) -> bool:
+    """True on the days of the daily push (DAILY_PUSH_FROM..DAILY_PUSH_UNTIL
+    in .env): the upload cycle then sends the CSP one message a day."""
+    from .config import DAILY_PUSH_FROM, DAILY_PUSH_UNTIL
+    return bool(DAILY_PUSH_FROM and DAILY_PUSH_UNTIL and DAILY_PUSH_FROM <= today <= DAILY_PUSH_UNTIL)
+
+
 def upload_step(index: int) -> dict:
     """The upload cycle's step number `index` (0 = first message)."""
     if index < len(UPLOAD_CYCLE):

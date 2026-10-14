@@ -38,6 +38,7 @@ from . import policy
 logger = logging.getLogger(__name__)
 
 MIN_CSP_BEFORE_RM = 2
+PUSH_STAGE = "U-PUSH-"     # daily-push messages: U-PUSH-20261014, U-PUSH-20261015, ...
 
 
 def _now() -> datetime:
@@ -246,12 +247,22 @@ def _run_upload_cycle(db: Session, csp: CSP, state: ComplianceState, today: date
         _sync_counts(cycle, stages)
         return None
     _sync_counts(cycle, stages)
-    if cycle.csp_messages >= policy.MAX_CSP_UPLOAD_MESSAGES:
+    # Daily-push messages (stage U-PUSH-<date>) sit outside the ladder: they
+    # neither use up its steps nor count towards its cap. After the push the
+    # ladder goes on from where it was (from U-2 if it never started).
+    pushed = [st for st in stages if st["stage"].startswith(PUSH_STAGE)]
+    ladder = [st for st in stages if not st["stage"].startswith(PUSH_STAGE)]
+    push = policy.in_daily_push(today)
+    ladder_sent = sum(1 for st in ladder if st["state"] == "SENT" and st["role"] == "CSP")
+    if ladder_sent >= policy.MAX_CSP_UPLOAD_MESSAGES and not push:
         return None
 
     # Every finished step (sent, or rejected on the dashboard) moves the
     # cycle one step on; the next waits its gap after the latest of them.
-    step = dict(policy.upload_step(len(stages)))
+    # During the daily push: one message to the CSP a day, no escalations.
+    step = ({"stage": f"{PUSH_STAGE}{today:%Y%m%d}", "gap": 1, "to": "CSP"} if push
+            else dict(policy.upload_step(len(ladder) + (1 if pushed and all(st["stage"] != "U-1" for st in ladder)
+                                                        else 0))))
     if stages:
         due_on = max(st["at"] for st in stages).date() + timedelta(days=step["gap"])
         if today < due_on:

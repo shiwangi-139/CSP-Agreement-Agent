@@ -234,7 +234,8 @@
     async comms() {
       const d = await api(`/api/hub/messages?channel=${state.channel}&status=${state.msgStatus}&slab=${state.msgSlab || ""}&kind=${state.msgKind || ""}&size=100`);
       const kinds = [["", "All types"], ["renewal", "Renewal reminders"], ["expired", "Renew expired"], ["missing", "Upload missing"],
-                     ["onboard", "Onboarding (no documents)"], ["escalation", "RM / DC escalations"]];
+                     ["onboard", "Onboarding (no documents)"], ["escalation", "RM / DC escalations"],
+                     ["upload_reply", "Replies after upload"]];
       const allKinds = Object.values(d.by_kind).reduce((a, b) => a + b, 0);
       const allSlabs = Object.values(d.by_slab).reduce((a, b) => a + b, 0);
       const c = d.counts;
@@ -355,7 +356,8 @@
       const NAMES = {today: "Today", yesterday: "Yesterday", last_7_days: "Last 7 days", last_30_days: "Last 30 days"};
       const TYPES = {ONBOARD_ALL: "Onboarding (no documents)", UPLOAD_MISSING: "Documents missing", UPLOAD_EXPIRED: "Documents expired",
                      UNREADABLE_REUPLOAD: "Unreadable, re-upload", RENEWAL_NOTICE: "Renewal notice", RENEWAL_FOLLOWUP: "Renewal reminder",
-                     RENEWAL_FINAL: "Renewal final", LINK_REQUEST: "Link the CSP asked for"};
+                     RENEWAL_FINAL: "Renewal final", LINK_REQUEST: "Link the CSP asked for",
+                     UPLOAD_RECEIPT: "Reply after upload", UPLOAD_SUCCESS_ALL: "All documents recorded"};
       const card = ([k, p]) => `<div class="card kpi"><div class="label">${NAMES[k]}</div>
         <div class="kv">
           <dt>WhatsApp sent</dt><dd class="num">${p.whatsapp.sent}${p.whatsapp.delivered ? ` <span class="small muted">· ${p.whatsapp.delivered} delivered · ${p.whatsapp.read} read</span>` : ""}</dd>

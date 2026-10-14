@@ -398,6 +398,7 @@ MESSAGE_KINDS = {
     "missing": ("UPLOAD_MISSING", "UNREADABLE_REUPLOAD"),
     "onboard": ("ONBOARD_ALL",),
     "escalation": ("ESCALATION_RM", "ESCALATION_DC"),
+    "upload_reply": ("UPLOAD_RECEIPT", "UPLOAD_SUCCESS_ALL", "UPLOAD_PARTIAL_REJECTED"),
 }
 
 

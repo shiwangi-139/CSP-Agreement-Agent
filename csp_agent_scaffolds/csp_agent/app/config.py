@@ -117,6 +117,20 @@ try:
 except ValueError:
     AUTO_SEND_HOURS = (10, 18)
 
+# Daily push: from DAILY_PUSH_FROM to DAILY_PUSH_UNTIL (YYYY-MM-DD, both
+# days included) every CSP who still has documents to upload gets one
+# message a day instead of the usual 4-day / weekly gaps. Empty = off.
+def _env_date(name: str):
+    from datetime import date
+    try:
+        return date.fromisoformat(os.getenv(name, "").strip())
+    except ValueError:
+        return None
+
+
+DAILY_PUSH_FROM = _env_date("DAILY_PUSH_FROM")
+DAILY_PUSH_UNTIL = _env_date("DAILY_PUSH_UNTIL")
+
 # Upload portal and public links.
 PORTAL_SECRET_KEY = os.getenv("PORTAL_SECRET_KEY", "")
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000").rstrip("/")

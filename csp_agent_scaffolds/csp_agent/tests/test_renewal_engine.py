@@ -408,3 +408,30 @@ def test_csp_with_no_contact_is_not_drafted_again_every_day(db_session):
     csp.phone = csp.whatsapp_number = None
     _run_days(db, csp, TODAY, 20)
     assert len(_msgs(db, csp)) == 2 and all(m.status == OutboundStatus.BLOCKED for m in _msgs(db, csp))
+
+
+def test_daily_push_sends_one_message_a_day_then_back_to_the_ladder(db_session, monkeypatch):
+    from app import config
+    db = db_session
+    csp = _csp(db)
+    _doc(db, csp, "AGREEMENT", date(2026, 1, 1), date(2029, 1, 1))   # PVR + IIBF missing
+    start = date(2026, 10, 14)
+    monkeypatch.setattr(config, "DAILY_PUSH_FROM", start)
+    monkeypatch.setattr(config, "DAILY_PUSH_UNTIL", date(2026, 10, 20))
+    _run_days(db, csp, start, 25, send=True)                          # 7 push days + 18 after
+    wa = [m for m in _msgs(db, csp) if m.channel == "WHATSAPP"]
+    steps = [(m.stage, m.recipient_role, (m.sent_at.date() - start).days) for m in wa]
+    assert steps[:7] == [(f"U-PUSH-202610{d}", "CSP", d - 14) for d in range(14, 21)]   # once a day, CSP only
+    # Then the usual ladder from its second step: 4 days, 7 days, then the RM.
+    assert steps[7:] == [("U-2", "CSP", 10), ("U-3", "CSP", 17), ("U-RM1", "RM", 24)]
+    assert all(m.template_name == "UPLOAD_MISSING" for m in wa if m.recipient_role == "CSP")
+
+
+def test_daily_push_does_not_pile_up_unsent_messages(db_session, monkeypatch):
+    from app import config
+    db = db_session
+    csp = _csp(db)
+    monkeypatch.setattr(config, "DAILY_PUSH_FROM", date(2026, 10, 14))
+    monkeypatch.setattr(config, "DAILY_PUSH_UNTIL", date(2026, 10, 20))
+    _run_days(db, csp, date(2026, 10, 14), 7)                         # nothing sent all week
+    assert len({m.stage for m in _msgs(db, csp)}) == 1
