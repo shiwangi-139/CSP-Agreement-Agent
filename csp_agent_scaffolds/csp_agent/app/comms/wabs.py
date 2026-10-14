@@ -91,11 +91,13 @@ CLEAN.update({
         "Hello {{6}},\nRecorded: {{7}}\nBeing checked: {{8}}\nNot recorded: {{9}}\n"
         "Please fix and upload the ones not recorded again." + _END.format(link="{{10}}", rm="{{11}}")),
     "all_done": (
-        "नमस्ते {{1}} (KO {{2}}) 🙏\n\nबधाई हो! आपके तीनों डॉक्यूमेंट (सीएसपी एग्रीमेंट, पुलिस वेरिफिकेशन, "
-        "आईआईबीएफ सर्टिफिकेट) हमारे रिकॉर्ड में दर्ज हो गए हैं। अब आपको कुछ और करने की ज़रूरत नहीं है। "
-        "किसी डॉक्यूमेंट की तारीख खत्म होने से पहले हम आपको याद दिला देंगे।\n\n"
-        "Hello {{3}}, all three of your documents are now on our records. Nothing more is needed; "
-        "we will remind you before any of them expires.\n\nमदद / Help: {{4}}\n— Eko"),
+        "नमस्ते {{1}} (KO {{2}}) 🙏\n\nफ़ॉर्म भरने के लिए आपका बहुत-बहुत धन्यवाद! 🎉\n"
+        "आपके तीनों डॉक्यूमेंट (सीएसपी एग्रीमेंट, पुलिस वेरिफिकेशन और आईआईबीएफ सर्टिफिकेट) जाँच में सही पाए गए हैं "
+        "और आपका फ़ॉर्म जमा हो गया है।\nअभी आपको कुछ और करने की ज़रूरत नहीं है। किसी डॉक्यूमेंट की तारीख खत्म होने से पहले "
+        "हम आपको समय पर याद दिला देंगे।\nसमय पर डॉक्यूमेंट जमा करने के लिए आपका धन्यवाद! 🙏\n\n"
+        "Hello {{3}}, thank you so much for filling the form! All three of your documents have been checked and are "
+        "valid, and your form is submitted. Nothing more is needed for now; we will remind you before any document "
+        "is due to expire. Thank you for being on time!\n\nमदद / Help: {{4}}\n— Eko"),
 })
 _RENEWAL = {"1": "name", "2": "code", "3": "doc_hi", "4": "date", "5": "name", "6": "doc_en", "7": "date",
             "8": "link", "9": "rm"}

@@ -174,13 +174,17 @@ def _escalation(role):
 
 
 def _upload_success_all(c):
-    return (f"All your documents are recorded | KO {c['csp_code']}",
+    return (f"Thank you: your form is submitted | KO {c['csp_code']}",
             f"नमस्ते {c['csp_name']} (KO {c['csp_code']}) 🙏\n"
-            f"बधाई हो! आपके तीनों डॉक्यूमेंट (सीएसपी एग्रीमेंट, पुलिस वेरिफिकेशन, आईआईबीएफ सर्टिफिकेट) हमारे रिकॉर्ड में दर्ज हो गए हैं।\n"
-            f"अब आपको कुछ और करने की ज़रूरत नहीं है। किसी डॉक्यूमेंट की तारीख खत्म होने से पहले हम आपको याद दिला देंगे।",
+            f"फ़ॉर्म भरने के लिए आपका बहुत-बहुत धन्यवाद! 🎉\n"
+            f"आपके तीनों डॉक्यूमेंट (सीएसपी एग्रीमेंट, पुलिस वेरिफिकेशन और आईआईबीएफ सर्टिफिकेट) जाँच में सही पाए गए हैं और आपका फ़ॉर्म जमा हो गया है।\n"
+            f"अभी आपको कुछ और करने की ज़रूरत नहीं है। किसी डॉक्यूमेंट की तारीख खत्म होने से पहले हम आपको समय पर याद दिला देंगे।\n"
+            f"समय पर डॉक्यूमेंट जमा करने के लिए आपका धन्यवाद! 🙏",
             f"Hello {c['csp_name']} (KO {c['csp_code']}),\n"
-            f"All three of your documents (CSP Agreement, Police Verification, IIBF Certificate) are now on our records.\n"
-            f"Nothing more is needed. We will remind you before any of them expires.")
+            f"Thank you so much for filling the form! All three of your documents (CSP Agreement, Police Verification, "
+            f"IIBF Certificate) have been checked and are valid, and your form is submitted.\n"
+            f"Nothing more is needed for now; we will remind you before any document is due to expire. "
+            f"Thank you for being on time!")
 
 
 def _upload_receipt(c):
@@ -237,10 +241,11 @@ def render(key: str, channel: str, ctx: dict[str, Any]) -> dict[str, str]:
                 _contact(ctx, "hi") if csp_facing else ""]
     en_parts = [en, _link(ctx, "en") if csp_facing else "", FORM_EN if form else "",
                 _contact(ctx, "en") if csp_facing else ""]
-    if csp_facing and channel == "EMAIL":
+    upload_tips = csp_facing and key != "UPLOAD_SUCCESS_ALL"     # nothing left to upload: no scan tips
+    if upload_tips and channel == "EMAIL":
         hi_parts.append(SCAN_RULES_HI)
         en_parts.append(SCAN_RULES_EN)
-    elif csp_facing:
+    elif upload_tips:
         hi_parts.append("कृपया स्कैन की हुई साफ़ PDF ही अपलोड करें।")
         en_parts.append("Please upload a clear scanned PDF.")
     hindi = "\n".join(p for p in hi_parts if p)

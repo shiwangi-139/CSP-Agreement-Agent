@@ -262,8 +262,9 @@ def test_upload_success_and_rejected_templates():
 
     # All accepted message
     success_msg = render("UPLOAD_SUCCESS_ALL", "WHATSAPP", ctx)
-    assert "All your documents are recorded" in success_msg["subject"]
-    assert "बधाई हो" in success_msg["body"]
+    assert "Thank you: your form is submitted" in success_msg["subject"]
+    assert "फ़ॉर्म भरने के लिए आपका बहुत-बहुत धन्यवाद" in success_msg["body"]
+    assert "scanned PDF" not in success_msg["body"]                 # nothing left to upload
     assert "1A850946" in success_msg["body"]
     assert "Nothing more is needed" in success_msg["body"]
     assert "RM Rajesh Kumar (9876543210)" in success_msg["body"]
