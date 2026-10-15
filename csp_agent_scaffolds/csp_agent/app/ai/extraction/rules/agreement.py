@@ -12,19 +12,24 @@ Issue date, first match wins:
   3. A labelled "Effective Date : <date>" anywhere.
 
 Validity, first match wins:
-  0. A printed end date: "... TO END AND CLOSE DATE 01-06-2028" / "End Date:
-     ..." (30 days to 6 years after the issue date) -> expiry = that date.
+  0. A printed end date (30 days to 6 years after the issue date) -> expiry =
+     that date. Wordings seen on real agreements: "shall be valid upto
+     25/10/2027" (term clause), "... TO END AND CLOSE DATE 01-06-2028", also
+     "valid till / until / up to", "Expiry Date:", "expires on", Hindi
+     "<date> तक मान्य / वैध". A blank "valid upto ____" is not a date.
   a. "valid for a period of three (3) years" / "Full 3 year agreement" (or
      Hindi) anywhere -> 3 years.
   b. A range "valid from X to Y" / "from X till Y" / "for the period X to Y"
      / "X से Y तक" -> expiry = Y.
-  c. Validity not stated anywhere: default 1 year (AGREEMENT_DEFAULT_YEARS).
+  c. "This Agreement ... valid for a period of two (2) / five years" -> that
+     many years (three is rule a).
+  d. Validity not stated anywhere: default 1 year (AGREEMENT_DEFAULT_YEARS).
 """
 import re
 from datetime import date
 from typing import Optional
 
-from ....expiry_engine import AGREEMENT_DEFAULT_YEARS
+from ....expiry_engine import AGREEMENT_DEFAULT_YEARS, add_years
 from .dates import find_dates, dates_after, plausible_issue_date, normalize, FoundDate
 
 ESTAMP_LABEL = re.compile(r"(?:c\w{0,4}[rt]\w{0,6}\s*)?issu\w{0,3}\s*(?:date|dt)\b", re.I)
@@ -32,6 +37,10 @@ ESTAMP_CERT_NO = re.compile(r"\bIN-[A-Z]{2}\d{6,}", re.I)
 HEADING = re.compile(r"customer\s*service\s*point\s*agreement", re.I)
 EFFECTIVE = re.compile(r"effective\s*date", re.I)
 EFFECTIVE_LABEL = re.compile(r"effective\s*date\s*[:\-–]\s*", re.I)
+# Every Eko template opens "On this day of, 25/06/2025": found even when OCR
+# garbles the heading (",USTOMER SERVICEINT AGREEMENT"). OCR also reads "day"
+# as "gev" or "dav".
+THIS_DAY_OF = re.compile(r"on\s+th[il1]s\s+\w{2,4}\s+of\s*[,.:]?\s*[_\s]*", re.I)
 
 # OCR-tolerant: "three (3) years", "three (3) yea.s", "per od oJ three (3)",
 # "Three (3) Years", "3 years", Hindi "तीन वर्ष" / "3 वर्ष" / "तीन साल".
@@ -114,18 +123,45 @@ def _short_year_date(raw: str, end_year: int) -> Optional[date]:
         return None
 
 
-END_DATE = re.compile(r"\bend\s*(?:and\s*close\s*)?date\s*(?:on\b)?\s*[:\-–]?\s*", re.I)
+# A label right before the agreement's last day. Only separators may stand
+# between the label and the date, so a blank "valid upto ____ or until
+# terminated" never picks up a date from the next clause.
+END_DATE = re.compile(
+    r"\b(?:end\s*(?:and\s*close\s*)?date\s*(?:on\b)?"
+    r"|valid(?:ity)?\s*(?:up\s*to|upto|till|until|thru|through)(?:\s*date)?"
+    r"|expir(?:y|es|ing|ation)(?:\s*date)?(?:\s*on)?)\s*", re.I)
+BETWEEN_LABEL_AND_DATE = re.compile(r"^[\s:\-–—_.,(]{0,12}$")
+HINDI_UPTO = re.compile(r"\s*तक\s*(?:मान्य|वैध)")
 
 
 def find_end_date(text: str, issue: date) -> Optional[date]:
-    """A printed "End Date" / "END AND CLOSE DATE <date>" between 30 days
+    """A printed last day ("valid upto 25/10/2027", "END AND CLOSE DATE
+    01-06-2028", "Expiry Date: ...", "31/03/2027 तक मान्य") between 30 days
     and 6 years after the issue date (the scan may break the line before it)."""
     flat = re.sub(r"\s+", " ", normalize(text))
+    ok = lambda d: 30 <= (d - issue).days <= 6 * 366
     for m in END_DATE.finditer(flat):
-        found = find_dates(flat[m.end():m.end() + 30])
-        if found and 30 <= (found[0].value - issue).days <= 6 * 366:
+        window = flat[m.end():m.end() + 40]
+        found = find_dates(window)
+        if found and BETWEEN_LABEL_AND_DATE.match(window[:found[0].start]) and ok(found[0].value):
             return found[0].value
+    for f in find_dates(flat):
+        if HINDI_UPTO.match(flat, f.end) and ok(f.value):
+            return f.value
     return None
+
+
+YEAR_WORDS = {"one": 1, "two": 2, "four": 4, "five": 5, "1": 1, "2": 2, "4": 4, "5": 5}
+# "This Agreement shall remain valid for a period of two (2) years": only in
+# a sentence about the agreement, so "keep records for five years" can't count.
+STATED_YEARS = re.compile(
+    r"agreement[^.\n]{0,60}?(?:valid|validity|period|remain|term)[^.\n]{0,40}?"
+    r"\b(one|two|four|five|[1245])\b\s*(?:\(\s*[1245]\s*\)\s*)?y(?:ea)?rs?\b", re.I)
+
+
+def stated_years(text: str) -> Optional[int]:
+    m = STATED_YEARS.search(re.sub(r"\s+", " ", normalize(text)))
+    return YEAR_WORDS[m.group(1).lower()] if m else None
 
 
 def find_validity_range(text: str, today: Optional[date] = None) -> Optional[tuple[date, date]]:
@@ -158,6 +194,10 @@ def extract_agreement(text: str, today: Optional[date] = None) -> dict:
             out["issue_date"], out["date_source"] = found.value, source
             break
     if out["issue_date"] is None:
+        after = dates_after(text, THIS_DAY_OF, 15, today)
+        if after:
+            out["issue_date"], out["date_source"] = after[0].value, "AGREEMENT_THIS_DAY_OF"
+    if out["issue_date"] is None:
         labelled = dates_after(text, EFFECTIVE_LABEL, 40, today)
         if labelled:
             out["issue_date"], out["date_source"] = labelled[0].value, "AGREEMENT_EFFECTIVE_DATE_LABEL"
@@ -177,6 +217,11 @@ def extract_agreement(text: str, today: Optional[date] = None) -> dict:
             out["validity_source"] = "AGREEMENT_RANGE_FROM_TO"
             if out["issue_date"] is None:
                 out["issue_date"], out["date_source"] = rng[0], "AGREEMENT_RANGE_START"
+        elif out["issue_date"] and stated_years(text):
+            years = stated_years(text)
+            out["explicit_expiry"] = add_years(out["issue_date"], years)
+            out["validity_years"] = years
+            out["validity_source"] = "AGREEMENT_RANGE_FROM_TO"       # a known last day, like a range
         else:
             out["validity_years"] = AGREEMENT_DEFAULT_YEARS
             out["validity_source"] = f"AGREEMENT_DEFAULT_{AGREEMENT_DEFAULT_YEARS}_YEAR"

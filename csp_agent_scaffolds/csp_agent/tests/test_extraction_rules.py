@@ -2,6 +2,8 @@
 (names and numbers replaced). No database needed."""
 from datetime import date
 
+import pytest
+
 from app.ai.extraction.rules import extract_agreement, extract_pvr, extract_iibf, find_dates, add_months
 
 TODAY = date(2026, 9, 25)
@@ -288,3 +290,38 @@ def test_bihar_rtps_application_receipt_is_not_a_certificate():
     text = ("लोक सेवाओं का अधिकार बिहार सरकार (आवेदन का विवरण) सेवा का नाम : आचरण प्रमाण-पत्र का निर्गमन "
             "सेवा प्रदान करने की प्रस्तावित तिथि : 03/11/2026")
     assert classify_allowlist_gate(text, "", "POLICE_VERIFICATION")[1] == "PVR_APPLICATION_ONLY"
+
+
+# ------------------------------------------- agreement validity wordings (real agreements)
+PLAIN = "CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 26/10/2024 (\"Effective Date\"), CSP Name ANUP\n"
+
+
+@pytest.mark.parametrize("clause, expiry", [
+    ("Term: This Agreement shall commence on the Effective Date and shall be valid upto 25/10/2027\nor until "
+     "terminated in accordance with Clause I(4)B", date(2027, 10, 25)),                  # Anup, Haryana
+    ("shall be valid up to: 25-10-2027 or until terminated", date(2027, 10, 25)),
+    ("This agreement is valid till 31/03/2027.", date(2027, 3, 31)),
+    ("Expiry Date : 25.10.2027", date(2027, 10, 25)),
+    ("यह अनुबंध 25/10/2027 तक मान्य है।", date(2027, 10, 25)),
+    ("This Agreement shall remain valid for a period of two (2) years from the Effective Date.", date(2026, 10, 26)),
+])
+def test_agreement_printed_last_day_or_stated_years(clause, expiry):
+    from app.expiry_engine import calculate_document_expiry
+    r = extract_agreement(PLAIN + clause, TODAY)
+    exp = calculate_document_expiry("AGREEMENT", r["issue_date"], explicit_expiry_date=r["explicit_expiry"],
+                                    has_explicit_3year_clause=r["has_explicit_3year_clause"], today=TODAY)
+    assert r["issue_date"] == date(2024, 10, 26) and exp["calculated_expiry"] == expiry
+
+
+def test_unrelated_years_and_far_dates_are_not_the_agreement_term():
+    text = PLAIN + ("CSP shall keep records for a period of five years. "
+                    "valid upto ____ or until terminated. Penalty notice dated 01/01/2040.")
+    r = extract_agreement(text, TODAY)
+    assert r["explicit_expiry"] is None and r["validity_years"] == 1
+
+
+def test_issue_date_found_from_on_this_day_of_when_heading_is_garbled():
+    text = (",USTOMER SERVICEINT AGREEMENT\n(ThisAgreement shall remain valid for a period of three (3) years from "
+            "the Effective Date.)\nOn this day of,25/06/2025 CSP Name Faiz Hamid Sayyed, CSP Code1A851800")
+    r = extract_agreement(text, TODAY)
+    assert r["issue_date"] == date(2025, 6, 25) and r["has_explicit_3year_clause"]
