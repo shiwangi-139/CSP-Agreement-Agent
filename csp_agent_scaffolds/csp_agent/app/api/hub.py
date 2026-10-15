@@ -40,16 +40,27 @@ _jobs: dict[str, dict] = {}
 NOT_TEST = or_(CSP.state.is_(None), CSP.state != "TEST")
 
 
+def _rm_filter(me: Principal):
+    """An RM's CSPs; the RM named in TBA_CSPS_RM also gets those with no RM."""
+    return or_(CSP.rm_id == me.user_id, CSP.rm_id.is_(None)) if me.sees_unassigned else CSP.rm_id == me.user_id
+
+
+def _can_see(me: Principal, csp: Optional[CSP]) -> bool:
+    return me.is_admin or (csp is not None and (csp.rm_id == me.user_id
+                                                or (me.sees_unassigned and csp.rm_id is None)))
+
+
 def _mine(query, me: Principal):
-    """An RM sees only their own CSPs; an admin sees all; nobody sees the
-    test CSP. `query` must involve the CSP table."""
+    """An RM sees only their own CSPs (plus the TBA ones, for the RM named in
+    TBA_CSPS_RM); an admin sees all; nobody sees the test CSP. `query` must
+    involve the CSP table."""
     query = query.filter(NOT_TEST)
-    return query if me.is_admin else query.filter(CSP.rm_id == me.user_id)
+    return query if me.is_admin else query.filter(_rm_filter(me))
 
 
 def _own_csp(db: Session, csp_id: Optional[int], me: Principal) -> CSP:
     c = db.get(CSP, csp_id) if csp_id else None
-    if c is None or not (me.is_admin or c.rm_id == me.user_id):
+    if c is None or not _can_see(me, c):
         raise HTTPException(404, "CSP not found")      # never confirm another RM's CSP exists
     return c
 
@@ -409,7 +420,7 @@ def list_messages(channel: str = "", status: str = "", csp_id: Optional[int] = N
     slab = int(slab) if slab.strip().isdigit() else None   # "" (All slabs) or a slab number
     base = db.query(OutboundMessage).outerjoin(CSP, CSP.id == OutboundMessage.csp_id).filter(NOT_TEST)
     if not me.is_admin:
-        base = base.filter(CSP.rm_id == me.user_id)
+        base = base.filter(_rm_filter(me))
     if channel:
         base = base.filter(OutboundMessage.channel == channel.upper())
     if status:
@@ -442,7 +453,7 @@ def _get_msg(db: Session, message_id: int, me: Principal) -> OutboundMessage:
     # Locked until this request commits: a second click (or a second tab) waits,
     # then sees the message already approved and is refused, so it is sent once.
     m = db.query(OutboundMessage).filter(OutboundMessage.id == message_id).with_for_update().first()
-    if m is None or not (me.is_admin or (m.csp_id and db.get(CSP, m.csp_id).rm_id == me.user_id)):
+    if m is None or not (me.is_admin or (m.csp_id and _can_see(me, db.get(CSP, m.csp_id)))):
         raise HTTPException(404, "message not found")
     return m
 
@@ -479,7 +490,7 @@ def approve_bulk(ids: list[int] = Body(..., embed=True), me: Principal = Depends
         m = db.query(OutboundMessage).filter(OutboundMessage.id == mid).with_for_update().first()   # see _get_msg
         if m is None or m.status != OutboundStatus.QUEUED_FOR_REVIEW:
             continue
-        if not me.is_admin and (m.csp_id is None or db.get(CSP, m.csp_id).rm_id != me.user_id):
+        if not me.is_admin and (m.csp_id is None or not _can_see(me, db.get(CSP, m.csp_id))):
             continue
         try:
             outbound.approve(db, m, reviewer)

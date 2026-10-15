@@ -113,3 +113,30 @@ def test_weak_passwords_are_refused():
     assert auth.password_problem("alllowercase123")
     assert auth.password_problem(PW) is None
     assert auth.verify_password(PW, auth.hash_password(PW)) and not auth.verify_password("x", auth.hash_password(PW))
+
+
+def test_the_tba_rm_also_sees_csps_without_an_rm_and_other_rms_do_not(world, test_engine, monkeypatch):
+    from app import config
+    c, w = world
+    s = sessionmaker(bind=test_engine)()
+    tag = uuid.uuid4().hex[:6]
+    tba = CSP(name="No RM yet", current_code=f"3N{int(tag, 16) % 1000000:06d}", rm_id=None, category=4,
+              is_active_in_calling_sheet=True)
+    plain_rm = InternalUser(name="RM Three", email=f"rm3{tag}@eko.co.in", role="RM", login_enabled=True,
+                            password_hash=auth.hash_password(PW))
+    s.add_all([tba, plain_rm])
+    s.commit()
+    tba_id, tba_code, plain_email = tba.id, tba.current_code, plain_rm.email
+    s.close()
+
+    monkeypatch.setattr(config, "TBA_CSPS_RM", w["rm"].upper())            # case doesn't matter
+    _login(c, w["rm"])
+    codes = {r["code"] for r in c.get("/api/hub/csps?category=4&size=500", headers=PUBLIC).json()["rows"]}
+    assert {w["mine"][1], tba_code} <= codes and w["theirs"][1] not in codes
+    assert c.get(f"/api/hub/csp/{tba_id}", headers=PUBLIC).status_code == 200
+    c.post("/auth/logout", headers={**PUBLIC, **CSRF})
+
+    _login(c, plain_email)                                                 # any other RM: not the TBA CSPs
+    codes = {r["code"] for r in c.get("/api/hub/csps?category=4&size=500", headers=PUBLIC).json()["rows"]}
+    assert tba_code not in codes
+    assert c.get(f"/api/hub/csp/{tba_id}", headers=PUBLIC).status_code == 404

@@ -89,6 +89,7 @@ class Principal:
     name: str                       # shown in audit trails ("approved by")
     role: str                       # ADMIN or RM
     user_id: Optional[int] = None   # internal_users.id (the RM's id for scoping)
+    sees_unassigned: bool = False   # this RM also sees CSPs with no RM (TBA_CSPS_RM)
 
     @property
     def is_admin(self) -> bool:
@@ -151,7 +152,10 @@ def current_principal(request: Request, db: Session = Depends(get_db),
         if user is not None:
             if request.method not in ("GET", "HEAD", "OPTIONS") and x_requested_with != CSRF_HEADER_VALUE:
                 raise HTTPException(status_code=403, detail="Missing X-Requested-With header.")
-            return Principal(user.email or user.name, (user.role or "").upper(), user.id)
+            from .config import TBA_CSPS_RM
+            tba = bool(TBA_CSPS_RM) and TBA_CSPS_RM.strip().lower() in {(user.email or "").strip().lower(),
+                                                        (user.name or "").strip().lower()}
+            return Principal(user.email or user.name, (user.role or "").upper(), user.id, sees_unassigned=tba)
     if x_api_key and ADMIN_API_KEY and _eq(x_api_key, ADMIN_API_KEY):
         if _forwarded(request):
             raise HTTPException(status_code=401, detail="Please log in.")

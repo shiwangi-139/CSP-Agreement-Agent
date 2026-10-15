@@ -139,6 +139,9 @@ PORTAL_TOKEN_DAYS = int(os.getenv("PORTAL_TOKEN_DAYS", "7"))
 # API keys. Empty ADMIN_API_KEY = dashboard/API open (local testing only;
 # a warning is logged at startup). /api/agent/* needs AGENT_API_KEY.
 ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
+# The RM (login email or name) who also sees the CSPs whose RM is "TBA" or
+# blank on the calling sheet. Empty = only admins see them.
+TBA_CSPS_RM = os.getenv("TBA_CSPS_RM", "").strip().lower()
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
 
 # Local vision model on the rack server (Ollama), free and on-premises.
