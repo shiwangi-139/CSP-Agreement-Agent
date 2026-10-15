@@ -28,7 +28,9 @@ VALID_UPTO = re.compile(r"(?:valid\s*(?:up\s*to|upto|till|until)|वैध\s*(?:
 
 SIX_MONTHS = re.compile(r"(?:\b(?:six|6)\s*\(?\s*6?\s*\)?\s*months?\b|(?:छह|छः|छ:|6)\s*(?:माह|महीने|महीना))", re.I)
 ONE_YEAR = re.compile(r"(?:\b(?:one|1)\s*(?:\(\s*1\s*\)\s*)?years?\b|(?:एक|1)\s*(?:वर्ष|साल))", re.I)
-VALIDITY_CONTEXT = re.compile(r"valid|validity|वैध|मान्य", re.I)
+# "from the date of issue": Jharkhand "जारी होने की तिथि से केवल छह महीने के लिए वैध"
+# where OCR often loses the last word.
+VALIDITY_CONTEXT = re.compile(r"valid|validity|वैध|मान्य|जारी\s*होने\s*की\s*तिथि\s*से|from\s+the\s+date\s+of\s+issue", re.I)
 # Police Clearance Certificate: it states no validity and is accepted for life.
 PCC = re.compile(r"police\s*clearance\s*certificate|\bpcc\b|पुलिस\s*क्लीयरेंस|पुलिस\s*क्लियरेंस", re.I)
 
@@ -42,6 +44,20 @@ def _validity_months(text: str) -> tuple[Optional[int], Optional[str]]:
         if ONE_YEAR.search(window):
             return 12, "PVR_STATED_1_YEAR"
     return None, None
+
+
+def _full_day(found: date, text: str, today: Optional[date]) -> date:
+    """Tesseract's Hindi model sometimes drops a day's first digit ("3-09-2026"
+    for "13-09-2026"). If the page's other reading has a plausible date in the
+    same month and year whose day ends in this one, that is the date."""
+    if found.day > 9:
+        return found
+    for f in find_dates(text):
+        v = f.value
+        if (v.year, v.month) == (found.year, found.month) and v.day > 9 and v.day % 10 == found.day \
+                and plausible_issue_date(v, today):
+            return v
+    return found
 
 
 def extract_pvr(text: str, today: Optional[date] = None) -> dict:
@@ -70,6 +86,9 @@ def extract_pvr(text: str, today: Optional[date] = None) -> dict:
             if plausible_issue_date(f.value, today):
                 out["issue_date"], out["date_source"] = f.value, "PVR_FIRST_DATE"
                 break
+
+    if out["date_source"] in ("PVR_TOP_DATE", "PVR_FIRST_DATE"):
+        out["issue_date"] = _full_day(out["issue_date"], text, today)
 
     upto = [f for f in dates_after(text, VALID_UPTO, 30, today=date.max) if f.value.year >= 2010]
     if upto:

@@ -599,6 +599,7 @@ def resolve_contact_change(req_id: int, action: str, db: Session = Depends(get_d
 REASON_TEXT = {
     "accepted": "accepted", "review": "accepted, date checked by the team", "duplicate": "already on file",
     "unreadable": "unreadable (counts as missing)", "received_check": "received, our team is checking it", "wrong_doc": "wrong document", "expired": "expired",
+    "application_only": "application receipt, not the certificate",
     "too_small": "photo too small", "too_dark": "photo too dark", "washed_out": "photo washed out",
     "blurry": "photo blurry", "no_date": "no issue date", "future": "date in the future",
     "too_big": "file too large", "file_type": "not a PDF/JPG/PNG",

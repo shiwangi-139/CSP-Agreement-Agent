@@ -208,6 +208,12 @@ STRONG_PVR = [
     r"चाल\s*चलन", r"पुलिस\s*[-–—]?\s*(?:वेरिफिकेशन|सत्यापन)", r"antecedents?\s+verification",
     r"conduct\s+certificate", r"character\s*(?:&|and)\s*conduct", r"police\s+character",
     r"police\s+records?",
+    # issued-certificate body wording (the heading is often cut off or garbled):
+    # UP "Local Intelligence Unit ... District Crime Record Bureau", Jharkhand
+    # "चरित्र और पूर्ववृत्त का सत्यापन ... कोई प्रतिकूल बात नहीं पाई गई", Bihar "आचरन".
+    r"local\s+intelligence\s+unit", r"district\s+crime\s+records?\s+bureau",
+    r"चरित्र\s*(?:और|एवं|व)\s*पूर्ववृत्त", r"पूर्ववृत्त\s*का\s*सत्यापन", r"कोई\s*प्रतिकूल",
+    r"थान[ेा]\s*के\s*अभिलेख", r"आचरन\s*[-–—]?\s*प्रमाण",
 ]
 # A PVR / character certificate / PCC *application or fee receipt*, not the
 # certificate: UP Police "Service Request Receipt" (Request Type, Current
@@ -232,6 +238,8 @@ PVR_APPLICATION = [
     r"application\s+form", r"application\s+rece\w*", r"receiving\s+receipt", r"request\s+form",
     r"apply\s+date", r"reason\s+for\s+application", r"personal\s+particulars\s+form",
     r"status\s*:?\s*under\b",
+    # Bihar RTPS "आवेदन का विवरण ... सेवा प्रदान करने की प्रस्तावित तिथि"
+    r"आवेदन\s*का\s*विवरण", r"प्रस्तावित\s*तिथि",
 ]
 # Forms that are not a police verification at all (but mention one).
 NOT_A_PVR = [
@@ -574,7 +582,7 @@ SEQUENTIAL_PAGES = 3
 # An English page read this well needs no Hindi pass.
 ENGLISH_CONFIDENT = 75.0
 ENGLISH_MAX_LOW_WORDS = 0.10
-CACHE_VERSION = "ocr-v3"   # v3: garbage text layers of scanned PDFs are OCR'd again
+CACHE_VERSION = "ocr-v4"   # v3: garbage text layers of scanned PDFs are OCR'd again; v4: photos get the second engine
 _cache_on = OCR_CACHE
 
 
@@ -814,11 +822,9 @@ def scan_document(file_bytes: bytes,
             if gray is None:
                 return DocumentScan(mime, [], 0, file_bytes)
             h, w = gray.shape[:2]
-            t0 = time.perf_counter()
-            blur = _blur_score(gray)
-            prepared = _prepare_for_ocr(gray)
-            _timed("prepare", t0)
-            text, conf = _ocr_image(prepared)
+            # Same reading as a scanned PDF page, including the second engine,
+            # which reads digits (dates) that Tesseract's Hindi model drops.
+            text, conf, blur, _ = _ocr_page(gray, "")
             page = PageScan(0, text, "OCR", conf, blur, w, h)
             if max(h, w) < MIN_IMAGE_SIDE_PX:
                 page.ocr_confidence = min(conf, MIN_OCR_CONFIDENCE - 1)  # too small to trust

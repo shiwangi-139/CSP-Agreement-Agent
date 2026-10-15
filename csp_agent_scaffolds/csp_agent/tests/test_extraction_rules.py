@@ -248,3 +248,43 @@ def test_unrelated_dashes_are_not_a_range():
     r = extract_agreement("CUSTOMER SERVICE POINT AGREEMENT\nOn this day of 12/03/2024 (Effective Date) "
                           "CSP shall work 9-6 daily; see clauses 3-4; Rs. 5,000-10,000.", TODAY)
     assert r["validity_source"] == "AGREEMENT_DEFAULT_1_YEAR"
+
+
+# ------------------------------------------------- state certificates (Oct 2026)
+JHARKHAND_OCR = """341102606115
+निर्गत की तिथि 3-09-2026
+13-09-2026
+प्रमाणित किया जाता है कि JABBAR ANSARI, जिला - गिरिडीह के चरित्र और पूर्ववृत्त का सत्यापन वर्ष 1996 से 3-09-2026 तक
+उपरोक्त पुलिस थाने के अभिलेखों में उनके विरुद्ध कोई प्रतिकूल बात नहीं पाई गई।
+पुलिस अधीक्षक गिरिडीह
+1. यह एक सिस्टम जनित प्रमाणपत्र है। यह प्रमाणपत्र जारी होने की तिथि से केवल छह महीने के लिए
+"""
+
+
+def test_jharkhand_character_certificate_by_its_body_wording():
+    from app.ocr_service import classify_allowlist_gate
+    ok, doc_type, reason, _ = classify_allowlist_gate(JHARKHAND_OCR, "", "POLICE_VERIFICATION")
+    assert ok and doc_type == "POLICE_VERIFICATION" and reason.startswith("Matched")   # not "Uploaded in ..."
+
+
+def test_six_months_from_date_of_issue_even_when_valid_word_is_cut_off():
+    assert extract_pvr(JHARKHAND_OCR, TODAY)["validity_months"] == 6
+
+
+def test_dropped_first_digit_of_day_is_restored_from_the_other_reading():
+    r = extract_pvr(JHARKHAND_OCR, TODAY)
+    assert r["issue_date"] == date(2026, 9, 13)
+
+
+def test_up_character_certificate_wording():
+    from app.ocr_service import classify_allowlist_gate
+    text = ("upon verification conducted through the concerned Police Station, Local Intelligence Unit, and "
+            "District Crime Record Bureau Commissionerate / District- Gorakhpur, nothing found")
+    assert classify_allowlist_gate(text)[1] == "POLICE_VERIFICATION"
+
+
+def test_bihar_rtps_application_receipt_is_not_a_certificate():
+    from app.ocr_service import classify_allowlist_gate
+    text = ("लोक सेवाओं का अधिकार बिहार सरकार (आवेदन का विवरण) सेवा का नाम : आचरण प्रमाण-पत्र का निर्गमन "
+            "सेवा प्रदान करने की प्रस्तावित तिथि : 03/11/2026")
+    assert classify_allowlist_gate(text, "", "POLICE_VERIFICATION")[1] == "PVR_APPLICATION_ONLY"

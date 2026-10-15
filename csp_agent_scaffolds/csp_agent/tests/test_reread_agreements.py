@@ -89,3 +89,19 @@ def test_recheck_files_an_agreement_turned_away_as_expired_by_older_rules(db_ses
     db.expire_all()
     docs = db.query(Document).filter(Document.csp_id == csp.id, Document.document_type == "AGREEMENT").all()
     assert [(d.expiry_date, d.status) for d in docs] == [(date(2028, 6, 1), DocumentStatus.VALID)]
+
+
+def test_application_receipt_uploaded_in_police_section_is_turned_away_not_reviewed(tmp_path):
+    """The upload section can't override wording that says 'application, not the certificate'."""
+    from app.ai.extraction.deterministic_extractor import extract_document_fields_deterministic
+    d = pymupdf.open()
+    page = d.new_page()
+    for i, line in enumerate(["Acknowledgement Receipt", "Application Form for Character Certificate",
+                              "Application No. BCHC/2026/1453186   Date of Application: 14/10/2026",
+                              "Name of Applicant: Sonali Priya   District: NAWADA   State: BIHAR",
+                              "Service will be delivered within 14 working days."]):
+        page.insert_text((40, 60 + 20 * i), line, fontsize=10)
+    r = extract_document_fields_deterministic(d.tobytes(), "pvr.pdf", allow_llm_fallback=False,
+                                              expected_type="POLICE_VERIFICATION")
+    assert r["readability"] == "NOT_ALLOWED" and r["document_type"] == "PVR_APPLICATION_ONLY"
+    assert not r.get("type_review")

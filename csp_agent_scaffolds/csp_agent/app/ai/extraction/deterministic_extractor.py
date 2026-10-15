@@ -46,6 +46,11 @@ AGREEMENT_STRUCTURE = re.compile(r"on\s*this\s*day\s*of|effective\s*date|e-?\s*s
                                  r"issu\w*\s*date|hereinafter|witness\s*whereof|initials\s*of", re.I)
 
 
+# Gate verdicts that name the file as something else, so the upload section
+# can't override them (app/ocr_service.py: classify_allowlist_gate).
+DEFINITELY_NOT = {"PVR_APPLICATION_ONLY", "NOT_A_PVR"}
+
+
 def _rules_for(doc_type: str, text: str, today: date) -> dict:
     if doc_type == "AGREEMENT":
         return extract_agreement(text, today)
@@ -218,6 +223,11 @@ def extract_document_fields_deterministic(
     if doc_type == "REJECTED_UNAUTHORIZED":
         return _result(NOT_ALLOWED, document_type=doc_type, rejection_reason=gate_reason,
                        confidence=gate_conf, extraction_method="ALLOWLIST_GATE_REJECTED", **common)
+    if doc_type in DEFINITELY_NOT:
+        # The wording says what it is (an application receipt, a KYC form):
+        # turned away even when uploaded in the matching section.
+        return _result(NOT_ALLOWED, document_type=doc_type, rejection_reason=gate_reason,
+                       confidence=gate_conf, extraction_method="ALLOWLIST_GATE_NOT_THE_DOCUMENT", **common)
 
     model_ans = None
     type_review = None

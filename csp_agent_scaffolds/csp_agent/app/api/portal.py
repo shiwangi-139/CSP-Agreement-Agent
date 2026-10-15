@@ -85,6 +85,9 @@ MSG = {
     "wrong_doc": ("यह सही डॉक्यूमेंट नहीं है। कृपया यहाँ सही डॉक्यूमेंट अपलोड करें।",
                   "This is not the right document for this section. Please upload the correct document."),
     "duplicate": ("यह फ़ाइल पहले से हमारे पास है।", "We already have this file."),
+    "application_only": ("यह पुलिस प्रमाण पत्र का आवेदन या उसकी रसीद है, प्रमाण पत्र नहीं। पुलिस से प्रमाण पत्र मिलने के बाद उसे यहाँ अपलोड करें।",
+                         "This is the application or receipt for the police certificate, not the certificate itself. "
+                         "Upload the certificate once the police issue it."),
     # Photo checks (app/ocr_service.py: photo_problem): tell the CSP exactly what to fix.
     "too_small": ("फोटो बहुत छोटी है। पूरा पन्ना फ्रेम में रखें और कैमरे से सीधे फोटो लें (स्क्रीनशॉट या फॉरवर्ड की हुई फोटो नहीं)।",
                   "The photo is too small. Keep the whole page in the frame and take the photo with the camera "
@@ -455,6 +458,13 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         if ex.get("document_type") == "REJECTED_UNAUTHORIZED":
             turn_away("wrong_doc", data, mime)
             res["read_as"] = "UNAUTHORIZED"
+            continue
+
+        # The wording says it is an application receipt (or a KYC form), not
+        # the certificate: turned away whatever section it was uploaded in.
+        if ex.get("document_type") in ("PVR_APPLICATION_ONLY", "NOT_A_PVR"):
+            turn_away("application_only" if ex["document_type"] == "PVR_APPLICATION_ONLY" else "wrong_doc", data, mime)
+            res["read_as"] = ex["document_type"]
             continue
 
         # If it clearly belongs to another section (e.g. IIBF uploaded in Agreement section)

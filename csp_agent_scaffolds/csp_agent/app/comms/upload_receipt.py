@@ -29,6 +29,7 @@ CHECKING = {"received_check"}
 # Short reasons for the message (the upload page shows the full text).
 SHORT_REASON = {
     "wrong_doc": ("यह सही डॉक्यूमेंट नहीं है", "not the right document"),
+    "application_only": ("यह आवेदन की रसीद है, प्रमाण पत्र नहीं", "this is the application receipt, not the certificate"),
     "expired": ("इसकी तारीख निकल चुकी है", "it has expired"),
     "unreadable": ("साफ़ पढ़ा नहीं जा सका", "could not be read clearly"),
     "too_small": ("फोटो बहुत छोटी है", "photo too small"),
