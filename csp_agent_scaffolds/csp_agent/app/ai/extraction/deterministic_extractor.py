@@ -325,6 +325,18 @@ def extract_document_fields_deterministic(
         validity_months=months, validity_rule=rule_for_engine,
     )
     expiry = exp["calculated_expiry"]
+    status = exp["status"]
+    if doc_type == "AGREEMENT" and r.get("validity_conflict"):
+        type_review = " ".join(x for x in (type_review, r["validity_conflict"]) if x)
+    if doc_type == "AGREEMENT" and status == "EXPIRED" and (validity_source or "").startswith("AGREEMENT_DEFAULT"):
+        # "Expired" only from the 1-year default (no validity found in the
+        # text): never turned away automatically. The wording may simply be
+        # one the rules don't know yet; a person reads the agreement.
+        status = "NEEDS_REVIEW"
+        type_review = " ".join(x for x in (type_review, (
+            f"No validity period or end date was found in the agreement, so the default of "
+            f"{AGREEMENT_DEFAULT_YEARS} year would make it expired on {expiry:%d-%m-%Y}. Check the agreement for "
+            "its term (e.g. 'for a period of 36 months … ending on …') and enter the right expiry, or reject it.")) if x)
 
     from_model = date_source.startswith("MODEL_VISION")
     field_conf = {
@@ -347,7 +359,7 @@ def extract_document_fields_deterministic(
         validity_months=months if doc_type == "POLICE_VERIFICATION" else (36 if three_year else (12 * AGREEMENT_DEFAULT_YEARS if doc_type == "AGREEMENT" and not r.get("explicit_expiry") else None)),
         validity_rule_used=exp["validity_rule_used"],
         date_source=date_source,
-        compliance_status=exp["status"],
+        compliance_status=status,
         iibf_registration_number=r.get("registration_number"),
         holder_name=holder,
         model_csp_code=(model_ans or {}).get("csp_code"),

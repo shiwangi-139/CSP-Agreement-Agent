@@ -21,8 +21,11 @@ Validity, first match wins:
      Hindi) anywhere -> 3 years.
   b. A range "valid from X to Y" / "from X till Y" / "for the period X to Y"
      / "X से Y तक" -> expiry = Y.
-  c. "This Agreement ... valid for a period of two (2) / five years" -> that
-     many years (three is rule a).
+  c. "This Agreement ... valid for a period of two (2) / five years" or
+     "... for a period of 36 months" -> that many years / months (three years
+     is rule a).
+  A printed last day that disagrees with a stated period by more than a
+  month is reported in validity_conflict (a person checks it).
   d. Validity not stated anywhere: default 1 year (AGREEMENT_DEFAULT_YEARS).
 """
 import re
@@ -129,7 +132,9 @@ def _short_year_date(raw: str, end_year: int) -> Optional[date]:
 END_DATE = re.compile(
     r"\b(?:end\s*(?:and\s*close\s*)?date\s*(?:on\b)?"
     r"|valid(?:ity)?\s*(?:up\s*to|upto|till|until|thru|through)(?:\s*date)?"
-    r"|expir(?:y|es|ing|ation)(?:\s*date)?(?:\s*on)?)\s*", re.I)
+    r"|expir(?:y|es|ing|ation)(?:\s*date)?(?:\s*on)?"
+    # "commencing from 26/05/2025 an(d) ending on 25/05/2028", "ends on", "up to and including"
+    r"|(?:\ba?n?d?\s*)?ending\s*(?:on|date)?|\bends?\s*on|up\s*to\s*and\s*including)\s*", re.I)
 BETWEEN_LABEL_AND_DATE = re.compile(r"^[\s:\-–—_.,(]{0,12}$")
 HINDI_UPTO = re.compile(r"\s*तक\s*(?:मान्य|वैध)")
 
@@ -162,6 +167,36 @@ STATED_YEARS = re.compile(
 def stated_years(text: str) -> Optional[int]:
     m = STATED_YEARS.search(re.sub(r"\s+", " ", normalize(text)))
     return YEAR_WORDS[m.group(1).lower()] if m else None
+
+
+MONTH_WORDS = {"twelve": 12, "eighteen": 18, "twenty-four": 24, "twenty four": 24, "thirty-six": 36,
+               "thirty six": 36, "forty-eight": 48, "forty eight": 48, "sixty": 60}
+# "the terms of their relationship for a period of 36 months", "agreement ... thirty-six (36) months".
+STATED_MONTHS = re.compile(
+    r"(?:agreement|relationship|term)[^.\n]{0,80}?(?:period|for|valid|validity)[^.\n]{0,20}?"
+    r"(?:of)?\s*(twelve|eighteen|twenty[- ]four|thirty[- ]six|forty[- ]eight|sixty|\d{2})\s*"
+    r"(?:\(\s*\d{2}\s*\)\s*)?months?\b", re.I)
+
+
+def stated_months(text: str) -> Optional[int]:
+    m = STATED_MONTHS.search(re.sub(r"\s+", " ", normalize(text)))
+    if not m:
+        return None
+    raw = m.group(1).lower()
+    n = MONTH_WORDS.get(raw) or (int(raw) if raw.isdigit() else None)
+    return n if n and 12 <= n <= 72 else None
+
+
+def stated_period_end(text: str, issue: date) -> Optional[date]:
+    """The last day implied by a stated period ("2 years", "36 months"), if any."""
+    from .dates import add_months
+    if has_three_year_clause(text):
+        return add_years(issue, 3)
+    years = stated_years(text)
+    if years:
+        return add_years(issue, years)
+    months = stated_months(text)
+    return add_months(issue, months) if months else None
 
 
 def find_validity_range(text: str, today: Optional[date] = None) -> Optional[tuple[date, date]]:
@@ -206,6 +241,10 @@ def extract_agreement(text: str, today: Optional[date] = None) -> dict:
     if end:
         out["explicit_expiry"] = end
         out["validity_source"] = "AGREEMENT_RANGE_FROM_TO"
+        implied = stated_period_end(text, out["issue_date"])
+        if implied and abs((implied - end).days) > 31:
+            out["validity_conflict"] = (f"The agreement prints {end:%d-%m-%Y} as its last day, but its stated period "
+                                        f"ends {implied:%d-%m-%Y}: check which is right.")
     elif has_three_year_clause(text):
         out["has_explicit_3year_clause"] = True
         out["validity_years"] = 3
@@ -217,6 +256,9 @@ def extract_agreement(text: str, today: Optional[date] = None) -> dict:
             out["validity_source"] = "AGREEMENT_RANGE_FROM_TO"
             if out["issue_date"] is None:
                 out["issue_date"], out["date_source"] = rng[0], "AGREEMENT_RANGE_START"
+        elif out["issue_date"] and stated_months(text):
+            out["explicit_expiry"] = stated_period_end(text, out["issue_date"])
+            out["validity_source"] = "AGREEMENT_RANGE_FROM_TO"       # a known last day, like a range
         elif out["issue_date"] and stated_years(text):
             years = stated_years(text)
             out["explicit_expiry"] = add_years(out["issue_date"], years)

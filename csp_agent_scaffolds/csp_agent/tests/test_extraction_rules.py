@@ -325,3 +325,43 @@ def test_issue_date_found_from_on_this_day_of_when_heading_is_garbled():
             "the Effective Date.)\nOn this day of,25/06/2025 CSP Name Faiz Hamid Sayyed, CSP Code1A851800")
     r = extract_agreement(text, TODAY)
     assert r["issue_date"] == date(2025, 6, 25) and r["has_explicit_3year_clause"]
+
+
+JABBAR_HEAD = 'Cusrorurn Srnvtcr Potrur Acneeruerur on this day of 26th May 2025 ("Effective Date"), Jabbar Ansari\n'
+
+
+@pytest.mark.parametrize("clause, expiry", [
+    # Jabbar Ansari, Jharkhand: the period clause sits in 1C, the Term clause says only "until terminated"
+    ("C. Eko and CSP have recorded the terms of their relationship for a period of36 months commencing\n"
+     "from 26/05/2025 an ending on 25/05/2028.", date(2028, 5, 25)),
+    ("the terms of their relationship for a period of 36 months commencing from 26/05/2025.", date(2028, 5, 26)),
+    ("This Agreement shall remain in force for a period of thirty-six (36) months.", date(2028, 5, 26)),
+    ("commencing from 26/05/2025 and ends on 25/05/2028", date(2028, 5, 25)),
+])
+def test_agreement_period_in_months_and_ending_on(clause, expiry):
+    r = extract_agreement(JABBAR_HEAD + clause + "\nTerm: shall be valid until terminated in accordance with Clause I(4)B",
+                          TODAY)
+    assert r["issue_date"] == date(2025, 5, 26) and r["explicit_expiry"] == expiry and not r.get("validity_conflict")
+
+
+def test_printed_end_date_that_disagrees_with_the_stated_period_is_flagged():
+    r = extract_agreement(JABBAR_HEAD + "relationship for a period of 36 months commencing from 26/05/2025 "
+                                        "and ending on 25/05/2026.", TODAY)
+    assert r["explicit_expiry"] == date(2026, 5, 25) and "check which is right" in r["validity_conflict"]
+
+
+def test_expired_only_by_the_one_year_default_goes_to_review_not_rejected(tmp_path):
+    """No validity found ('valid until terminated' only): never turned away as expired."""
+    import pymupdf
+    from app.ai.extraction.deterministic_extractor import extract_document_fields_deterministic
+    d = pymupdf.open()
+    page = d.new_page()
+    for i, line in enumerate(["CUSTOMER SERVICE POINT AGREEMENT",
+                              'On this day of, 12/07/2024 ("Effective Date"), CSP Name Test CSP',
+                              "Term: This Agreement shall commence on the Effective Date and shall be valid until "
+                              "terminated in accordance with Clause I(4)B.",
+                              "Eko hereby appoints the CSP. Security deposit. In witness whereof the parties sign."]):
+        page.insert_text((30, 60 + 20 * i), line, fontsize=8)
+    r = extract_document_fields_deterministic(d.tobytes(), "agreement.pdf", allow_llm_fallback=False,
+                                              expected_type="AGREEMENT")
+    assert r["compliance_status"] == "NEEDS_REVIEW" and "No validity period" in r["type_review"]
