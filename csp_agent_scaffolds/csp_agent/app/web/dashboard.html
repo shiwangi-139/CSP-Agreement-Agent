@@ -489,6 +489,11 @@
         <p>${esc(r.reason)}</p>
         <div class="toolbar"><a href="#" data-file="${r.document.id}">View document</a>
           <label>Correct issue date <input type="date" id="rv${r.id}" value="${esc(r.document.issue_date || "")}"></label>
+          <label>Type <select id="rt${r.id}">${["AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"].map((t) =>
+            `<option value="${t}" ${t === r.document.type ? "selected" : ""}>${esc(DOC[t] || t)}</option>`).join("")}</select></label>
+          <label>Validity stated <select id="rm${r.id}"><option value="">as read</option>
+            <optgroup label="Agreement"><option value="12">1 year</option><option value="24">2 years</option><option value="36">3 years</option><option value="60">5 years</option></optgroup>
+            <optgroup label="Police certificate"><option value="6">6 months</option><option value="12">1 year</option></optgroup></select></label>
           <button class="btn primary" data-resolve="${r.id}" data-accept="1">Accept</button>
           <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button></div></div>`).join("") || `<div class="card empty">Nothing to review.</div>`}`;
     },
@@ -633,7 +638,8 @@
       }
       if (ds.cc) { await post(`/api/hub/contact-changes/${ds.cc}`); return render(); }
       if (ds.resolve) {
-        await post(`/api/hub/review/${ds.resolve}/resolve`, {accept: ds.accept === "1", issue_date: $(`#rv${ds.resolve}`)?.value || null});
+        await post(`/api/hub/review/${ds.resolve}/resolve`, {accept: ds.accept === "1", issue_date: $(`#rv${ds.resolve}`)?.value || null,
+          document_type: $(`#rt${ds.resolve}`)?.value || null, validity_months: Number($(`#rm${ds.resolve}`)?.value) || null});
         toast("Resolved."); return render();
       }
     } catch (err) { toast(err.message); }

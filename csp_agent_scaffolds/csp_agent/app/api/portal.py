@@ -46,7 +46,6 @@ from ..compliance import DOC_LABELS, evaluate, refresh_category
 from ..config import FEATURE_MESSAGING_ANALYTICS, MAX_UPLOAD_SIZE_BYTES, local_now
 from ..db import SessionLocal, get_db
 from ..document_service import store_extracted_document
-from ..expiry_engine import add_years
 from ..models import (AgreementEvent, ContactChangeRequest, CSP, CspQuestion, DocumentStatus, InternalUser,
                       ManualReviewQueue, OutboundMessage, OutboundStatus, ReviewStatus)
 from .. import pages, vault
@@ -88,6 +87,9 @@ MSG = {
     "application_only": ("यह पुलिस प्रमाण पत्र का आवेदन या उसकी रसीद है, प्रमाण पत्र नहीं। पुलिस से प्रमाण पत्र मिलने के बाद उसे यहाँ अपलोड करें।",
                          "This is the application or receipt for the police certificate, not the certificate itself. "
                          "Upload the certificate once the police issue it."),
+    "iibf_receipt": ("यह IIBF परीक्षा की फीस की रसीद (या एडमिट कार्ड) है, IIBF सर्टिफिकेट नहीं। कृपया पास होने के बाद मिला IIBF सर्टिफिकेट अपलोड करें।",
+                     "This is the IIBF exam fee receipt (or admit letter), not the IIBF certificate. "
+                     "Please upload the certificate you received after passing."),
     # Photo checks (app/ocr_service.py: photo_problem): tell the CSP exactly what to fix.
     "too_small": ("फोटो बहुत छोटी है। पूरा पन्ना फ्रेम में रखें और कैमरे से सीधे फोटो लें (स्क्रीनशॉट या फॉरवर्ड की हुई फोटो नहीं)।",
                   "The photo is too small. Keep the whole page in the frame and take the photo with the camera "
@@ -151,11 +153,11 @@ def _context(db: Session, csp: CSP, requested: list[str]) -> dict:
     for key, t in SECTIONS.items():
         s = state.docs[t]
         en, hi = DOC_LABELS[t]
-        docs.append({"section": key, "type": t, "label_en": en, "label_hi": hi, "status": s.status,
+        docs.append({"section": key, "type": t, "label_en": en, "label_hi": hi, "status": s.shown_status,
                      "issue_date": s.issue_date.isoformat() if s.issue_date else None,
                      "expiry_date": s.expiry_date.isoformat() if s.expiry_date else None,
-                     "requested": t in requested or s.status != "VALID",
-                     "last_problem": problems.get(key) if s.status != "VALID" else None,
+                     "requested": t in requested or (s.status != "VALID" and not s.in_review),
+                     "last_problem": problems.get(key) if s.status != "VALID" and not s.in_review else None,
                      "max_validity_years": MAX_VALIDITY_YEARS[t]})
     return {"csp": {"code": csp.current_code, "name": csp.name, "email": csp.email or "",
                     "mobile": csp.phone or "", "rm": rm.name if rm else "", "dc": dc.name if dc else ""},
@@ -348,10 +350,24 @@ def _typed_date_problem(doc_type: str, typed: Optional[date], today: date) -> Op
         return "no_date"
     if typed > today:
         return "future"
-    years = MAX_VALIDITY_YEARS[doc_type]
-    if years and add_years(typed, years) < today:
-        return "expired"
+    # An old typed date is not turned away here: the document may state a
+    # longer validity (a 5-year agreement, a lifetime police clearance).
+    # Reading it decides, and "expired" is said only when certain.
     return None
+
+
+def _surely_expired(ex: dict, typed: Optional[date]) -> bool:
+    """Turn an upload away as expired only when nothing about it is a guess:
+    the rules (not the model) read the issue date, the CSP typed the same
+    date, and the validity was printed or stated (not a default)."""
+    rule = (ex.get("validity_rule_used") or "").upper()
+    # A police certificate that states no validity gets 1 year by Eko's
+    # policy: that is a rule, not a guess. An agreement's default is a guess.
+    guessed_validity = "DEFAULT" in rule and not rule.startswith("PVR_DEFAULT")
+    return (not ex.get("type_review")
+            and not (ex.get("date_source") or "").startswith("MODEL_VISION")
+            and not guessed_validity
+            and typed is not None and ex.get("start_date") == typed.isoformat())
 
 
 def _record_contact_changes(db: Session, csp: CSP, form: dict) -> int:
@@ -442,11 +458,15 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         ex = await run_in_threadpool(lambda: extract_document_fields_deterministic(
             data, upload.filename, expected_type=doc_type))
         if ex["readability"] == "UNREADABLE":
-            # If the file has pages and the CSP provided an issue date, route to human review
-            if ex.get("page_count", 0) > 0 and typed:
+            # OCR could not read it (a faint scan, handwriting): a person
+            # looks before the CSP is told it is unreadable. (Blurry, dark or
+            # tiny photos were already sent back above, with what to fix.)
+            if ex.get("page_count", 0) > 0:
                 ex["readability"] = "READABLE"
                 ex["document_type"] = doc_type
-                ex["type_review"] = f"Low OCR readability in {doc_type} section. Human review required."
+                ex["type_review"] = (f"OCR could not read this {doc_type.replace('_', ' ').lower()} "
+                                     f"({ex.get('readability_reason') or 'no clear text'}). Check it, enter the "
+                                     "issue date, or reject it if it really is unreadable.")
             else:
                 ex["document_type"] = ex.get("document_type") if ex.get("document_type") != "UNKNOWN" else doc_type
                 kept = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel="CSP_UPLOAD_PORTAL")
@@ -462,16 +482,22 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
 
         # The wording says it is an application receipt (or a KYC form), not
         # the certificate: turned away whatever section it was uploaded in.
-        if ex.get("document_type") in ("PVR_APPLICATION_ONLY", "NOT_A_PVR"):
-            turn_away("application_only" if ex["document_type"] == "PVR_APPLICATION_ONLY" else "wrong_doc", data, mime)
+        if ex.get("document_type") in ("PVR_APPLICATION_ONLY", "NOT_A_PVR", "IIBF_RECEIPT_ONLY"):
+            turn_away({"PVR_APPLICATION_ONLY": "application_only", "IIBF_RECEIPT_ONLY": "iibf_receipt"}
+                      .get(ex["document_type"], "wrong_doc"), data, mime)
             res["read_as"] = ex["document_type"]
             continue
 
-        # If it clearly belongs to another section (e.g. IIBF uploaded in Agreement section)
+        # Reads as another required document (an IIBF certificate uploaded in
+        # the police box): filed as what it reads as, and a person confirms
+        # before it counts. The CSP is not told "wrong document": the reading
+        # may be wrong, and if it is right the document is still needed.
         if ex.get("document_type") in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE") and ex["document_type"] != doc_type:
-            turn_away("wrong_doc", data, mime)
-            res["read_as"] = ex.get("document_type")
-            continue
+            res["read_as"] = ex["document_type"]
+            ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
+                f"Uploaded in the {doc_type.replace('_', ' ').lower()} box but reads as a "
+                f"{ex['document_type'].replace('_', ' ').lower()}; check which document it is "
+                "(change the type if needed).")) if x)
 
         # If document_type was UNKNOWN, fall back to human review for the expected section
         if ex.get("document_type") not in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"):
@@ -479,8 +505,14 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
             ex["type_review"] = (ex.get("type_review") or "") + f" Document wording in {doc_type} section needs human verification."
 
         if ex.get("compliance_status") == "EXPIRED":
-            turn_away("expired", data, mime)
-            continue
+            if _surely_expired(ex, typed):
+                turn_away("expired", data, mime)
+                continue
+            # Not certain: a person checks before the CSP hears "expired".
+            ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
+                f"Read as expired on {ex.get('expiry_date')} (issued {ex.get('start_date')}, "
+                f"{ex.get('validity_rule_used')}); the CSP typed issue date {typed:%d-%m-%Y}. "
+                "Check the dates and the validity before the CSP is told.")) if x)
 
         # If OCR could not read the issue date, take the date typed by the CSP and compute expiry
         if typed and not ex.get("start_date"):
@@ -490,6 +522,7 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
             exp = calculate_document_expiry(
                 doc_type=doc_type,
                 issue_date=typed,
+                explicit_expiry_date=_parse_date(ex.get("explicit_expiry")),
                 has_explicit_3year_clause=ex.get("has_explicit_3year_clause", False),
                 today=today,
                 validity_months=ex.get("validity_months"),

@@ -111,7 +111,8 @@ def test_readable_pvr_is_accepted_and_filed_in_csp_folder(client, tmp_path):
     s.close()
 
 
-def test_expired_typed_date_is_rejected_before_reading(client):
+def test_surely_expired_document_is_turned_away(client):
+    """Read date = typed date, validity by rule: really expired, the CSP is told."""
     c, Session = client
     _, _, token = _csp(Session)
     old = date.today() - timedelta(days=500)
@@ -329,7 +330,7 @@ def test_form_uploads_record_what_was_accepted_and_what_was_turned_away(client, 
     r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=pvr_date.isoformat(),
                                                 iibf_issue_date=pvr_date.isoformat()),
                files={"pvr_file": ("pvr.pdf", _pvr_pdf(pvr_date), "application/pdf"),
-                      "iibf_file": ("iibf.pdf", _pvr_pdf(pvr_date), "application/pdf")})   # a PVR in the IIBF box
+                      "iibf_file": ("scan.pdf", _plain_pdf(["Unique Identification Authority of India", "Aadhaar No 1234 5678 9012", "Government of India"]), "application/pdf")})   # an Aadhaar in the IIBF box
     assert r.status_code == 200
     shown = r.json()["results"]
     assert all(set(x) <= {"section", "ok", "message", "issue_date", "expiry_date"} for x in shown)  # nothing internal
@@ -339,7 +340,7 @@ def test_form_uploads_record_what_was_accepted_and_what_was_turned_away(client, 
     by = {x["section"]: x for x in row["results"]}
     assert row["outcome"] == "partly" and by["pvr"]["ok"] and by["pvr"]["document_id"]
     assert not by["iibf"]["ok"] and by["iibf"]["reason"] == "wrong document" and by["iibf"]["kept_file"]
-    assert by["iibf"]["read_as"] == "POLICE_VERIFICATION" and row["slab_after"] == 3
+    assert by["iibf"]["read_as"] == "UNAUTHORIZED" and row["slab_after"] == 3
     f = c.get(f"/api/hub/form-uploads/{row['id']}/file/{by['iibf']['i']}", headers=key)
     assert f.status_code == 200 and f.content[:4] == b"%PDF"
     assert c.get(f"/api/hub/form-uploads/{row['id']}/file/{by['pvr']['i']}", headers=key).status_code == 404
@@ -446,13 +447,70 @@ def test_readable_upload_with_unknown_wording_goes_to_review_not_rejected(client
     s.close()
 
 
-def test_another_known_document_in_the_wrong_box_is_still_wrong(client):
+def test_another_known_document_in_the_wrong_box_is_filed_as_what_it_is_and_checked(client):
+    """A real police certificate uploaded in the IIBF box (Mohd Aarif swapped
+    his two): the CSP is not told "wrong document"; it is filed as a police
+    certificate and a person confirms before it counts."""
+    from app.models import ManualReviewQueue
     c, Session = client
-    _, _, token = _csp(Session)
+    cid, _, token = _csp(Session)
     issue = date.today() - timedelta(days=30)
     res = c.post("/api/portal/upload", data=_form(token, iibf_issue_date=issue.isoformat()),
                  files={"iibf_file": ("x.pdf", _pvr_pdf(issue), "application/pdf")}).json()["results"][0]
-    assert not res["ok"] and "not the right document" in res["message"]["en"]
+    assert res["ok"] and "team will check" in res["message"]["en"]
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    assert d.document_type == "POLICE_VERIFICATION" and d.status == DocumentStatus.NEEDS_REVIEW
+    assert "reads as a police verification" in s.query(ManualReviewQueue).filter_by(document_id=d.id).one().reason
+    s.close()
+
+
+def test_expired_reading_that_disagrees_with_the_typed_date_goes_to_a_person(client):
+    """The rules read an issue date that makes it expired, but the CSP typed a
+    recent one: one of them is wrong, so a person checks before "expired"."""
+    c, Session = client
+    cid, _, token = _csp(Session)
+    printed = date.today() - timedelta(days=500)
+    typed = date.today() - timedelta(days=20)
+    res = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=typed.isoformat()),
+                 files={"pvr_file": ("pvr.pdf", _pvr_pdf(printed), "application/pdf")}).json()["results"][0]
+    assert res["ok"] and "team will check" in res["message"]["en"]
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    assert d.status == DocumentStatus.NEEDS_REVIEW
+    # Waiting for a person: no "renew your expired document" reminder meanwhile.
+    from app.compliance import evaluate
+    st = evaluate(s, s.get(CSP, cid))
+    assert "POLICE_VERIFICATION" not in st.needs_upload and st.docs["POLICE_VERIFICATION"].shown_status == "IN_REVIEW"
+    s.close()
+
+
+def test_reviewer_sets_the_stated_validity_and_the_real_type(client, monkeypatch):
+    """Mukesh Saini: the 3-year clause was under the notary stamp, so the agent
+    used 1 year; the reviewer picks "3 years" and the expiry follows."""
+    from app.models import ManualReviewQueue
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    cid, _, token = _csp(Session)
+    issue = date.today() - timedelta(days=30)
+    c.post("/api/portal/upload", data=_form(token, iibf_issue_date=issue.isoformat()),
+           files={"iibf_file": ("x.pdf", _pvr_pdf(issue), "application/pdf")})
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    qid = s.query(ManualReviewQueue).filter_by(document_id=d.id).one().id
+    s.close()
+    bad = c.post(f"/api/hub/review/{qid}/resolve", headers=hdr,
+                 json={"accept": True, "document_type": "POLICE_VERIFICATION", "validity_months": 36})
+    assert bad.status_code == 422                                   # 3 years is not a police certificate validity
+    ok = c.post(f"/api/hub/review/{qid}/resolve", headers=hdr,
+                json={"accept": True, "document_type": "AGREEMENT", "validity_months": 36})
+    assert ok.status_code == 200, ok.text
+    s = Session()
+    d = s.get(Document, d.id)
+    assert d.document_type == "AGREEMENT" and d.status == DocumentStatus.MANUAL_VERIFIED
+    assert d.expiry_date == issue.replace(year=issue.year + 3) and d.validity_months == 36
+    s.close()
 
 
 def test_hyphenated_hindi_title_is_recognised():
@@ -544,7 +602,7 @@ def test_csp_gets_a_receipt_right_after_upload(client):
     issue = date.today() - timedelta(days=30)
     c.post("/api/portal/upload", data=_form(token, pvr_issue_date=issue.isoformat(), iibf_issue_date=issue.isoformat()),
            files={"pvr_file": ("pvr.pdf", _pvr_pdf(issue), "application/pdf"),
-                  "iibf_file": ("x.pdf", _pvr_pdf(issue), "application/pdf")})       # a PVR in the IIBF box
+                  "iibf_file": ("x.pdf", _plain_pdf(["Unique Identification Authority of India", "Aadhaar No 1234 5678 9012", "Government of India"]), "application/pdf")})       # an Aadhaar in the IIBF box
     s = Session()
     [m] = s.query(OutboundMessage).filter_by(csp_id=cid, template_name="UPLOAD_RECEIPT").all()
     v = m.payload_json["layout_values"]

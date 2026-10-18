@@ -71,6 +71,9 @@ def normalize(text: str) -> str:
         text = pat.sub(rep, text)
     # Recover dates with garbled OCR separators (e.g. 07i0512026 -> 07/05/2026)
     text = re.sub(r"(?<!\d)(\d{1,2})[i|!](\d{1,2})[1/|]((?:19|20)\d{2})(?!\d)", r"\1/\2/\3", text)
+    # A handwritten "2" in the year read as "9": "15-04-9026" -> 15-04-2026.
+    # Only in a full day-month-year shape, and only 9010-9039.
+    text = re.sub(r"(?<!\d)(\d{1,2}\s?[./-]\s?\d{1,2}\s?[./-]\s?)9(0[1-3]\d)(?!\d)", r"\g<1>2\2", text)
     return text
 
 

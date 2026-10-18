@@ -611,6 +611,7 @@ REASON_TEXT = {
     "accepted": "accepted", "review": "accepted, date checked by the team", "duplicate": "already on file",
     "unreadable": "unreadable (counts as missing)", "received_check": "received, our team is checking it", "wrong_doc": "wrong document", "expired": "expired",
     "application_only": "application receipt, not the certificate",
+    "iibf_receipt": "IIBF fee receipt, not the certificate",
     "too_small": "photo too small", "too_dark": "photo too dark", "washed_out": "photo washed out",
     "blurry": "photo blurry", "no_date": "no issue date", "future": "date in the future",
     "too_big": "file too large", "file_type": "not a PDF/JPG/PNG",
@@ -782,30 +783,57 @@ def accuracy_stats(days: int = 90, db: Session = Depends(get_db)):
     return {**accuracy.stats(db, days), "mistakes": accuracy.mistakes(db)}
 
 
+# Validity a reviewer may pick, in months (what the document states).
+VALIDITY_CHOICES = {"AGREEMENT": (12, 24, 36, 60), "POLICE_VERIFICATION": (6, 12)}
+
+
 @router.post("/review/{item_id}/resolve")
 def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept: bool = Body(True),
+                   validity_months: Optional[int] = Body(None), document_type: Optional[str] = Body(None),
                    me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """Accept (with the issue date, and optionally the validity the document
+    states and its real type) or reject a document waiting in the queue."""
     from ..compliance import refresh_category
-    from ..expiry_engine import calculate_document_expiry
+    from ..expiry_engine import add_months, add_years, calculate_document_expiry
     reviewer = me.name
     q = db.get(ManualReviewQueue, item_id)
     if q is None:
         raise HTTPException(404, "not found")
     d = db.get(Document, q.document_id)
     _own_csp(db, d.csp_id, me)
-    # "Corrected" only when the reviewer actually changed the date (the field
-    # is pre-filled with the stored date): that is what accuracy counts.
-    changed = bool(issue_date) and date.fromisoformat(issue_date) != d.issue_date
     if accept and d.issue_date is None and not issue_date:
         raise HTTPException(422, "Enter the document's issue date before accepting it (or reject it if the date is blank).")
+    new_type = canonical_type(document_type) if accept and document_type else None
+    if new_type and new_type not in REQUIRED_TYPES:
+        raise HTTPException(422, "Unknown document type.")
+    if new_type == canonical_type(d.document_type):
+        new_type = None
+    if accept and validity_months and \
+            validity_months not in VALIDITY_CHOICES.get(new_type or canonical_type(d.document_type), ()):
+        raise HTTPException(422, "Choose one of the validity periods offered for this document.")
+    # "Corrected" only when the reviewer actually changed something (the date
+    # field is pre-filled with the stored date): that is what accuracy counts.
+    date_changed = bool(issue_date) and date.fromisoformat(issue_date) != d.issue_date
+    changed = date_changed or bool(new_type) or bool(validity_months and validity_months != d.validity_months)
+    old_type = d.document_type
     if accept:
-        if changed:
+        if new_type:
+            d.document_type = new_type
+        if date_changed:
             d.issue_date = date.fromisoformat(issue_date)
+            d.date_source = "MANUAL_REVIEW"
+        if validity_months:
+            # The validity the document states, as the reviewer read it.
+            d.validity_months = validity_months
+            d.has_explicit_3year_clause = validity_months == 36
+            d.expiry_date = (add_years(d.issue_date, validity_months // 12) if validity_months % 12 == 0
+                             else add_months(d.issue_date, validity_months))
+            d.validity_rule_used = f"MANUAL_REVIEW_{validity_months}_MONTHS"
+        elif date_changed or new_type:
             exp = calculate_document_expiry(canonical_type(d.document_type), d.issue_date,
                                             has_explicit_3year_clause=d.has_explicit_3year_clause,
                                             validity_months=d.validity_months)
             d.expiry_date = exp["calculated_expiry"]
-            d.date_source = "MANUAL_REVIEW"
         d.status = DocumentStatus.MANUAL_VERIFIED
         q.status = ReviewStatus.CORRECTED if changed else ReviewStatus.APPROVED
         seen = (d.extracted_fields or {}).get("owner_seen_name")
@@ -822,6 +850,8 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
     from ..document_service import recompute_current, sync_agreement_row
     c = db.get(CSP, d.csp_id)
     recompute_current(db, c, d.document_type)
+    if old_type != d.document_type:
+        recompute_current(db, c, old_type)
     sync_agreement_row(db, c)
     vault.place_csp(db, c)
     from ..renewal_engine import on_documents_received, run_for_csp

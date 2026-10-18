@@ -34,7 +34,7 @@ from typing import Callable, Optional
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .config import GMAIL_BACKFILL_DAYS, INTERNAL_EMAIL_DOMAIN, MAX_UPLOAD_SIZE_BYTES
+from .config import GMAIL_BACKFILL_DAYS, INTERNAL_EMAIL_DOMAIN, MAX_UPLOAD_SIZE_BYTES, MODEL_AUTO_FALLBACK
 from .db import SessionLocal
 from .models import CSP, Document, ExtractionCorrection, IngestState, InboundMessage, InternalUser, EmailCategory
 from .validation import normalize_csp_code
@@ -397,7 +397,8 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
                 ex = extracted.get(att["attachment_id"]) or extract_document_fields_deterministic(data, att["filename"])
             owner, owner_how, review = check_owner(
                 db, csp, ex, everyone, learned=learned,
-                ask_model=lambda: read_owner_with_model(data, ex.get("document_type") or "UNKNOWN"))
+                ask_model=(lambda: read_owner_with_model(data, ex.get("document_type") or "UNKNOWN"))
+                if MODEL_AUTO_FALLBACK else None)
             if review:
                 ex = {**ex, "owner_review": review}
                 logger.info("attachment_owner_unconfirmed msg=%s file=%s csp=%s: %s",

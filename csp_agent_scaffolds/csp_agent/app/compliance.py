@@ -19,7 +19,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from .models import CSP, Document, DocumentStatus
+from .models import CSP, Document, DocumentStatus, ManualReviewQueue, ReviewStatus
 
 REQUIRED_TYPES = ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE")
 TYPE_ALIASES = {
@@ -101,6 +101,15 @@ class DocState:
     issue_date: Optional[date] = None
     expiry_date: Optional[date] = None
     days_left: Optional[int] = None
+    # The current copy waits for a person (Review queue): no "renew / upload
+    # again" reminder for it until they decide.
+    in_review: bool = False
+
+    @property
+    def shown_status(self) -> str:
+        """What the CSP sees: a copy a person is still checking is "being
+        checked", never "expired" or "valid" yet."""
+        return "IN_REVIEW" if self.in_review else self.status
 
 
 @dataclass
@@ -115,11 +124,13 @@ class ComplianceState:
 
     @property
     def expired(self) -> list[str]:
-        return [t for t, s in self.docs.items() if s.status == "EXPIRED"]
+        return [t for t, s in self.docs.items() if s.status == "EXPIRED" and not s.in_review]
 
     @property
     def needs_upload(self) -> list[str]:
-        return self.expired + self.missing
+        """What the CSP is asked to send. A type with a copy waiting in the
+        Review queue is not asked for again until a person decides."""
+        return [t for t in self.expired + self.missing if not self.docs[t].in_review]
 
 
 def latest_documents(db: Session, csp_id: int) -> dict[str, Document]:
@@ -146,19 +157,27 @@ def evaluate(db: Session, csp: CSP, today: Optional[date] = None) -> ComplianceS
         canonical_type(t) for (t,) in db.query(Document.document_type).filter(
             Document.csp_id == csp.id, Document.readability == "UNREADABLE")
     }
+    # Types with an upload waiting for a person (it doesn't count yet, but the
+    # CSP did send it: no "please upload" reminder meanwhile).
+    waiting = {canonical_type(t) for (t,) in db.query(Document.document_type)
+               .join(ManualReviewQueue, ManualReviewQueue.document_id == Document.id)
+               .filter(Document.csp_id == csp.id, ManualReviewQueue.status == ReviewStatus.PENDING,
+                       Document.status == DocumentStatus.NEEDS_REVIEW)}
     docs = {}
     for t in REQUIRED_TYPES:
         d = latest.get(t)
         if d is None:
-            docs[t] = DocState(t, "UNREADABLE" if t in unreadable_types else "MISSING")
+            docs[t] = DocState(t, "UNREADABLE" if t in unreadable_types else "MISSING", in_review=t in waiting)
             continue
         exp = d.expiry_date
         expired = exp is not None and exp < today
         docs[t] = DocState(t, "EXPIRED" if expired else "VALID", d, d.issue_date, exp,
-                           (exp - today).days if exp else None)
+                           (exp - today).days if exp else None,
+                           in_review=d.status in (DocumentStatus.NEEDS_REVIEW, DocumentStatus.NEEDS_APPROVAL)
+                           or (expired and t in waiting))
 
     present = [t for t, s in docs.items() if s.status in ("VALID", "EXPIRED")]
-    expired = [t for t, s in docs.items() if s.status == "EXPIRED"]
+    expired = [t for t, s in docs.items() if s.status == "EXPIRED" and not s.in_review]
     missing = [t for t, s in docs.items() if s.status in ("MISSING", "UNREADABLE")]
     cat = {3: 1, 2: 2, 1: 3, 0: 4}[len(present)]
     parts = []

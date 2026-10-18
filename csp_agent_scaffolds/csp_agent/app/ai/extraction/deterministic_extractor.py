@@ -28,7 +28,7 @@ import re
 from datetime import date
 from typing import Any, Dict, Optional
 
-from ...config import CSP_CODE_REGEX
+from ...config import CSP_CODE_REGEX, MODEL_AUTO_FALLBACK
 from ...expiry_engine import calculate_document_expiry, add_years, ExpiryRule, AGREEMENT_DEFAULT_YEARS  # noqa: F401 (add_years re-exported)
 from ...ocr_service import scan_document, classify_allowlist_gate, DocumentScan
 from ...validation import normalize_csp_code
@@ -48,7 +48,7 @@ AGREEMENT_STRUCTURE = re.compile(r"on\s*this\s*day\s*of|effective\s*date|e-?\s*s
 
 # Gate verdicts that name the file as something else, so the upload section
 # can't override them (app/ocr_service.py: classify_allowlist_gate).
-DEFINITELY_NOT = {"PVR_APPLICATION_ONLY", "NOT_A_PVR"}
+DEFINITELY_NOT = {"PVR_APPLICATION_ONLY", "NOT_A_PVR", "IIBF_RECEIPT_ONLY"}
 
 
 def _rules_for(doc_type: str, text: str, today: date) -> dict:
@@ -188,7 +188,7 @@ def _result(decision: str, **kw) -> Dict[str, Any]:
 def extract_document_fields_deterministic(
     pdf_bytes: bytes,
     filename: str = "",
-    allow_llm_fallback: bool = True,
+    allow_llm_fallback: Optional[bool] = None,
     today: Optional[date] = None,
     expected_type: Optional[str] = None,
 ) -> Dict[str, Any]:
@@ -201,6 +201,8 @@ def extract_document_fields_deterministic(
     `type_review` set, and goes to a person (app/document_service.py).
     A file the model or the rules identify as ANOTHER document is still
     reported as that document (so the page can say "wrong document")."""
+    if allow_llm_fallback is None:
+        allow_llm_fallback = MODEL_AUTO_FALLBACK
     today = today or date.today()
     scan = scan_document(pdf_bytes, stop_when=lambda t: _enough(t, today))
     text = scan.text
@@ -299,6 +301,11 @@ def extract_document_fields_deterministic(
         return _result(READABLE, document_type=doc_type, csp_code=csp_code, readability_reason=why,
                        type_review=(type_review or "") + (" " if type_review else "")
                        + "The issue date could not be read: enter it, or reject the document if it is blank.",
+                       # What the rules did read about validity still counts
+                       # once a date is typed (a 3-year clause, 6 months, a printed end).
+                       has_explicit_3year_clause=three_year,
+                       validity_months=months if doc_type == "POLICE_VERIFICATION" else (36 if three_year else None),
+                       explicit_expiry=r.get("explicit_expiry").isoformat() if r.get("explicit_expiry") else None,
                        confidence=gate_conf, extraction_method="NEEDS_PERSON_" + scan.method,
                        model_provider=(model_ans or {}).get("provider"), **common)
     if issue is None and readable and doc_type == "AGREEMENT" and not AGREEMENT_STRUCTURE.search(text):

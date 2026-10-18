@@ -26,9 +26,9 @@ SCAN_RULES_EN = (
 )
 
 STATUS_HI = {"VALID": "ठीक है ✅", "EXPIRED": "रिन्यू करना है (Expired)", "MISSING": "अभी जमा नहीं हुआ",
-             "UNREADABLE": "फोटो साफ़ नहीं है"}
+             "UNREADABLE": "फोटो साफ़ नहीं है", "IN_REVIEW": "जाँच हो रही है 🔍"}
 STATUS_EN = {"VALID": "Valid", "EXPIRED": "Expired", "MISSING": "Not received",
-             "UNREADABLE": "Not readable (blurry)"}
+             "UNREADABLE": "Not readable (blurry)", "IN_REVIEW": "Being checked"}
 
 
 def _doc_lines(ctx: dict, lang: str) -> str:
@@ -37,7 +37,7 @@ def _doc_lines(ctx: dict, lang: str) -> str:
         label = d["label_hi"] if lang == "hi" else d["label_en"]
         status = (STATUS_HI if lang == "hi" else STATUS_EN).get(d["status"], d["status"])
         extra = ""
-        if d.get("expiry"):
+        if d.get("expiry") and d["status"] != "IN_REVIEW":
             if lang != "hi":
                 extra = f" (expiry: {d['expiry']})"
             elif d["status"] == "EXPIRED":

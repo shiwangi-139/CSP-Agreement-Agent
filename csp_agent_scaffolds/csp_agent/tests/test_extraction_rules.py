@@ -365,3 +365,88 @@ def test_expired_only_by_the_one_year_default_goes_to_review_not_rejected(tmp_pa
     r = extract_document_fields_deterministic(d.tobytes(), "agreement.pdf", allow_llm_fallback=False,
                                               expected_type="AGREEMENT")
     assert r["compliance_status"] == "NEEDS_REVIEW" and "No validity period" in r["type_review"]
+
+
+# ------------------- cases from real uploads (18 Oct 2026), text as OCR read it
+def test_bihar_character_certificate_is_valid_six_months():
+    """Bihar's online certificate: 'इसकी वैधता निर्गत होने की तिथि से छः माह तक ही है'."""
+    hindi = ("Government of Bihar Character Certificate Appl. Ref. No : BCHC/2026/337487 Date: 01/04/2026\n"
+             "... इसकी वैधता निर्गत होने की तिथि से छः माह तक ही है।\n"
+             "Digitally signed by VINAY KUMAR Date:2026.04.01 01:27:58 +05:30")
+    r = extract_pvr(hindi, TODAY)
+    assert r["issue_date"] == date(2026, 4, 1) and r["validity_months"] == 6
+
+
+def test_bihar_bchc_certificate_is_six_months_even_when_ocr_loses_the_hindi():
+    garbled = ("Government of Bihar\nOffice of Superintendent of Police\n -/Character Certificate\n"
+               "i/ Date: 01/04/2026\n- / Appl. Ref. No : BCHC/2026/337487\n3  (Krishna Kumar), -T , PR -R, -\n"
+               "Digitally signed by VINAY KUMAR\nDate:2026.04.01 01:27:58 +05:30")
+    r = extract_pvr(garbled, TODAY)
+    assert r["validity_months"] == 6 and r["validity_source"] == "PVR_STATED_6_MONTHS_BIHAR_BCHC"
+
+
+IIBF_FEE_RECEIPT = """INDIAN INSTITUTE OF BANKING & FINANCE
+ISO 21001:2018 Certified
+www.iibf.org.in
+TAX INVOICE CUM RECEIPT
+Details of service recipient
+ORIGINAL FOR RECIPIENT
+Henber no: 802915873
+Invoice Nunber: EX/25-26/206540
+Menber nane; ASHISH KUMAR
+Date: 17-11-2025
+GSTIN No: 27AAATT3309D1ZS
+Exan code: 1046
+Description of Service
+Conduction of Exan 999294 800,00"""
+
+
+def test_iibf_fee_receipt_is_not_the_certificate():
+    from app.ocr_service import classify_allowlist_gate
+    ok, kind, _, _ = classify_allowlist_gate(IIBF_FEE_RECEIPT, "iibf.pdf", expected_type="IIBF_CERTIFICATE")
+    assert not ok and kind == "IIBF_RECEIPT_ONLY"
+    cert = ("INDIAN INSTITUTE OF BANKING & FINANCE  Certificate Examination for Business Correspondents\n"
+            "This is to certify that ASHISH KUMAR has passed the examination. Certificate No. 123 Date 17-11-2025")
+    assert classify_allowlist_gate(cert, "iibf.pdf")[1] == "IIBF_CERTIFICATE"
+
+
+def test_ordinal_range_with_ocr_quote_marks():
+    """'30th December 2023 to 29th December 2026', the 'th' read as quotes."""
+    t = ("CUSTOMER SERVICE Point AGREEMENT\n' ROSHAN KUMAR(1A850249)\n"
+         "On this day of, 30” December 2023 to 29\" December 2026, an Indian national, son/daughter/wife of")
+    r = extract_agreement(t, TODAY)
+    assert r["issue_date"] == date(2023, 12, 30) and r["explicit_expiry"] == date(2026, 12, 29)
+
+
+def test_handwritten_year_two_read_as_nine():
+    assert [f.value for f in find_dates("nhis day of, 15-04-9026 CSP Name MUKESH")] == [date(2026, 4, 15)]
+    assert find_dates("Rs 9026 paid") == []
+
+
+def test_ranjeet_36_months_clause_on_page_two():
+    t = ("CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 01-June-2024 Ranjeet Kumar Singh, an Indian national\n"
+         "C. Eko and CSP have recorded the terms of their relationship for a period of 36 months\n"
+         "commencing from 01/06/2024 an ending on 31/05/2027.\n"
+         "A. Term: This Agreement shall commence on the Effective Date and shall be valid until\n"
+         "terminated in accordance with Clause I(4)B or Clause III(1).")
+    r = extract_agreement(t, TODAY)
+    assert r["issue_date"] == date(2024, 6, 1) and r["explicit_expiry"] == date(2027, 5, 31)
+
+
+def test_the_model_is_not_asked_unless_switched_on(monkeypatch):
+    import pymupdf
+    import app.ai.extraction.deterministic_extractor as ex
+    asked = []
+    monkeypatch.setattr(ex, "_ask_model", lambda scan, t: asked.append(t))
+    d = pymupdf.open()
+    d.new_page().insert_text((40, 60), "Some letter that is none of the three documents, no date.", fontsize=9)
+    ex.extract_document_fields_deterministic(d.tobytes(), "x.pdf", expected_type="AGREEMENT")
+    assert asked == []
+
+
+def test_this_day_of_with_the_first_letters_under_the_stamp():
+    """Mukesh Saini: notary stamp over 'On t', handwritten 2 read as 9."""
+    t = ("TTAR PRADESHTOMER ERVICE OINT GREEMENT\n504140\nnhis day of, \n15-04-9026\nCSP NOmc MUKESH SAINI\n"
+         "This Agreement shall remain valid for a period of three (3) years from the Effective Date.")
+    r = extract_agreement(t, TODAY)
+    assert r["issue_date"] == date(2026, 4, 15) and r["has_explicit_3year_clause"]

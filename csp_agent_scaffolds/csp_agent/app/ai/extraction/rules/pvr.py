@@ -13,6 +13,9 @@ Validity:
   - "valid for six months" / "6 months" / "छह माह" / "6 माह" -> 6 months
   - "valid only for one year" / "1 year" / "एक वर्ष"          -> 12 months
   - "valid upto/till <date>"                                 -> that date
+  - Bihar's online character certificate (reference "BCHC/2026/337487"):
+    its fixed wording "इसकी वैधता निर्गत होने की तिथि से छः माह तक ही है"
+    says 6 months, so 6 months even when OCR loses the Hindi paragraph.
   - otherwise the standard 12 months.
 """
 import re
@@ -30,7 +33,10 @@ SIX_MONTHS = re.compile(r"(?:\b(?:six|6)\s*\(?\s*6?\s*\)?\s*months?\b|(?:छह|
 ONE_YEAR = re.compile(r"(?:\b(?:one|1)\s*(?:\(\s*1\s*\)\s*)?years?\b|(?:एक|1)\s*(?:वर्ष|साल))", re.I)
 # "from the date of issue": Jharkhand "जारी होने की तिथि से केवल छह महीने के लिए वैध"
 # where OCR often loses the last word.
-VALIDITY_CONTEXT = re.compile(r"valid|validity|वैध|मान्य|जारी\s*होने\s*की\s*तिथि\s*से|from\s+the\s+date\s+of\s+issue", re.I)
+# Bihar: "इसकी वैधता निर्गत होने की तिथि से छः माह तक ही है".
+VALIDITY_CONTEXT = re.compile(r"valid|validity|वैध|मान्य|(?:जारी|निर्गत)\s*होने\s*की\s*तिथि\s*से|from\s+the\s+date\s+of\s+issue", re.I)
+# Bihar Police online character certificate: "Appl. Ref. No : BCHC/2026/337487".
+BIHAR_BCHC = re.compile(r"\bBCHC\s*/\s*20\d\d\s*/\s*\d{3,}", re.I)
 # Police Clearance Certificate: it states no validity and is accepted for life.
 PCC = re.compile(r"police\s*clearance\s*certificate|\bpcc\b|पुलिस\s*क्लीयरेंस|पुलिस\s*क्लियरेंस", re.I)
 
@@ -99,6 +105,8 @@ def extract_pvr(text: str, today: Optional[date] = None) -> dict:
         months, source = _validity_months(text)
         if months:
             out["validity_months"], out["validity_source"] = months, source
+        elif BIHAR_BCHC.search(text):
+            out["validity_months"], out["validity_source"] = 6, "PVR_STATED_6_MONTHS_BIHAR_BCHC"
         elif PCC.search(text):
             out["validity_months"], out["validity_source"] = None, "PVR_PCC_LIFETIME"
     return out

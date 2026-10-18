@@ -7,12 +7,13 @@ files share the CPU without overloading it. Results come back in the order
 given; saving to the database stays with the caller, in that order.
 """
 from concurrent.futures import ThreadPoolExecutor
+from typing import Optional
 
 from .ai.extraction.deterministic_extractor import extract_document_fields_deterministic
 from .config import OCR_WORKERS
 
 
-def extract_all(items: list[tuple[bytes, str]], allow_llm_fallback: bool = True) -> list[dict]:
+def extract_all(items: list[tuple[bytes, str]], allow_llm_fallback: Optional[bool] = None) -> list[dict]:
     if len(items) <= 1:
         return [extract_document_fields_deterministic(b, n, allow_llm_fallback=allow_llm_fallback) for b, n in items]
     with ThreadPoolExecutor(max_workers=min(len(items), OCR_WORKERS)) as pool:

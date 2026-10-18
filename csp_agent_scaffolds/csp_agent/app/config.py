@@ -144,6 +144,11 @@ ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 TBA_CSPS_RM = os.getenv("TBA_CSPS_RM", "").strip().lower()
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
 
+# Vision model (local Ollama, then Groq) when the rules can't read a
+# document. "off" (default): never asked automatically; what the rules can't
+# read goes to the Review queue and a person decides. "on": asked during
+# Gmail scans and uploads (heavy on the server's memory).
+MODEL_AUTO_FALLBACK = os.getenv("MODEL_AUTO_FALLBACK", "off").strip().lower() in ("1", "on", "true", "yes")
 # Local vision model on the rack server (Ollama), free and on-premises.
 LOCAL_VLM_URL = os.getenv("LOCAL_VLM_URL", "http://127.0.0.1:11434").rstrip("/")
 LOCAL_VLM_MODEL = os.getenv("LOCAL_VLM_MODEL", "qwen2.5vl:7b")

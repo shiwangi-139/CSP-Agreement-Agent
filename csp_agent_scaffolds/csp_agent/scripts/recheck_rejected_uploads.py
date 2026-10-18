@@ -11,7 +11,8 @@ since uploaded successfully is skipped.
 
     python -m scripts.recheck_rejected_uploads            # dry run: what would happen, nothing changes
     python -m scripts.recheck_rejected_uploads --apply
-    python -m scripts.recheck_rejected_uploads --apply --no-model   # faster: skip the local AI model
+    python -m scripts.recheck_rejected_uploads --again              # also uploads an earlier run already re-checked
+    python -m scripts.recheck_rejected_uploads --apply --model      # also ask the AI model (heavy; off by default)
     python -m scripts.recheck_rejected_uploads --apply --no-message # don't message the CSPs
 
 With --apply, each CSP whose documents changed gets the usual WhatsApp
@@ -65,7 +66,10 @@ def _make_readable(db, csp, doc: Document, ex: dict) -> None:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
-    ap.add_argument("--no-model", action="store_true", help="don't ask the local AI model (faster)")
+    ap.add_argument("--no-model", action="store_true", help="(default now) don't ask the AI model")
+    ap.add_argument("--model", action="store_true", help="also ask the AI model (Ollama/Groq) when the rules can't read a file")
+    ap.add_argument("--again", action="store_true",
+                    help="also look again at uploads an earlier run already re-checked (rules improved since)")
     ap.add_argument("--no-message", action="store_true", help="don't send the CSPs their WhatsApp reply")
     a = ap.parse_args()
     db = SessionLocal()
@@ -80,7 +84,7 @@ def main():
                 # file that really is expired stays turned away.
                 kept = r.get("reason") in ("wrong_doc", "expired") and r.get("kept_file")
                 stored_unreadable = r.get("reason") == "unreadable" and r.get("document_id")
-                if (kept or stored_unreadable) and not r.get("rechecked") \
+                if (kept or stored_unreadable) and (a.again or not r.get("rechecked")) \
                         and r.get("section") in SECTION_TYPE and key not in todo:
                     todo[key] = (e, i, r)
         counts = defaultdict(int)
@@ -104,11 +108,22 @@ def main():
                 continue
             data = path.read_bytes()
             ex = extract_document_fields_deterministic(data, r.get("filename") or path.name,
-                                                       allow_llm_fallback=not a.no_model, expected_type=doc_type)
-            if ex["readability"] != "READABLE" or ex["document_type"] != doc_type:
+                                                       allow_llm_fallback=a.model and not a.no_model,
+                                                       expected_type=doc_type)
+            if ex["readability"] == "READABLE" and ex["document_type"] in SECTION_TYPE.values() \
+                    and ex["document_type"] != doc_type:
+                # Same as a fresh upload: filed as what it reads as, a person confirms.
+                ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
+                    f"Uploaded in the {doc_type.replace('_', ' ').lower()} box but reads as a "
+                    f"{ex['document_type'].replace('_', ' ').lower()}; check which document it is "
+                    "(change the type if needed).")) if x)
+            if ex["readability"] == "READABLE" and ex.get("compliance_status") == "EXPIRED" \
+                    and not ex.get("type_review"):
+                # No typed date to confirm it here: a person checks before the CSP hears "expired".
+                ex["type_review"] = (f"Read as expired on {ex.get('expiry_date')} (issued {ex.get('start_date')}, "
+                                     f"{ex.get('validity_rule_used')}). Check the dates and the validity.")
+            if ex["readability"] != "READABLE" or ex["document_type"] not in SECTION_TYPE.values():
                 outcome = f"still not accepted ({ex['readability']} / {ex['document_type']})"
-            elif ex.get("compliance_status") == "EXPIRED":
-                outcome = f"read correctly but EXPIRED ({ex.get('expiry_date')})"
             elif ex.get("type_review"):
                 outcome = "-> review queue (a person confirms it)"
             else:

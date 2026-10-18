@@ -123,7 +123,7 @@ def _ctx(db: Session, csp: CSP, state: ComplianceState, link: Optional[str] = No
     docs = []
     for t, s in state.docs.items():
         en, hi = DOC_LABELS[t]
-        docs.append({"type": t, "label_en": en, "label_hi": hi, "status": s.status,
+        docs.append({"type": t, "label_en": en, "label_hi": hi, "status": s.shown_status,
                      "issue": s.issue_date.strftime("%d-%m-%Y") if s.issue_date else None,
                      "expiry": s.expiry_date.strftime("%d-%m-%Y") if s.expiry_date else None,
                      "days_left": s.days_left})

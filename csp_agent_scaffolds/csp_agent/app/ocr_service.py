@@ -266,6 +266,18 @@ STRONG_IIBF = [
     r"certificate\s+examination", r"bc\s*[/&]\s*bf", r"banking\s*(?:&|and)\s*finance",
 ]
 
+# IIBF papers that are not the certificate: the exam-fee "TAX INVOICE CUM
+# RECEIPT" ("Conduction of Exam", "Invoice Number"), the admit letter, the
+# registration acknowledgement. The certificate itself says the candidate passed.
+IIBF_NOT_CERTIFICATE = [
+    r"tax\s+invoice", r"invoice\s+n[uo]\w*", r"conduction\s+of\s+exa\w*", r"cum\s+receipt",
+    r"admit\s+(?:letter|card)", r"hall\s+ticket", r"fee\s+receipt", r"gstin",
+]
+IIBF_ISSUED = [
+    r"\bpassed\b", r"has\s+(?:successfully\s+)?(?:passed|completed)", r"this\s+is\s+to\s+certify",
+    r"is\s+hereby\s+certif", r"certificate\s+(?:no|number)\b",
+]
+
 
 def _matches(patterns, text):
     return [p for p in patterns if re.search(p, text)]
@@ -290,6 +302,10 @@ def classify_allowlist_gate(text: str, filename: str = "", expected_type: Option
         if hits and doc_type == "POLICE_VERIFICATION" and _matches(NOT_A_PVR, body):
             return (False, "NOT_A_PVR", "This is a bank due-diligence / KYC form, not a police verification "
                     "or character certificate.", 0.9)
+        if hits and doc_type == "IIBF_CERTIFICATE" and len(_matches(IIBF_NOT_CERTIFICATE, body)) >= 2 \
+                and not _matches(IIBF_ISSUED, body):
+            return (False, "IIBF_RECEIPT_ONLY",
+                    "This is an IIBF exam fee receipt / admit letter, not the IIBF certificate.", 0.9)
         if hits and doc_type == "POLICE_VERIFICATION" and _matches(PVR_APPLICATION, body) \
                 and not _matches(PVR_ISSUED, body):
             return (False, "PVR_APPLICATION_ONLY",

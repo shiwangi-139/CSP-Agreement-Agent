@@ -43,7 +43,8 @@ EFFECTIVE_LABEL = re.compile(r"effective\s*date\s*[:\-–]\s*", re.I)
 # Every Eko template opens "On this day of, 25/06/2025": found even when OCR
 # garbles the heading (",USTOMER SERVICEINT AGREEMENT"). OCR also reads "day"
 # as "gev" or "dav".
-THIS_DAY_OF = re.compile(r"on\s+th[il1]s\s+\w{2,4}\s+of\s*[,.:]?\s*[_\s]*", re.I)
+# The stamp over the first line can also swallow "On t": "nhis day of, 15-04-2026".
+THIS_DAY_OF = re.compile(r"(?:on\s+th[il1]s\s+\w{2,4}|\b[tn]?h[il1]s\s+d[aeo][yv])\s+of\s*[,.:]?\s*[_\s]*", re.I)
 
 # OCR-tolerant: "three (3) years", "three (3) yea.s", "per od oJ three (3)",
 # "Three (3) Years", "3 years", Hindi "तीन वर्ष" / "3 वर्ष" / "तीन साल".
@@ -59,7 +60,9 @@ THREE_YEAR = [
     re.compile(r"(?:remain\s+)?valid\s+for\s+(?:a\s+)?period\s+of\s+(?:three|thr[e3]{2}|3)\b\s*(?:\(\s*3\s*\))?"
                r"(?!\s*(?:\(\s*3\s*\)\s*)?months?)", re.I),
 ]
-_DATE = r"\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*(?:\d{4}|\d{2})(?!\d)|\d{1,2}(?:st|nd|rd|th)?\s*[- ]?\s*[A-Za-z]{3,9}\.?\s*[- ,]?\s*\d{4}"
+# A raised "th" in "30th December 2023" often comes out of OCR as a quote
+# mark: "30” December 2023", "29" December 2026".
+_DATE = r"\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*(?:\d{4}|\d{2})(?!\d)|\d{1,2}(?:st|nd|rd|th|[\"”“'’`°]{1,2})?\s*[- ]?\s*[A-Za-z]{3,9}\.?\s*[- ,]?\s*\d{4}"
 RANGE = [
     re.compile(r"(?:valid\s+)?(?:from|w\.?\s?e\.?\s?f\.?)\s*[:\-]?\s*(?P<a>[^\n]{6,30}?)\s*(?:to|till|until|upto|up\s+to)\s*(?P<b>[^\n]{6,30})", re.I),
     re.compile(r"(?:for\s+the\s+)?period\s+(?:of\s+)?(?P<a>[^\n]{6,30}?)\s*(?:to|till|until)\s*(?P<b>[^\n]{6,30})", re.I),

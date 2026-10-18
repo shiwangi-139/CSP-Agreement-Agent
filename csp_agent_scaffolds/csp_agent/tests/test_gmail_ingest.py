@@ -25,6 +25,7 @@ def fake_gmail(monkeypatch, tmp_path):
     monkeypatch.setattr(gmail_oauth, "fetch_attachment_bytes", fetch)
     # No vision model in tests; a test sets calls["model"] to what it "reads".
     monkeypatch.setattr(gmail_ingest, "read_owner_with_model", lambda data, t: calls.get("model"))
+    monkeypatch.setattr(gmail_ingest, "MODEL_AUTO_FALLBACK", True)
     return mailbox, calls
 
 

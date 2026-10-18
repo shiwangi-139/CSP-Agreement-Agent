@@ -37,6 +37,7 @@
   .badge { display: inline-block; font-size: .78rem; font-weight: 600; padding: 2px 10px; border-radius: 999px; }
   .VALID { background: var(--mist); color: var(--forest); }
   .EXPIRED, .UNREADABLE { background: hsl(0 84% 95%); color: hsl(0 70% 38%); }
+  .IN_REVIEW { background: hsl(42 85% 92%); color: hsl(38 80% 28%); }
   .MISSING { background: hsl(42 85% 90%); color: hsl(38 80% 28%); }
   .rules { background: hsl(42 85% 94%); border-color: hsl(42 60% 75%); }
   .rules ul { margin: 6px 0 0 18px; padding: 0; }
@@ -153,7 +154,7 @@
   const token = new URLSearchParams(location.search).get("token") || "";
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-  const STATUS = {VALID:["ठीक है","Valid"], EXPIRED:["रिन्यू करना है","Expired"], MISSING:["अभी जमा नहीं हुआ","Not received"], UNREADABLE:["फोटो साफ़ नहीं है","Not readable"]};
+  const STATUS = {VALID:["ठीक है","Valid"], EXPIRED:["रिन्यू करना है","Expired"], MISSING:["अभी जमा नहीं हुआ","Not received"], UNREADABLE:["फोटो साफ़ नहीं है","Not readable"], IN_REVIEW:["जाँच हो रही है","Being checked"]};
   const fmt = (iso) => iso ? iso.split("-").reverse().join("-") : "";
 
   $("who").textContent = `${ctx.csp.name} · KO ${ctx.csp.code}`;
@@ -163,7 +164,7 @@
   // What's on file at a glance, then the RM card with call / WhatsApp buttons.
   $("chips").innerHTML = ctx.docs.map((d) => {
     const st = STATUS[d.status] || [d.status, d.status];
-    return `<span class="chip ${esc(d.status)}">${d.status === "VALID" ? "✅" : d.status === "MISSING" ? "⏳" : "⚠️"} ${esc(d.label_hi)} · ${esc(st[0])}</span>`;
+    return `<span class="chip ${esc(d.status)}">${d.status === "VALID" ? "✅" : d.status === "MISSING" ? "⏳" : d.status === "IN_REVIEW" ? "🔍" : "⚠️"} ${esc(d.label_hi)} · ${esc(st[0])}</span>`;
   }).join("");
   $("qsend").addEventListener("click", async () => {
     const text = $("qtext").value.trim();

@@ -105,3 +105,31 @@ def test_application_receipt_uploaded_in_police_section_is_turned_away_not_revie
                                               expected_type="POLICE_VERIFICATION")
     assert r["readability"] == "NOT_ALLOWED" and r["document_type"] == "PVR_APPLICATION_ONLY"
     assert not r.get("type_review")
+
+
+def test_check_all_documents_lists_a_wrong_stored_expiry_and_changes_nothing(db_session, tmp_path, monkeypatch, capsys):
+    import scripts.check_all_documents as chk
+    import app.ai.providers.vision_fallback as vf
+    monkeypatch.setattr(vf, "read_page", lambda *a, **k: (_ for _ in ()).throw(AssertionError("model asked")))
+    db = db_session
+    code = f"9K{uuid.uuid4().int % 1000000:06d}"
+    csp = CSP(name="Check CSP", current_code=code, lookup_code=code, phone="9876543210",
+              whatsapp_number="9876543210", is_active_in_calling_sheet=True)
+    db.add(csp)
+    db.flush()
+    f = tmp_path / "agreement.pdf"
+    _pdf(f)
+    doc = Document(csp_id=csp.id, document_type="AGREEMENT", sha256=uuid.uuid4().hex, status=DocumentStatus.VALID,
+                   issue_date=date(2025, 7, 1), expiry_date=date(2027, 7, 1), is_current=True,
+                   readability="READABLE", validity_rule_used="AGREEMENT_DEFAULT_2_YEAR", storage_path=str(f))
+    db.add(doc)
+    db.commit()
+    monkeypatch.setattr(chk, "SessionLocal", sessionmaker(bind=db.get_bind()))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["check", "--csp", code])
+    chk.main()
+    out = capsys.readouterr().out
+    assert "re-read 2025-07-01 -> 2028-06-01   [DIFFERENT]" in out and "1 DIFFERENT" in out
+    assert (tmp_path / "logs" / "document_check.csv").exists()
+    db.refresh(doc)
+    assert doc.expiry_date == date(2027, 7, 1)
