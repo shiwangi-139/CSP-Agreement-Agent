@@ -487,6 +487,7 @@
         <div class="meta">${badge(kind(r.reason)[0], kind(r.reason)[1])} <b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)} · ${esc(DOC[r.document.type] || r.document.type)}
           · issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : ""}</div>
         <p>${esc(r.reason)}</p>
+        ${aiHint(r.document.model_suggestion)}
         <div class="toolbar"><a href="#" data-file="${r.document.id}">View document</a>
           <label>Correct issue date <input type="date" id="rv${r.id}" value="${esc(r.document.issue_date || "")}"></label>
           <label>Type <select id="rt${r.id}">${["AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"].map((t) =>
@@ -498,6 +499,16 @@
           <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button></div></div>`).join("") || `<div class="card empty">Nothing to review.</div>`}`;
     },
   };
+
+  // What the local AI model read (a suggestion only; the reviewer decides).
+  function aiHint(s) {
+    if (!s) return "";
+    if (!s.provider || s.legible === false) return `<p class="small muted">AI helper could not read this document either.</p>`;
+    const v = s.validity_months ? (s.validity_months % 12 ? `${s.validity_months} months` : `${s.validity_months / 12} year(s)`) : "not stated";
+    return `<p class="small" style="background:var(--saffron-soft,#fdf3d7);padding:6px 10px;border-radius:8px">🤖 <b>AI helper read</b> (check it on the document):
+      type ${esc(DOC[s.document_type] || s.document_type || "-")} · issued <span class="mono">${esc(s.issue_date || "not read")}</span> · validity ${esc(v)}
+      ${s.evidence ? `<br><span class="muted">“${esc(s.evidence)}”</span>` : ""}</p>`;
+  }
 
   function pager(pages) {
     if (pages <= 1) return "";

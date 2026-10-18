@@ -15,6 +15,8 @@ Schedule (Asia/Kolkata):
   Outbox sender / retries                          every 2 minutes
   Vault: expiry renames + INDEX.xlsx               daily 00:10
   Excel reports (CSP report, Contacts & gaps)      daily 07:30
+  Review helper (local Ollama, capped, see app/model_assist.py)  hourly at :15
+  Ollama memory guard (stops this project's Ollama)             every minute
 Missed runs (server off) are run once when it comes back (coalesce + 6 h grace).
 """
 import logging
@@ -135,6 +137,29 @@ def job_reports():
     return _run("reports", go)
 
 
+def job_model_assist():
+    from . import model_assist
+
+    def go():
+        db = SessionLocal()
+        try:
+            return model_assist.run_batch(db)
+        finally:
+            db.close()
+    return _run("model_assist", go)
+
+
+def job_model_guard():
+    """Every minute, no lock or log unless it acts: cheap /proc reads."""
+    from . import model_assist
+    try:
+        r = model_assist.guard()
+        if r.get("ollama") == "stopped":
+            logger.warning("model_guard %s", r)
+    except Exception:
+        logger.exception("model_guard_failed")
+
+
 def build_scheduler():
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -151,6 +176,8 @@ def build_scheduler():
         sched.add_job(job_delivery, IntervalTrigger(minutes=30), id="delivery")
     sched.add_job(job_vault, CronTrigger(hour=VAULT_JOB_HOUR, minute=VAULT_JOB_MINUTE), id="vault")
     sched.add_job(job_reports, CronTrigger(hour=7, minute=30), id="reports")
+    sched.add_job(job_model_assist, CronTrigger(minute=15), id="model_assist")
+    sched.add_job(job_model_guard, IntervalTrigger(minutes=1), id="model_guard", next_run_time=datetime.now())
     return sched
 
 

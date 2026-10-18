@@ -20,7 +20,7 @@ import urllib.request
 from typing import Optional
 
 from ...config import (
-    LOCAL_VLM_URL, LOCAL_VLM_MODEL, LOCAL_VLM_TIMEOUT_SECONDS,
+    LOCAL_VLM_URL, LOCAL_VLM_MODEL, LOCAL_VLM_TIMEOUT_SECONDS, MODEL_THREADS,
     GROQ_API_KEY, GROQ_VISION_MODEL,
 )
 
@@ -113,17 +113,19 @@ def _http_error_text(e: urllib.error.HTTPError) -> str:
         return ""
 
 
-def _ask_ollama(image: bytes, doc_type: str) -> dict:
+def _ask_ollama(image: bytes, doc_type: str, timeout: Optional[int] = None) -> dict:
     payload = {
         "model": LOCAL_VLM_MODEL,
         "stream": False,
         "format": SCHEMA,
-        "options": {"temperature": 0},
+        "options": {"temperature": 0, "num_thread": MODEL_THREADS},
+        # Unload the model from memory as soon as it has answered.
+        "keep_alive": 0,
         "messages": [{"role": "user", "content": _prompt(doc_type),
                       "images": [base64.b64encode(image).decode()]}],
     }
     data = _post(f"{LOCAL_VLM_URL}/api/chat", payload, {"Content-Type": "application/json"},
-                 LOCAL_VLM_TIMEOUT_SECONDS)
+                 timeout or LOCAL_VLM_TIMEOUT_SECONDS)
     return _parse_json(data["message"]["content"])
 
 
@@ -165,16 +167,18 @@ def _ask_groq_with_backoff(image: bytes, doc_type: str, mime: str, model: str, a
             waited += wait
 
 
-def read_page(image: bytes, doc_type: str, mime: str = "image/png") -> Optional[dict]:
-    """Ask the local model, then Groq. Returns the parsed answer plus
-    `provider`, or None if no model is reachable."""
+def read_page(image: bytes, doc_type: str, mime: str = "image/png", local_only: bool = False,
+              timeout: Optional[int] = None) -> Optional[dict]:
+    """Ask the local model, then Groq (not with local_only: the image stays
+    on the server). Returns the parsed answer plus `provider`, or None if no
+    model is reachable."""
     global _ollama_down_until
     if LOCAL_VLM_URL and time.time() >= _ollama_down_until and not _ollama_reachable():
         _ollama_down_until = time.time() + 300
         logger.warning("local_vlm_unreachable url=%s (skipping it for 5 min)", LOCAL_VLM_URL)
     if LOCAL_VLM_URL and time.time() >= _ollama_down_until:
         try:
-            ans = _ask_ollama(image, doc_type)
+            ans = _ask_ollama(image, doc_type, timeout)
             ans["provider"] = f"OLLAMA:{LOCAL_VLM_MODEL}"
             return ans
         except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as e:
@@ -183,7 +187,7 @@ def read_page(image: bytes, doc_type: str, mime: str = "image/png") -> Optional[
             logger.warning("local_vlm_unreachable url=%s err=%s (skipping it for 5 min)", LOCAL_VLM_URL, e)
         except Exception as e:
             logger.warning("local_vlm_bad_answer err=%s", e)
-    if GROQ_API_KEY:
+    if GROQ_API_KEY and not local_only:
         for model in dict.fromkeys([m for m in [GROQ_VISION_MODEL, *GROQ_VISION_FALLBACKS] if m]):
             if model in _groq_bad_models:
                 continue

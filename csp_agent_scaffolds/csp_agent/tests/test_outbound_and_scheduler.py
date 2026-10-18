@@ -29,6 +29,6 @@ def test_renewal_template_renders_with_dates():
 def test_worker_schedule():
     ids = {j.id for j in build_scheduler().get_jobs()}
     from app.config import FEATURE_MESSAGING_ANALYTICS
-    core = {"gmail", "sheet", "engine", "outbox", "vault", "reports"}
+    core = {"gmail", "sheet", "engine", "outbox", "vault", "reports", "model_assist", "model_guard"}
     assert ids == (core | {"delivery"} if FEATURE_MESSAGING_ANALYTICS else core)    # delivery: parked feature
     assert "worker" in get_scheduler_status()["runs_in"]

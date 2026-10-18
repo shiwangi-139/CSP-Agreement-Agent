@@ -149,6 +149,22 @@ AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
 # read goes to the Review queue and a person decides. "on": asked during
 # Gmail scans and uploads (heavy on the server's memory).
 MODEL_AUTO_FALLBACK = os.getenv("MODEL_AUTO_FALLBACK", "off").strip().lower() in ("1", "on", "true", "yes")
+# Review helper (app/model_assist.py): the local Ollama model reads documents
+# waiting in the Review queue and shows the reviewer what it read. It never
+# decides and never messages a CSP. Ollama runs only while it works and is
+# stopped right after, or at once when the server's memory is high.
+MODEL_ASSIST = os.getenv("MODEL_ASSIST", "on").strip().lower() in ("1", "on", "true", "yes")
+MODEL_ASSIST_DAILY_LIMIT = int(os.getenv("MODEL_ASSIST_DAILY_LIMIT", "10"))
+# Hours (server's local time) when it may run, "20-8" = 8 pm to 8 am.
+MODEL_ASSIST_HOURS = os.getenv("MODEL_ASSIST_HOURS", "20-8")
+# Stop (kill) this project's Ollama when the whole server uses more RAM than
+# this, or when Ollama itself uses more than MODEL_MAX_OLLAMA_GB.
+MODEL_MAX_SERVER_RAM_PERCENT = float(os.getenv("MODEL_MAX_SERVER_RAM_PERCENT", "75"))
+MODEL_MAX_OLLAMA_GB = float(os.getenv("MODEL_MAX_OLLAMA_GB", "8"))
+MODEL_THREADS = int(os.getenv("MODEL_THREADS", "4"))
+OLLAMA_BIN = os.getenv("OLLAMA_BIN", "/home/shiwangi/.ollama/app/bin/ollama")
+OLLAMA_MODELS_DIR = os.getenv("OLLAMA_MODELS_DIR", "/home/shiwangi/.ollama/models")
+OLLAMA_LOG = os.getenv("OLLAMA_LOG", "/home/shiwangi/.ollama/serve.log")
 # Local vision model on the rack server (Ollama), free and on-premises.
 LOCAL_VLM_URL = os.getenv("LOCAL_VLM_URL", "http://127.0.0.1:11434").rstrip("/")
 LOCAL_VLM_MODEL = os.getenv("LOCAL_VLM_MODEL", "qwen2.5vl:7b")

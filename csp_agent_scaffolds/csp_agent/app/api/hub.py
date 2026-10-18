@@ -80,6 +80,7 @@ def _doc_json(d: Document) -> dict:
             "days_left": (d.expiry_date - date.today()).days if d.expiry_date else None,
             "validity_rule": d.validity_rule_used, "date_source": d.date_source,
             "method": d.extraction_method, "model": f.get("model_provider"), "is_current": d.is_current,
+            "model_suggestion": f.get("model_suggestion"),
             "channel": d.upload_channel, "filename": d.original_filename, "uploaded_at": _iso(d.uploaded_at),
             "source_date": _iso(d.source_date), "sender_on_sheet": d.sender_on_sheet,
             "holder_name": d.holder_name, "registration_number": d.iibf_reg_number,

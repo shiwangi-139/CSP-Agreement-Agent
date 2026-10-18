@@ -124,6 +124,17 @@ def _ask_model(scan: DocumentScan, doc_type: str) -> Optional[dict]:
     return read_page(image, doc_type, "image/jpeg")
 
 
+def suggest_with_local_model(file_bytes: bytes, doc_type: str, timeout: int = 300) -> Optional[dict]:
+    """Review helper (app/model_assist.py): what the local model reads on the
+    most relevant page. Local Ollama only; the image never leaves the server."""
+    scan = scan_document(file_bytes)
+    image = _page_for_model(scan, doc_type)
+    if image is None:
+        return None
+    from ..providers.vision_fallback import read_page
+    return read_page(image, doc_type, "image/jpeg", local_only=True, timeout=timeout)
+
+
 def read_owner_with_model(file_bytes: bytes, doc_type: str) -> Optional[dict]:
     """Ask the vision model (local Ollama, then Groq) for the CSP code and
     name on the page that holds them. For documents whose owner OCR could
