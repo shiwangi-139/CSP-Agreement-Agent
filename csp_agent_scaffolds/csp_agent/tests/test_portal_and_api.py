@@ -641,3 +641,41 @@ def test_form_uploads_say_being_checked_not_all_accepted_while_a_person_checks(c
     d = c.get("/api/hub/form-uploads", headers={"X-API-Key": "k"}).json()
     [row] = [x for x in d["rows"] if x["csp"]["id"] == cid]
     assert row["outcome"] == "checking" and row["results"][0]["in_review"] and d["counts"]["checking"] >= 1
+
+
+def test_rereading_a_waiting_item_updates_its_dates_but_does_not_accept_it(client, monkeypatch, tmp_path):
+    """A document that went to review under older rules is read again on request."""
+    import fitz
+    from app.models import ManualReviewQueue, ReviewStatus
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    cid, _, _ = _csp(Session)
+    doc = fitz.open()
+    page = doc.new_page()
+    for i, line in enumerate(["CUSTOMER SERVICE POINT AGREEMENT",
+                              'On this day of, 29/08/2025 ("Effective Date") 27/08/2028 Sunil Kumar Gupta',
+                              "Eko hereby appoints the CSP. Security deposit. In witness whereof the parties sign."]):
+        page.insert_text((30, 60 + 20 * i), line, fontsize=8)
+    f = tmp_path / "agr.pdf"
+    doc.save(f)
+    s = Session()
+    d = Document(csp_id=cid, document_type="AGREEMENT", sha256=uuid.uuid4().hex, status=DocumentStatus.NEEDS_REVIEW,
+                 readability="READABLE", is_current=False, issue_date=date(2025, 8, 29), expiry_date=date(2026, 8, 29),
+                 validity_rule_used="AGREEMENT_DEFAULT_1_YEAR", storage_path=str(f),
+                 extracted_fields={"typed_issue_date": "2025-08-29"})
+    s.add(d)
+    s.flush()
+    q = ManualReviewQueue(document_id=d.id, status=ReviewStatus.PENDING, reason="No validity period or end date was found")
+    s.add(q)
+    s.commit()
+    qid, did = q.id, d.id
+    s.close()
+    r = c.post(f"/api/hub/review/{qid}/reread", headers=hdr)
+    assert r.status_code == 200 and r.json()["changed"], r.text
+    s = Session()
+    d = s.get(Document, did)
+    assert d.expiry_date == date(2028, 8, 27) and d.status == DocumentStatus.NEEDS_REVIEW
+    assert s.get(ManualReviewQueue, qid).status == ReviewStatus.PENDING
+    assert "valid till 27-08-2028" in s.get(ManualReviewQueue, qid).reason
+    s.close()

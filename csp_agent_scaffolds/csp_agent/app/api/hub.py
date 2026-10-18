@@ -800,6 +800,21 @@ def accuracy_stats(days: int = 90, db: Session = Depends(get_db)):
     return {**accuracy.stats(db, days), "mistakes": accuracy.mistakes(db)}
 
 
+@router.post("/review/{item_id}/reread")
+def reread_review(item_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """Read a waiting document again with the current rules (no model). Only
+    its dates and the note change; the reviewer still accepts or rejects."""
+    from ..review_tools import reread_waiting
+    q = db.get(ManualReviewQueue, item_id)
+    if q is None or q.status != ReviewStatus.PENDING:
+        raise HTTPException(404, "not waiting")
+    d = db.get(Document, q.document_id)
+    _own_csp(db, d.csp_id, me)
+    r = reread_waiting(db, q, d)
+    db.commit()
+    return {"changed": r["changed"], "note": r["note"]}
+
+
 # Validity a reviewer may pick, in months (what the document states).
 VALIDITY_CHOICES = {"AGREEMENT": (12, 24, 36, 60), "POLICE_VERIFICATION": (6, 12)}
 

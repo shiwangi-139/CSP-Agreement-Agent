@@ -734,6 +734,7 @@
           <label>Validity stated <select id="rm${r.id}"><option value="">as read</option>
             <optgroup label="Agreement"><option value="12">1 year</option><option value="24">2 years</option><option value="36">3 years</option><option value="60">5 years</option></optgroup>
             <optgroup label="Police certificate"><option value="6">6 months</option><option value="12">1 year</option></optgroup></select></label>
+          <button class="btn" data-reread="${r.id}" title="Read the document again with the agent's latest rules (doesn't accept it)">Re-read with current rules</button>
           <button class="btn primary" data-resolve="${r.id}" data-accept="1">Accept</button>
           <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button></div></div>`).join("") || `<div class="card empty">Nothing to review.</div>`}`;
     },
@@ -820,7 +821,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-mtab],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -864,6 +865,12 @@
       if (ds.fcsp) { const id = +ds.fcsp, o = state.fopen || (state.fopen = new Set()); o.has(id) ? o.delete(id) : o.add(id); return render(); }
       if (ds.fout !== undefined) { state.fout = ds.fout; return render(); }
       if (ds.mtab) { state.mtab = ds.mtab; return render(); }
+      if (ds.reread) {
+        t.disabled = true; t.textContent = "Reading…";
+        try { const r = await post(`/api/hub/review/${ds.reread}/reread`); toast(r.changed ? "Re-read: dates updated, check and accept." : "Re-read: same result as before."); }
+        catch (err) { toast(err.message); }
+        return render();
+      }
       if (ds.fdays !== undefined) { state.fdays = +ds.fdays; return render(); }
       if (ds.keptfile) { e.preventDefault(); const [ev, i] = ds.keptfile.split("/"); return openPath(`api/hub/form-uploads/${ev}/file/${i}`); }
       if (ds.answer) { await post(`/api/hub/questions/${ds.answer}/answer`, {note: $(`#qn${ds.answer}`)?.value || ""}); toast("Marked answered."); return render(); }
