@@ -6,7 +6,7 @@
 <title>Eko CSP Renewals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
-<link rel="stylesheet" href="static/eko.css?v=4">
+<link rel="stylesheet" href="static/eko.css?v=5">
 </head>
 <body>
 <div id="login" class="login card" style="display:none">
@@ -134,151 +134,231 @@
   }
 
   // ------------------------------------------------------- monitoring page
-  // Every status: icon + words + colour (never colour alone).
-  const ICON = {ok: "✅", warn: "⚠️", bad: "⛔"};
-  const mon = (s) => s ? `<span class="mon ${esc(s.level)}">${ICON[s.level] || ""} ${esc(s.text)}</span>` : "";
-  const tile = (label, n, sub, s) => `<div class="card kpi"><div class="label">${esc(label)}</div><div class="n">${n ?? "—"}</div>
-    <div class="small muted">${sub || ""}</div>${s ? `<div style="margin-top:6px">${mon(s)}</div>` : ""}</div>`;
-  const pairs = (rows, empty = "Nothing yet.") => rows && rows.length
-    ? `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="num">${esc(v)}</dd>`).join("")}</dl>` : `<p class="small muted">${empty}</p>`;
-  const ago = (iso) => iso ? when(iso) : "never";
-  // Horizontal bars (inline SVG): [[label, value], ...]; the number is written next to each bar.
-  function hbars(rows) {
-    if (!rows || !rows.length) return `<p class="small muted">Nothing yet.</p>`;
-    const max = Math.max(...rows.map((r) => r[1]), 1), h = 22;
-    return `<svg viewBox="0 0 320 ${rows.length * h}" width="100%" role="img" aria-label="bar chart">${rows.map(([l, v], i) => `
-      <text x="0" y="${i * h + 15}" font-size="11" fill="currentColor">${esc(String(l).slice(0, 28))}</text>
-      <rect x="150" y="${i * h + 5}" width="${Math.max(2, 130 * v / max)}" height="12" rx="3" fill="var(--primary)"></rect>
-      <text x="${154 + 130 * v / max}" y="${i * h + 15}" font-size="11" fill="currentColor">${v}</text>`).join("")}</svg>`;
+  // Shared look for Monitoring and Messaging analytics: one status band in
+  // words, a strip of numbers that carry their own small chart, then panels.
+  // Every status has an icon and words; colour only adds to them.
+  const ICON = {ok: "✓", warn: "⚠", bad: "⛔"};
+  const chip = (level, text) => `<span class="mx-chip ${esc(level)}">${ICON[level] || ""} ${esc(text)}</span>`;
+  const mon = (s) => s ? chip(s.level, s.text) : "";
+  // "6 min ago", "3 h ago", "2 days ago"; the full time on hover (title).
+  function ago(iso) {
+    if (!iso) return "never";
+    const m = Math.max(0, (Date.now() - new Date(iso).getTime()) / 60000);
+    const t = m < 1 ? "just now" : m < 60 ? `${Math.round(m)} min ago` : m < 2880 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`;
+    return `<span title="${esc(when(iso))}">${t}</span>`;
   }
-  // Columns per day (inline SVG), stacked by key: series = [{day, k1: n, k2: n}], keys = [[key, label, colourVar]].
+  function band(level, title, sub, chips = []) {
+    return `<div class="mx-band ${esc(level)}"><div class="mx-dot" aria-hidden="true">${ICON[level] || "•"}</div>
+      <div><b>${esc(title)}</b>${sub ? `<div class="mx-sub">${esc(sub)}</div>` : ""}</div>
+      <div class="mx-chips">${chips.join("")}</div></div>`;
+  }
+  // One number in the strip: label, value (+ small unit), a mini chart, a note; level marks it with a top edge.
+  const metric = (k, v, unit, note, viz = "", level = "") => `<div class="mx-metric ${esc(level)}"><span class="mx-k">${esc(k)}</span>
+    <span class="mx-v">${v ?? "—"}${unit ? `<small> ${esc(unit)}</small>` : ""}</span>${viz}<span class="mx-note">${note || ""}</span></div>`;
+  const strip = (...m) => `<div class="mx-strip">${m.join("")}</div>`;
+  const panel = (title, hint, body, extra = "") => `<div class="mx-panel ${extra}"><h2>${esc(title)}</h2>${hint ? `<p class="mx-hint">${hint}</p>` : ""}${body}</div>`;
+  // Mini charts (inline SVG, drawn to scale, colours from the theme).
+  function fill(used, total, level = "") {
+    const w = total ? Math.min(120, 120 * used / total) : 0;
+    return `<svg class="mx-viz thin" viewBox="0 0 120 8" preserveAspectRatio="none" aria-hidden="true"><rect width="120" height="8" rx="4" class="mx-track"></rect>
+      <rect width="${w}" height="8" rx="4" class="mx-fill ${esc(level)}"></rect></svg>`;
+  }
+  function spark(values, level = "") {
+    const v = (values || []).filter((x) => x != null);
+    if (v.length < 2) return `<svg class="mx-viz" viewBox="0 0 120 24" aria-hidden="true"></svg>`;
+    const max = Math.max(...v), min = Math.min(...v), span = max - min || 1;
+    const pts = v.map((x, i) => [i * 120 / (v.length - 1), 21 - 18 * (x - min) / span]);
+    const line = pts.map((p) => p.map((n) => n.toFixed(1)).join(",")).join(" ");
+    const [ex, ey] = pts[pts.length - 1];
+    return `<svg class="mx-viz" viewBox="0 0 120 24" aria-hidden="true"><polygon points="0,24 ${line} 120,24" class="mx-area ${esc(level)}"></polygon>
+      <polyline points="${line}" class="mx-line ${esc(level)}"></polyline><circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="2.6" class="mx-end ${esc(level)}"></circle></svg>`;
+  }
+  function blocks(levels) {
+    const n = levels.length || 1, w = 120 / n;
+    return `<svg class="mx-viz thin" viewBox="0 0 120 8" preserveAspectRatio="none" aria-hidden="true">${levels.map((l, i) =>
+      `<rect x="${(i * w + 1).toFixed(1)}" width="${(w - 2).toFixed(1)}" height="8" rx="2" class="mx-fill ${esc(l)}"></rect>`).join("")}</svg>`;
+  }
+  // Horizontal bars: [[label, value, level?], ...], value written at the end of each bar.
+  function bars(rows, empty = "Nothing yet.") {
+    if (!rows || !rows.length) return `<p class="mx-hint">${empty}</p>`;
+    const max = Math.max(...rows.map((r) => r[1]), 1);
+    return `<div class="mx-bars">${rows.map(([l, v, lev]) => `<div class="mx-bar"><span class="mx-bl">${esc(l)}</span>
+      <span class="mx-bt"><span class="mx-fillbar ${esc(lev || "")}" style="width:${v ? Math.max(2, 100 * v / max) : 0}%"></span></span><span class="mx-bv">${v}</span></div>`).join("")}</div>`;
+  }
+  // Columns per day, stacked: series [{day, key: n}], keys [[key, label, cssVar]].
   function columns(series, keys) {
-    if (!series || !series.length) return `<p class="small muted">No history yet (it starts with the first daily snapshot).</p>`;
+    if (!series || !series.length) return `<p class="mx-hint">No history yet: it builds up day by day.</p>`;
     const tot = series.map((r) => keys.reduce((a, [k]) => a + (r[k] || 0), 0)), max = Math.max(...tot, 1);
-    const w = Math.max(8, Math.floor(300 / series.length)), H = 120;
-    const bars = series.map((r, i) => { let y = H; return keys.map(([k, , col]) => { const h = H * (r[k] || 0) / max; y -= h;
-      return h ? `<rect x="${i * w + 10}" y="${y}" width="${w - 2}" height="${h}" fill="var(${col})"><title>${esc(r.day)} ${esc(k)}: ${r[k]}</title></rect>` : ""; }).join(""); }).join("");
-    return `<svg viewBox="0 0 ${series.length * w + 20} ${H + 18}" width="100%" role="img" aria-label="per day">${bars}
-      <text x="10" y="${H + 14}" font-size="10" fill="currentColor">${esc(series[0].day)}</text>
-      <text x="${series.length * w + 10}" y="${H + 14}" font-size="10" text-anchor="end" fill="currentColor">${esc(series[series.length - 1].day)}</text></svg>
-      <div class="small">${keys.map(([k, l, col]) => `<span style="display:inline-block;width:10px;height:10px;background:var(${col});border-radius:2px"></span> ${esc(l)}`).join(" &nbsp; ")}</div>`;
+    const W = 300, H = 110, gap = 2, w = Math.max(3, (W - 30) / series.length - gap);
+    const x = (i) => 28 + i * (w + gap);
+    const grid = [0.5, 1].map((f) => `<line x1="28" x2="${W}" y1="${H - H * f + 4}" y2="${H - H * f + 4}" class="mx-grid"></line>
+      <text x="24" y="${H - H * f + 8}" text-anchor="end">${Math.round(max * f)}</text>`).join("");
+    const cols = series.map((r, i) => { let y = H + 4; return keys.map(([k, , col]) => { const h = H * (r[k] || 0) / max; y -= h;
+      return h ? `<rect x="${x(i).toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="1.5" style="fill:var(${col})"><title>${esc(r.day)} · ${esc(k)}: ${r[k]}</title></rect>` : ""; }).join(""); }).join("");
+    return `<svg class="mx-chart" viewBox="0 0 ${W} ${H + 22}" role="img" aria-label="per day">${grid}${cols}
+      <text x="28" y="${H + 18}">${esc(fmt(series[0].day))}</text><text x="${W}" y="${H + 18}" text-anchor="end">${esc(fmt(series[series.length - 1].day))}</text></svg>
+      <div class="mx-legend">${keys.map(([, l, col]) => `<span><i style="background:var(${col})"></i>${esc(l)}</span>`).join("")}</div>`;
   }
+  // Timeline of a job's runs in the last 24 h (left = 24 h ago, right = now).
+  function ribbon(runs) {
+    return `<svg class="mx-ribbon" viewBox="0 0 120 12" preserveAspectRatio="none" aria-label="${runs.length} runs in 24 h" role="img">
+      <rect width="120" height="12" rx="3" class="mx-track"></rect>${runs.map((r) =>
+      `<rect x="${(118 - 118 * Math.min(r.hours_ago, 24) / 24).toFixed(1)}" y="1" width="2" height="10" class="mx-fill ${r.status === "FAILED" ? "bad" : r.status === "SKIPPED" ? "" : "ok"}"></rect>`).join("")}</svg>`;
+  }
+  const kv = (rows, empty = "Nothing yet.") => rows && rows.length
+    ? `<dl class="mx-kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join("")}</dl>` : `<p class="mx-hint">${empty}</p>`;
+  const code = (c) => `<span class="mx-code">${esc(c)}</span>`;
   const T3 = {AGREEMENT: "Agreement", POLICE_VERIFICATION: "Police certificate", IIBF_CERTIFICATE: "IIBF"};
+  const hrs = (h) => h == null ? "—" : h >= 48 ? `${Math.round(h / 24)} days` : `${Math.round(h)} h`;
+
   const MON = {
     status(d) {
-      return `<div class="card" style="margin-bottom:14px">${mon(d.overall)}</div>
-      <div class="grid k4">
-        ${tile("WhatsApp today", `${d.whatsapp.today} / ${d.whatsapp.limit}`, `${esc(d.whatsapp.mode)} mode · sends ${esc(d.whatsapp.send_hours)} (${d.whatsapp.send_window_open ? "open now" : "closed now"})`, d.whatsapp.status)}
-        ${tile("Last Gmail scan", d.gmail.last_scan ? ago(d.gmail.last_scan.at) : "never", d.gmail.backfill_done ? "2-year backfill done" : "backfill still running")}
-        ${tile("Review helper today", `${d.review_helper.read_today} / ${d.review_helper.limit}`, d.review_helper.on ? "local AI reads review documents, 8 pm–8 am" : "switched off")}
-        ${tile("Jobs with a problem", d.jobs.filter((j) => j.status.level !== "ok").length, `of ${d.jobs.length} jobs`)}
-      </div>
-      <div class="card tablewrap" style="margin-top:14px"><h2>Jobs</h2><table><thead><tr><th>Job</th><th>Status</th><th>Last run</th><th>Took</th><th>Failed (24 h)</th><th>Last error</th></tr></thead><tbody>
-        ${d.jobs.map((j) => `<tr><td>${esc(j.label)}</td><td>${mon(j.status)}</td><td>${j.last ? ago(j.last.at) : "—"}</td>
-          <td class="num">${j.last?.minutes != null ? j.last.minutes + " min" : "—"}</td><td class="num">${j.failed_24h}</td>
-          <td class="small">${esc(j.last_error || "")}</td></tr>`).join("")}</tbody></table></div>
-      <div class="card" style="margin-top:14px"><h2>Gmail messages by state</h2>${pairs(Object.entries(d.gmail.messages_by_status || {}))}</div>`;
+      const late = d.jobs.filter((j) => j.status.level !== "ok");
+      const chips = [...late.map((j) => chip(j.status.level, `${j.label}: ${j.status.text}`)),
+                     ...(d.whatsapp.status.level !== "ok" ? [mon(d.whatsapp.status)] : [])];
+      const title = d.overall.level === "ok" ? "Everything ran on time" : d.overall.text;
+      const wa = d.whatsapp, rh = d.review_helper, okJobs = d.jobs.length - late.length;
+      return band(d.overall.level, title, late.length ? "Jobs below are late or failed; the rest ran normally." : "All jobs ran when they should.", chips)
+      + strip(
+        metric("WhatsApp today", wa.today, `/ ${wa.limit}`, `${esc(wa.mode)} mode · ${wa.send_window_open ? "sending now" : "outside"} ${esc(wa.send_hours)}`,
+               fill(wa.today, wa.limit, wa.status.level), wa.status.level === "ok" ? "" : wa.status.level),
+        metric("Last Gmail scan", d.gmail.last_scan ? ago(d.gmail.last_scan.at) : "never", "", d.gmail.backfill_done ? "2-year backfill done" : "backfill still running"),
+        metric("Review helper", rh.read_today, `/ ${rh.limit}`, rh.on ? "local AI · 8 pm to 8 am" : "switched off", fill(rh.read_today, rh.limit)),
+        metric("Jobs on time", okJobs, `/ ${d.jobs.length}`, late.length ? `${late.length} need a look` : "none late or failed",
+               blocks(d.jobs.map((j) => j.status.level)), late.some((j) => j.status.level === "bad") ? "bad" : late.length ? "warn" : ""))
+      + `<div class="mx-cols">` + panel("Jobs", "Each job's runs over the last 24 hours (right edge = now). Late = no run for longer than it should be.",
+        `<div class="tablewrap"><table class="mx-table"><thead><tr><th>Job</th><th>Status</th><th>Last 24 h</th><th>Last run</th><th class="r">Took</th></tr></thead><tbody>
+        ${d.jobs.map((j) => `<tr><td><b>${esc(j.label)}</b>${j.last_error ? `<div class="mx-err">${esc(j.last_error)}</div>` : ""}</td><td>${mon(j.status)}</td>
+          <td>${ribbon(j.runs_24h || [])}</td><td class="mx-when">${j.last ? ago(j.last.at) : "—"}</td>
+          <td class="r mx-when">${j.last?.minutes == null ? "—" : j.last.minutes < 1 ? "under 1 min" : j.last.minutes + " min"}</td></tr>`).join("")}</tbody></table></div>`)
+      + panel("Gmail messages", "By what happened to them", bars(Object.entries(d.gmail.messages_by_status || {}).map(([k, v]) => [k.replaceAll("_", " ").toLowerCase(), v, k.includes("ERROR") || k.includes("FAIL") ? "bad" : ""])))
+      + `</div>`;
     },
     documents(d) {
-      const up = d.upload_page;
-      return `<div class="grid k4">
-        ${tile(`Documents (${d.days} days)`, d.total, "stored from Gmail and the upload page")}
-        ${tile("Accepted", d.outcome.accepted || 0, `in review ${d.outcome["in review"] || 0} · unreadable ${d.outcome.unreadable || 0}`)}
-        ${tile("Upload page files", up.files || 0, `${up.submissions || 0} submissions`)}
-        ${tile("Tried twice, nothing accepted", up.csps_tried_twice_nothing_accepted, "CSPs to call first", up.csps_tried_twice_nothing_accepted ? {level: "warn", text: "call them"} : {level: "ok", text: "none"})}
-      </div>
-      <div class="grid k3" style="margin-top:14px">
-        <div class="card"><h2>Per day</h2>${columns(d.per_day, [["gmail", "Gmail", "--primary"], ["upload page", "Upload page", "--forest-light"]])}</div>
-        <div class="card"><h2>By document</h2>${hbars(Object.entries(d.by_type).map(([k, v]) => [T3[k] || k, v]))}</div>
-        <div class="card"><h2>Why the upload page turned files away</h2>${hbars(up.turned_away_reasons)}</div>
-      </div>`;
+      const up = d.upload_page, o = d.outcome;
+      const days = d.per_day.map((r) => (r.gmail || 0) + (r["upload page"] || 0));
+      return band(up.csps_tried_twice_nothing_accepted ? "warn" : "ok",
+        up.csps_tried_twice_nothing_accepted ? `${up.csps_tried_twice_nothing_accepted} CSP(s) tried twice and nothing was accepted` : "No CSP is stuck on the upload page",
+        up.csps_tried_twice_nothing_accepted ? "Call them first: see Form uploads → Tried, nothing accepted." : `${d.total} documents came in over ${d.days} days.`)
+      + strip(
+        metric(`Documents · ${d.days} days`, d.total, "", "Gmail and the upload page", spark(days)),
+        metric("Accepted", o.accepted || 0, "", `in review ${o["in review"] || 0} · unreadable ${o.unreadable || 0}`, fill(o.accepted || 0, d.total, "ok")),
+        metric("Upload page files", up.files || 0, "", `${up.submissions || 0} submissions`),
+        metric("Turned away", (up.turned_away_reasons || []).reduce((a, r) => a + r[1], 0), "", "reasons below", "", (up.turned_away_reasons || []).length ? "warn" : ""))
+      + `<div class="mx-cols">` + panel("Per day", "", columns(d.per_day, [["gmail", "Gmail", "--primary"], ["upload page", "Upload page", "--forest-light"]]))
+      + `<div class="mx-stack">` + panel("By document", "", bars(Object.entries(d.by_type).map(([k, v]) => [T3[k] || k, v])))
+      + panel("Why files were turned away", "Upload page", bars(up.turned_away_reasons, "None."))
+      + `</div></div>`;
     },
     accuracy(d) {
       const sc = d.spot_checks || {}, wr = d.wrong_rejections, ev = d.evaluations[0], ck = d.document_checks[0];
-      const evRows = ev ? Object.entries(ev.summary.by_type || {}).map(([t, s]) => `<tr><td>${esc(T3[t] || t)}</td><td class="num">${s.documents}</td>
-        <td class="num">${s.correct || 0}</td><td class="num">${s["safe review"] || 0}</td><td class="num"><b>${s["WRONG ACCEPT"] || 0}</b></td>
-        <td class="num">${s["wrong reject"] || 0}</td><td class="num">${esc(s.issue_date_right_when_found || "—")}</td></tr>`).join("") : "";
-      return `<div class="grid k4">
-        ${tile("Spot-check accuracy", sc.accuracy != null ? sc.accuracy + "%" : "—", `${sc.checked || 0} documents checked by a person`)}
-        ${tile("Wrong rejections", wr.count, `of ${wr.of_turned_away} turned-away uploads, later accepted`, wr.count ? {level: "bad", text: "CSPs were told wrongly"} : {level: "ok", text: "none"})}
-        ${tile("Wrong acceptances", d.wrong_acceptances, "spot checks a person rejected", d.wrong_acceptances ? {level: "bad", text: "accepted wrongly"} : {level: "ok", text: "none"})}
-        ${tile("Validity only a default", d.default_validity.count, "current documents with no stated validity", d.default_validity.count ? {level: "warn", text: "a person may check"} : null)}
-      </div>
-      <div class="card tablewrap" style="margin-top:14px"><h2>Latest reading evaluation ${ev ? `<span class="small muted">· ${ago(ev.at)} · ${esc(ev.summary.set)} set · code ${esc(ev.summary.commit || "")}</span>` : ""}</h2>
-        ${ev ? `<table><thead><tr><th></th><th>Documents</th><th>Correct</th><th>Safe review</th><th>WRONG ACCEPT</th><th>Wrong reject</th><th>Issue date right</th></tr></thead><tbody>${evRows}</tbody></table>`
-             : `<p class="small muted">Not run yet. On the server: <span class="mono">python -m scripts.eval_reading</span> (documents a person decided are the correct answers).</p>`}</div>
-      <div class="grid k3" style="margin-top:14px">
-        <div class="card"><h2>Latest full document check</h2>${ck ? pairs(Object.entries(ck.summary).filter(([k]) => !["type", "resumed"].includes(k))) + `<p class="small muted">${ago(ck.at)}</p>` : `<p class="small muted">Not run yet: <span class="mono">python -m scripts.check_all_documents</span></p>`}</div>
-        <div class="card"><h2>Wrong rejections (latest)</h2>${pairs(wr.examples.map((x) => [`${x.csp} ${x.section}`, x.reason]), "None.")}</div>
-        <div class="card"><h2>Which rule set the validity</h2>${pairs(d.rules_used.map((r) => [`${T3[r.type] || r.type}: ${r.rule}`, r.documents]))}</div>
-      </div>`;
+      const all = ev?.summary?.by_type?.ALL;
+      const hist = d.evaluations.slice().reverse().map((r) => r.summary?.by_type?.ALL?.correct_or_safe_percent);
+      const bad = wr.count + d.wrong_acceptances + (all ? all["WRONG ACCEPT"] || 0 : 0);
+      const head = !ev ? band("warn", "No reading evaluation yet", "Run it on the server: python -m scripts.eval_reading")
+        : band((all?.["WRONG ACCEPT"] || 0) ? "bad" : (all?.["wrong reject"] || 0) ? "warn" : "ok",
+          (all?.["WRONG ACCEPT"] || 0) ? `${all["WRONG ACCEPT"]} document(s) accepted with a wrong date` : "No wrong acceptances in the latest evaluation",
+          `${all?.documents ?? 0} documents a person decided, read again ${ago(ev.at)} with code ${ev.summary.commit || "?"}.`,
+          [chip((all?.["WRONG ACCEPT"] || 0) ? "bad" : "ok", `${all?.["WRONG ACCEPT"] || 0} wrong accepts`),
+           chip((all?.["wrong reject"] || 0) ? "warn" : "ok", `${all?.["wrong reject"] || 0} wrong rejects`)]);
+      const evRows = ev ? Object.entries(ev.summary.by_type || {}).filter(([t]) => t !== "ALL").map(([t, s]) => `<tr><td><b>${esc(T3[t] || t)}</b></td>
+        <td class="r">${s.documents}</td><td class="r">${s.correct || 0}</td><td class="r">${s["safe review"] || 0}</td>
+        <td class="r">${(s["WRONG ACCEPT"] || 0) ? chip("bad", s["WRONG ACCEPT"]) : chip("ok", "0")}</td>
+        <td class="r">${(s["wrong reject"] || 0) ? chip("warn", s["wrong reject"]) : "0"}</td></tr>`).join("") : "";
+      return head + strip(
+        metric("Correct or safely reviewed", all?.correct_or_safe_percent ?? "—", all ? "%" : "", "latest evaluation", spark(hist, "")),
+        metric("Spot-check accuracy", sc.accuracy ?? "—", sc.accuracy != null ? "%" : "", `${sc.checked || 0} checked by a person`),
+        metric("CSPs told wrongly", wr.count, "", `of ${wr.of_turned_away} turned-away uploads`, "", wr.count ? "bad" : ""),
+        metric("Validity only a default", d.default_validity.count, "", "current documents, no stated validity", "", d.default_validity.count ? "warn" : ""))
+      + `<div class="mx-cols">` + panel("Latest evaluation by document", ev ? `${esc(ev.summary.set)} set · documents a person decided are the correct answers` : "",
+        ev ? `<div class="tablewrap"><table class="mx-table"><thead><tr><th>Document</th><th class="r">Checked</th><th class="r">Correct</th><th class="r">Safe review</th><th class="r">Wrong accept</th><th class="r">Wrong reject</th></tr></thead><tbody>${evRows}</tbody></table></div>`
+           : `<p class="mx-hint">Not run yet.</p>`)
+      + `<div class="mx-stack">` + panel("Latest full document check", ck ? ago(ck.at) : "", ck ? bars([["same", ck.summary.same || 0, "ok"], ["different", ck.summary.DIFFERENT || 0, "warn"], ["review", ck.summary.review || 0], ["reads as another", ck.summary["reads as another"] || 0, "warn"], ["not readable", ck.summary["not readable"] || 0, "bad"], ["timeout", ck.summary.timeout || 0, "bad"]].filter((r) => r[1])) : `<p class="mx-hint">Not run yet.</p>`)
+      + panel("CSPs told wrongly (latest)", "Turned away, later accepted", kv(wr.examples.map((x) => [code(x.csp), `${esc(x.section)} · ${esc(x.reason)}`]), "None."))
+      + `</div></div>` + panel("Where validity came from", "Current accepted documents", bars(d.rules_used.map((r) => [`${T3[r.type] || r.type} · ${r.rule.replaceAll("_", " ").toLowerCase()}`, r.documents, r.rule.includes("DEFAULT") ? "warn" : ""])), "mx-wide");
     },
     review(d) {
-      return `<div class="card" style="margin-bottom:14px">${mon(d.status)}</div><div class="grid k4">
-        ${tile("Waiting", d.waiting, `<a href="#" data-go="review">Open the Review queue</a>`)}
-        ${tile("Oldest waits", d.oldest_hours != null ? (d.oldest_hours >= 48 ? Math.round(d.oldest_hours / 24) + " days" : Math.round(d.oldest_hours) + " h") : "—", "warning after 1 day, problem after 2")}
-        ${tile("Median time to decide", d.median_hours_to_decision != null ? d.median_hours_to_decision + " h" : "—", "last 30 days")}
-        ${tile("Decided (30 days)", Object.values(d.decided_30d).reduce((a, b) => a + b, 0), Object.entries(d.decided_30d).map(([k, v]) => `${k.toLowerCase()} ${v}`).join(" · "))}
-      </div><div class="grid k3" style="margin-top:14px">
-        <div class="card"><h2>Why they wait</h2>${hbars(d.by_reason)}</div>
-        <div class="card"><h2>How long they wait</h2>${hbars(d.by_age)}</div>
-        <div class="card"><h2>Waiting for (RM of the CSP)</h2>${hbars(d.by_rm)}</div></div>`;
+      const total = Object.values(d.decided_30d).reduce((a, b) => a + b, 0);
+      return band(d.status.level, d.waiting ? `${d.waiting} document(s) waiting for a person` : "Nothing waiting", d.status.text,
+        [`<a class="mx-link" href="#" data-go="review">Open the Review queue →</a>`])
+      + strip(
+        metric("Waiting", d.waiting, "", "documents and checks"),
+        metric("Oldest waits", hrs(d.oldest_hours), "", "⚠ after 1 day · ⛔ after 2", "", d.status.level === "ok" ? "" : d.status.level),
+        metric("Median time to decide", d.median_hours_to_decision ?? "—", d.median_hours_to_decision != null ? "h" : "", "last 30 days"),
+        metric("Decided · 30 days", total, "", Object.entries(d.decided_30d).map(([k, v]) => `${k.toLowerCase()} ${v}`).join(" · ")))
+      + `<div class="mx-cols3">` + panel("Why they wait", "", bars(d.by_reason))
+      + panel("How long they wait", "", bars(d.by_age.map(([k, v]) => [k, v, /days/.test(k) && v ? (k.startsWith("2") || k.startsWith("over") ? "bad" : "warn") : ""])))
+      + panel("Waiting for", "RM of the CSP", bars(d.by_rm)) + `</div>`;
     },
     experience(d) {
-      return `<div class="card" style="margin-bottom:14px">${mon(d.status)}</div><div class="grid k4">
-        ${tile(`CSPs messaged (${d.days} days)`, d.csps_messaged, `${d.messages} messages sent`)}
-        ${tile("More than one a day", d.over_policy.length, "CSPs over the message policy", d.over_policy.length ? {level: "warn", text: "check why"} : {level: "ok", text: "none"})}
-        ${tile("Messaged while being checked", d.while_in_review.length, "should be 0", d.while_in_review.length ? {level: "bad", text: "reminder while in review"} : {level: "ok", text: "none"})}
-        ${tile("Told wrongly", d.wrong_negative_messages, "expired / unreadable / wrong document, later accepted", d.wrong_negative_messages ? {level: "bad", text: "wrong message sent"} : {level: "ok", text: "none"})}
-      </div><div class="grid k3" style="margin-top:14px">
-        <div class="card"><h2>Messages per CSP</h2>${hbars(d.distribution.map(([k, v]) => [k + " message(s)", v]))}</div>
-        <div class="card"><h2>CSPs to look at</h2>${pairs([...d.while_in_review.map((c) => [c, "messaged while in review"]), ...d.over_policy.map((c) => [c, "2+ on one day"])], "None.")}</div>
-        <div class="card"><h2>Failed sends (${d.failed})</h2>${hbars(d.failed_reasons)}</div></div>`;
+      return band(d.status.level, d.status.level === "ok" ? "No CSP got too many or wrong messages" : d.status.text,
+        `Last ${d.days} days · ${d.csps_messaged} CSPs got ${d.messages} messages.`,
+        [chip(d.while_in_review.length ? "bad" : "ok", `${d.while_in_review.length} messaged while in review`),
+         chip(d.over_policy.length ? "warn" : "ok", `${d.over_policy.length} got 2+ on one day`)])
+      + strip(
+        metric(`CSPs messaged · ${d.days} days`, d.csps_messaged, "", `${d.messages} messages sent`),
+        metric("2+ messages on one day", d.over_policy.length, "", "CSPs over the policy", "", d.over_policy.length ? "warn" : ""),
+        metric("Messaged while being checked", d.while_in_review.length, "", "should always be 0", "", d.while_in_review.length ? "bad" : ""),
+        metric("Told wrongly", d.wrong_negative_messages, "", "expired / unreadable / wrong document, later accepted", "", d.wrong_negative_messages ? "bad" : ""))
+      + `<div class="mx-cols3">` + panel("Messages per CSP", `Last ${d.days} days`, bars(d.distribution.map(([k, v]) => [`${k} message${k === "1" ? "" : "s"}`, v, k === "8+" && v ? "warn" : ""])))
+      + panel("CSPs to look at", "", kv([...d.while_in_review.map((c) => [code(c), chip("bad", "messaged while in review")]),
+                                        ...d.over_policy.map((c) => [code(c), chip("warn", "2+ on one day")])], "None."))
+      + panel(`Failed sends · ${d.failed}`, "", bars(d.failed_reasons, "None.")) + `</div>`;
     },
     messaging(d) {
-      return `<div class="grid k4">
-        ${tile(`Sent (${d.days} days)`, d.by_status.SENT || 0, `failed ${d.by_status.FAILED || 0} · rejected ${d.by_status.REJECTED || 0}`)}
-        ${tile("Waiting for approval", d.waiting_approval, d.oldest_waiting_hours != null ? `oldest ${Math.round(d.oldest_waiting_hours)} h` : "", d.oldest_waiting_hours >= 24 ? {level: "warn", text: "waiting over a day"} : null)}
-        ${tile("Handled by people", Object.values(d.handled_by_people).reduce((a, b) => a + b, 0), Object.entries(d.handled_by_people).map(([k, v]) => `${k} ${v}`).join(" · "))}
-        ${tile("Message types", d.by_type.length, "used in the period")}
-      </div><div class="grid k3" style="margin-top:14px">
-        <div class="card"><h2>Per day</h2>${columns(d.per_day, [["sent", "Sent", "--forest-light"], ["failed", "Failed", "--danger"]])}</div>
-        <div class="card"><h2>By type</h2>${hbars(d.by_type)}</div>
-        <div class="card"><h2>By state</h2>${hbars(Object.entries(d.by_status))}</div></div>`;
+      const handled = Object.values(d.handled_by_people).reduce((a, b) => a + b, 0);
+      const level = d.oldest_waiting_hours >= 24 ? "warn" : "ok";
+      return band(level, d.waiting_approval ? `${d.waiting_approval} message(s) waiting for approval` : "No message waiting for approval",
+        d.oldest_waiting_hours != null ? `Oldest waits ${hrs(d.oldest_waiting_hours)}.` : "", [`<a class="mx-link" href="#" data-go="comms">Open Communication Hub →</a>`])
+      + strip(
+        metric(`Sent · ${d.days} days`, d.by_status.SENT || 0, "", `failed ${d.by_status.FAILED || 0} · rejected ${d.by_status.REJECTED || 0}`, spark(d.per_day.map((r) => r.sent || 0))),
+        metric("Waiting for approval", d.waiting_approval, "", d.oldest_waiting_hours != null ? `oldest ${hrs(d.oldest_waiting_hours)}` : "", "", level === "ok" ? "" : level),
+        metric("Handled by people", handled, "", Object.entries(d.handled_by_people).map(([k, v]) => `${k} ${v}`).join(" · ")),
+        metric("Failed", d.by_status.FAILED || 0, "", "see CSP experience for why", "", (d.by_status.FAILED || 0) ? "warn" : ""))
+      + `<div class="mx-cols">` + panel("Per day", "", columns(d.per_day, [["sent", "Sent", "--forest-light"], ["failed", "Failed", "--danger"]]))
+      + `<div class="mx-stack">` + panel("By type", "", bars(d.by_type)) + panel("By state", "", bars(Object.entries(d.by_status).map(([k, v]) => [k.replaceAll("_", " ").toLowerCase(), v, k === "FAILED" ? "bad" : ""]))) + `</div></div>`;
     },
     network(d) {
-      const c = d.coverage, r = d.renewals_due, m = d.moves_7d;
-      return `<div class="grid k4">
-        ${tile("Label 1 now", d.labels_now["1"] || 0, `of ${d.active_csps} active CSPs`)}
-        ${tile("Moved up (7 days)", m.up, m.since ? `since ${fmt(m.since)}` : "needs 2 snapshots", m.up ? {level: "ok", text: "towards Label 1"} : null)}
-        ${tile("Moved down (7 days)", m.down, m.since ? `since ${fmt(m.since)}` : "", m.down ? {level: "warn", text: "lost a document"} : null)}
-        ${tile("Renewals in 30 days", Object.values(r).reduce((a, x) => a + x["30"], 0), "documents to renew soon")}
-      </div><div class="grid k3" style="margin-top:14px">
-        <div class="card"><h2>Labels per day</h2>${columns(d.series, [["1", "Label 1", "--forest-light"], ["2", "Label 2", "--saffron"], ["3", "Label 3", "--danger"], ["4", "Label 4", "--primary"]])}</div>
-        <div class="card tablewrap"><h2>Each document</h2><table><thead><tr><th></th><th>Valid</th><th>%</th><th>Expired</th><th>Due 30 / 60 / 90 days</th></tr></thead><tbody>
-          ${Object.entries(c).map(([t, v]) => `<tr><td>${esc(T3[t] || t)}</td><td class="num">${v.valid}</td><td class="num">${v.percent}%</td><td class="num">${d.expired[t] || 0}</td>
-          <td class="num">${r[t]["30"]} / ${r[t]["60"]} / ${r[t]["90"]}</td></tr>`).join("")}</tbody></table></div>
-        <div class="card"><h2>Sub-labels now</h2>${hbars(d.sub_labels_now.map(([k, l, n]) => [`${k} ${l}`, n]))}</div></div>`;
+      const c = d.coverage, r = d.renewals_due, m = d.moves_7d, L = d.labels_now, n = d.active_csps || 1;
+      const l1 = d.series.map((s) => s["1"] || 0);
+      const share = (k) => (100 * (L[k] || 0) / n).toFixed(1);
+      return band(m.down > m.up ? "warn" : "ok", m.since ? `${m.up} CSP(s) moved towards Label 1 this week, ${m.down} moved down` : "Progress builds up from the daily snapshots",
+        m.since ? `Compared with ${fmt(m.since)}.` : "The first comparison appears a day after the first snapshot.")
+      + strip(
+        metric("Label 1 now", L["1"] || 0, `/ ${d.active_csps}`, `${share("1")}% of active CSPs`, spark(l1, "ok")),
+        metric("Moved up · 7 days", m.up, "", "towards Label 1", "", ""),
+        metric("Moved down · 7 days", m.down, "", "a document expired or was rejected", "", m.down ? "warn" : ""),
+        metric("Renewals in 30 days", Object.values(r).reduce((a, x) => a + x["30"], 0), "", "documents to renew soon", "", ""))
+      + panel("Labels today", `${d.active_csps} active CSPs`, `<div class="mx-labels" role="img" aria-label="Labels">${["1", "2", "3", "4"].map((k) =>
+          `<span style="width:${share(k)}%;background:var(--mx-l${k})"></span>`).join("")}</div>
+        <div class="mx-legend">${["1", "2", "3", "4"].map((k) => `<span><i style="background:var(--mx-l${k})"></i>Label ${k} · ${L[k] || 0}</span>`).join("")}</div>`, "mx-wide")
+      + `<div class="mx-cols">` + panel("Labels per day", "From the daily snapshots", columns(d.series, [["1", "Label 1", "--mx-l1"], ["2", "Label 2", "--mx-l2"], ["3", "Label 3", "--mx-l3"], ["4", "Label 4", "--mx-l4"]]))
+      + panel("Each document", "", `<div class="tablewrap"><table class="mx-table"><thead><tr><th>Document</th><th class="r">Valid</th><th>Coverage</th><th class="r">Expired</th><th class="r">Due 30 / 60 / 90 d</th></tr></thead><tbody>
+          ${Object.entries(c).map(([t, v]) => `<tr><td><b>${esc(T3[t] || t)}</b></td><td class="r">${v.valid}</td><td>${fill(v.percent, 100, v.percent >= 80 ? "ok" : v.percent >= 50 ? "warn" : "bad")}<span class="mx-note"> ${v.percent}%</span></td>
+          <td class="r">${d.expired[t] || 0}</td><td class="r">${r[t]["30"]} / ${r[t]["60"]} / ${r[t]["90"]}</td></tr>`).join("")}</tbody></table></div>`)
+      + `</div>` + panel("Sub-labels now", "", bars(d.sub_labels_now.map(([k, l, v]) => [`${k} ${l}`, v])), "mx-wide");
     },
     quality(d) {
-      const k = d.counts;
-      return `<div class="grid k4">
-        ${tile("No phone", k.no_phone, "active CSPs", k.no_phone ? {level: "warn", text: "can't be messaged"} : {level: "ok", text: "none"})}
-        ${tile("Phone looks wrong", k.bad_phone, "not a 10-digit mobile", k.bad_phone ? {level: "warn", text: "check the sheet"} : null)}
-        ${tile("Shared phone", k.shared_phone, "same number on several CSPs")}
-        ${tile("Document file missing", k.documents_file_missing, "current documents whose file is gone", k.documents_file_missing ? {level: "bad", text: "file lost"} : {level: "ok", text: "none"})}
-      </div><div class="grid k3" style="margin-top:14px">
-        <div class="card"><h2>Lists</h2>${pairs([["No phone", d.no_phone.join(", ") || "—"], ["Phone looks wrong", d.bad_phone.join(", ") || "—"], ["Shared phone", d.shared_phone.join(", ") || "—"]])}</div>
-        <div class="card"><h2>Other</h2>${pairs([["CSPs with no RM (TBA)", d.no_rm], ["Contact changes waiting", d.contact_changes_waiting], ["Active CSPs", d.active_csps]])}</div>
-        <div class="card"><h2>Files missing</h2>${pairs(d.documents_file_missing.map((x) => [`doc ${x.doc}`, x.type]), "None.")}</div></div>`;
+      const k = d.counts, issues = k.no_phone + k.bad_phone + k.documents_file_missing;
+      return band(k.documents_file_missing ? "bad" : issues ? "warn" : "ok", issues ? `${issues} record(s) need fixing` : "Records look complete",
+        "Phones and RMs come from the calling sheet; fix them there.")
+      + strip(
+        metric("No phone", k.no_phone, "", "can't be messaged", "", k.no_phone ? "warn" : ""),
+        metric("Phone looks wrong", k.bad_phone, "", "not a 10-digit mobile", "", k.bad_phone ? "warn" : ""),
+        metric("Shared phone", k.shared_phone, "", "same number on several CSPs"),
+        metric("Document file missing", k.documents_file_missing, "", "current documents", "", k.documents_file_missing ? "bad" : ""))
+      + `<div class="mx-cols3">` + panel("No phone", "", d.no_phone.length ? `<p class="mx-codes">${d.no_phone.map(code).join(" ")}</p>` : `<p class="mx-hint">None.</p>`)
+      + panel("Phone looks wrong / shared", "", [...d.bad_phone, ...d.shared_phone].length ? `<p class="mx-codes">${[...new Set([...d.bad_phone, ...d.shared_phone])].map(code).join(" ")}</p>` : `<p class="mx-hint">None.</p>`)
+      + panel("Other", "", kv([["CSPs with no RM (TBA)", d.no_rm], ["Contact changes waiting", d.contact_changes_waiting], ["Active CSPs", d.active_csps]])) + `</div>`;
     },
     use(d) {
-      return `<div class="grid k3">
-        <div class="card"><h2>Sign-ins per day (${d.days} days)</h2>${columns(d.sign_ins_per_day.map(([day, n]) => ({day, n})), [["n", "Sign-ins", "--primary"]])}</div>
-        <div class="card"><h2>Dashboard accounts</h2>${pairs(d.accounts.map((u) => [`${u.name} (${u.role})`, u.last_login ? "last " + fmt(u.last_login) : "never signed in"]))}</div>
-        <div class="card"><h2>Open CSP questions</h2><div class="n" style="font:800 2rem var(--font-heading)">${d.open_csp_questions}</div>
-          <p class="small"><a href="#" data-go="questions">Open CSP questions</a></p></div></div>
-      <p class="small muted" style="margin-top:10px">Totals only: no per-person pages, time or places are recorded.</p>`;
+      const never = d.accounts.filter((u) => !u.last_login);
+      return band(never.length ? "warn" : "ok", never.length ? `${never.length} account(s) have never signed in` : "Every dashboard account has signed in",
+        "Totals only: no per-person pages, times or places are recorded.")
+      + `<div class="mx-cols">` + panel(`Sign-ins per day · ${d.days} days`, "", columns(d.sign_ins_per_day.map(([day, n]) => ({day, n})), [["n", "Sign-ins", "--primary"]]))
+      + `<div class="mx-stack">` + panel("Dashboard accounts", "", kv(d.accounts.map((u) => [`${esc(u.name)} <span class="mx-note">${esc(u.role)}</span>`, u.last_login ? `last ${fmt(u.last_login)}` : chip("warn", "never signed in")])))
+      + panel("Open CSP questions", "", `<div class="mx-v">${d.open_csp_questions}</div><p><a class="mx-link" href="#" data-go="questions">Open CSP questions →</a></p>`)
+      + `</div></div>`;
     },
   };
 
@@ -474,8 +554,8 @@
                     ["network", "Network progress"], ["quality", "Data quality"], ["use", "Dashboard use"]];
       const tab = state.mtab || "status";
       const d = await api(`/api/hub/monitor/${tab}`);
-      const nav = `<div class="tabs">${TABS.map(([v, l]) => `<button class="${tab === v ? "active" : ""}" data-mtab="${v}">${l}</button>`).join("")}</div>`;
-      return nav + (MON[tab] ? MON[tab](d) : `<div class="card empty">Unknown tab.</div>`);
+      const nav = `<div class="mx-tabs" role="tablist">${TABS.map(([v, l]) => `<button class="${tab === v ? "on" : ""}" role="tab" aria-selected="${tab === v}" data-mtab="${v}">${l}</button>`).join("")}</div>`;
+      return `<div class="mx">${nav}${MON[tab] ? MON[tab](d) : `<div class="card empty">Unknown tab.</div>`}</div>`;
     },
     async accuracy() {
       const a = await api("/api/hub/accuracy");
@@ -512,42 +592,42 @@
     async analytics() {
       const a = await api("/api/hub/analytics?days=14");
       const pct = (n, d) => d ? Math.round(100 * n / d) + "%" : "—";
-      const NAMES = {today: "Today", yesterday: "Yesterday", last_7_days: "Last 7 days", last_30_days: "Last 30 days"};
       const TYPES = {ONBOARD_ALL: "Onboarding (no documents)", UPLOAD_MISSING: "Documents missing", UPLOAD_EXPIRED: "Documents expired",
                      UNREADABLE_REUPLOAD: "Unreadable, re-upload", RENEWAL_NOTICE: "Renewal notice", RENEWAL_FOLLOWUP: "Renewal reminder",
                      RENEWAL_FINAL: "Renewal final", LINK_REQUEST: "Link the CSP asked for",
                      UPLOAD_RECEIPT: "Reply after upload", UPLOAD_SUCCESS_ALL: "All documents recorded"};
-      const card = ([k, p]) => `<div class="card kpi"><div class="label">${NAMES[k]}</div>
-        <div class="kv">
-          <dt>WhatsApp sent</dt><dd class="num">${p.whatsapp.sent}${p.whatsapp.delivered ? ` <span class="small muted">· ${p.whatsapp.delivered} delivered · ${p.whatsapp.read} read</span>` : ""}</dd>
-          <dt>Email sent</dt><dd class="num">${p.email.sent}</dd>
-          <dt>Failed / blocked</dt><dd class="num">${p.whatsapp.failed + p.email.failed} / ${p.whatsapp.blocked + p.email.blocked}</dd>
-          <dt>CSPs reached</dt><dd class="num">${p.csps_reached}</dd>
-          <dt>Responded</dt><dd class="num">${p.any} <span class="small muted">(${pct(p.any, p.csps_reached)})</span></dd>
-          <dt>Documents accepted</dt><dd class="num">${p.accepted} <span class="small muted">(${pct(p.accepted, p.csps_reached)})</span></dd></div></div>`;
-      const m = a.periods.last_30_days;
+      const m = a.periods.last_30_days, w = a.periods.last_7_days, t = a.periods.today;
+      const days = a.days.slice().reverse();
+      const rate = (n, d) => d ? Math.round(100 * n / d) : null;
+      const r30 = rate(m.any, m.csps_reached), acc30 = rate(m.accepted, m.csps_reached);
+      const failed = (p) => p.whatsapp.failed + p.email.failed;
       const funnel = [["Messaged", m.csps_reached], ["Opened the link", m.opened], ["Submitted the form", m.submitted],
                       ["Documents accepted", m.accepted], ["Asked the RM a question", m.asked], ["Replied by email", m.email_reply]];
-      return `<p class="small muted">Messages sent to CSPs and what the CSPs did afterwards, per day (India time). <b>Responded</b> = within ${a.response_days} days of the message the CSP opened their link, submitted the form, asked a question or replied by email.
-        WhatsApp replies can't be read (the sender is send-only), so the response is what the CSP does. Email replies are counted when they carry an attachment. The test CSP is never counted.</p>
-      <div class="grid k4">${Object.entries(a.periods).map(card).join("")}</div>
-      <div class="grid k3" style="margin-top:14px">
-        <div class="card"><h2>Last 30 days: from message to documents</h2>
-          <div class="kv">${funnel.map(([l, n]) => `<dt>${l}</dt><dd class="num">${n} <span class="small muted">${l === "Messaged" ? "CSPs" : pct(n, m.csps_reached)}</span></dd>`).join("")}</div></div>
-        <div class="card"><h2>Who sent them</h2>
-          <div class="kv">${a.senders.map((x) => `<dt>${esc(x.who)}</dt><dd class="num">${x.whatsapp} <span class="small muted">WhatsApp</span> · ${x.email} <span class="small muted">email</span></dd>`).join("") || `<dt class="muted">Nothing sent yet</dt><dd></dd>`}</div></div>
-        <div class="card"><h2>What was sent</h2>
-          <div class="kv">${a.types.map((x) => `<dt>${esc(TYPES[x.type] || x.type)}</dt><dd class="num">${x.whatsapp} <span class="small muted">WA</span> · ${x.email} <span class="small muted">email</span></dd>`).join("") || `<dt class="muted">Nothing sent yet</dt><dd></dd>`}</div></div>
+      return `<div class="mx">
+      ${band(failed(w) ? "warn" : "ok", m.csps_reached ? `${r30}% of messaged CSPs responded in the last 30 days` : "No messages in the last 30 days",
+        `Responded = within ${a.response_days} days of a message the CSP opened their link, submitted the form, asked a question or replied by email (India time; the test CSP is never counted).`,
+        [chip(failed(w) ? "warn" : "ok", `${failed(w)} failed this week`), chip("ok", `${m.accepted} CSPs sent accepted documents`)])}
+      ${strip(
+        metric("WhatsApp today", t.whatsapp.sent, "", `${t.whatsapp.delivered} delivered · ${t.whatsapp.read} read`, spark(days.map((d) => d.whatsapp.sent))),
+        metric("CSPs reached · 7 days", w.csps_reached, "", `${w.whatsapp.sent} WhatsApp · ${w.email.sent} email`),
+        metric("Responded · 30 days", r30 ?? "—", r30 != null ? "%" : "", `${m.any} of ${m.csps_reached} CSPs`, fill(m.any, m.csps_reached, "ok")),
+        metric("Documents accepted · 30 days", acc30 ?? "—", acc30 != null ? "%" : "", `${m.accepted} CSPs after a message`, fill(m.accepted, m.csps_reached, "ok")))}
+      <div class="mx-cols">
+        ${panel("Last 30 days: from message to documents", "Share of the CSPs messaged", bars(funnel.map(([l, n], i) => [`${l}${i ? ` · ${pct(n, m.csps_reached)}` : ""}`, n, i === 3 ? "ok" : ""])))}
+        <div class="mx-stack">
+          ${panel("Who sent them", "", bars(a.senders.map((x) => [x.who, x.whatsapp + x.email]), "Nothing sent yet."))}
+          ${panel("What was sent", "", bars(a.types.map((x) => [TYPES[x.type] || x.type, x.whatsapp + x.email]), "Nothing sent yet."))}
+        </div>
       </div>
-      <div class="card tablewrap" style="margin-top:14px"><h2>Day by day</h2>
-        <table><thead><tr><th>Day</th><th>WhatsApp sent</th><th>Delivered / read</th><th>Email sent</th><th>Failed</th><th>Blocked</th>
-          <th>CSPs reached</th><th>Opened link</th><th>Submitted</th><th>Docs accepted</th><th>Asked</th><th>Email reply</th></tr></thead><tbody>
-        ${a.days.map((d) => { const r = d.responses; return `<tr><td class="mono">${fmt(d.date)}${d.date === a.today ? ' <span class="small muted">today</span>' : ""}</td>
-          <td class="num">${d.whatsapp.sent}</td><td class="num">${d.whatsapp.delivered} / ${d.whatsapp.read}</td><td class="num">${d.email.sent}</td>
-          <td class="num">${d.whatsapp.failed + d.email.failed}</td><td class="num">${d.whatsapp.blocked + d.email.blocked}</td>
-          <td class="num">${r.reached}</td><td class="num">${r.opened}</td><td class="num">${r.submitted}</td><td class="num">${r.accepted}</td>
-          <td class="num">${r.asked}</td><td class="num">${r.email_reply}</td></tr>`; }).join("")}
-        </tbody></table></div>`;
+      ${panel("Day by day", "", `<div class="tablewrap"><table class="mx-table"><thead><tr><th>Day</th><th class="r">WhatsApp</th><th class="r">Delivered / read</th><th class="r">Email</th><th class="r">Failed</th><th class="r">Blocked</th>
+          <th class="r">Reached</th><th class="r">Opened link</th><th class="r">Submitted</th><th class="r">Accepted</th><th class="r">Asked</th><th class="r">Email reply</th></tr></thead><tbody>
+        ${a.days.map((d) => { const r = d.responses; return `<tr><td class="mx-when">${fmt(d.date)}${d.date === a.today ? " · today" : ""}</td>
+          <td class="r">${d.whatsapp.sent}</td><td class="r">${d.whatsapp.delivered} / ${d.whatsapp.read}</td><td class="r">${d.email.sent}</td>
+          <td class="r">${failed(d) ? chip("warn", failed(d)) : 0}</td><td class="r">${d.whatsapp.blocked + d.email.blocked}</td>
+          <td class="r">${r.reached}</td><td class="r">${r.opened}</td><td class="r">${r.submitted}</td><td class="r">${r.accepted}</td>
+          <td class="r">${r.asked}</td><td class="r">${r.email_reply}</td></tr>`; }).join("")}
+        </tbody></table></div>`)}
+      </div>`;
     },
 
     async find() {

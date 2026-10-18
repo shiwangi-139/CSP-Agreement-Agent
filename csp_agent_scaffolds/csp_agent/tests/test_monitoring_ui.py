@@ -19,6 +19,7 @@ def test_every_monitoring_tab_renders_and_is_admin_only(client, monkeypatch):
     h = open("app/web/dashboard.html").read()
     js = re.findall(r"<script>([\s\S]*?)</script>", h)[0]
     helpers = js[js.index("// ------------------------------------------------------- monitoring page"):js.index("// ------------------------------------------------------------- views")]
+    analytics = js[js.index("    async analytics() {") + len("    async analytics() {"):js.index("\n    },\n", js.index("    async analytics() {"))]
     ctx = quickjs.Context()
     ctx.eval("""const esc=(s)=>String(s??'').replace(/[&<>"]/g,'');const when=(x)=>x?'W':'-';const fmt=(x)=>x||'-';""")
     ctx.eval(helpers)
@@ -29,3 +30,12 @@ def test_every_monitoring_tab_renders_and_is_admin_only(client, monkeypatch):
         out = ctx.eval(f"MON['{tab}'](JSON.parse(data))")
         assert "undefined" not in out and len(out) > 200, (tab, out[:300])
     assert c.get("/api/hub/monitor/status").status_code in (401, 403)
+    # Messaging analytics, drawn with the same components
+    import app.api.hub as hub
+    monkeypatch.setattr(hub, "FEATURE_MESSAGING_ANALYTICS", True)
+    a = c.get("/api/hub/analytics?days=14", headers={"X-API-Key": "k"})
+    assert a.status_code == 200, a.text
+    ctx.set("adata", json.dumps(a.json()))
+    ctx.eval("function analyticsView(a) {" + analytics.replace('const a = await api("/api/hub/analytics?days=14");', "") + "}")
+    out = ctx.eval("analyticsView(JSON.parse(adata))")
+    assert "mx-strip" in out and "undefined" not in out

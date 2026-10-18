@@ -34,6 +34,18 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _db_offset(db: Session) -> timedelta:
+    """Columns the database fills in itself (created_at, uploaded_at, sent_at
+    of events) are in the database's local time (India); the app writes UTC.
+    The difference, rounded to 15 minutes, converts the first to the second."""
+    try:
+        local = db.query(func.localtimestamp()).scalar()
+        off = local - _now()
+        return timedelta(minutes=15 * round(off.total_seconds() / 900))
+    except Exception:
+        return timedelta(0)
+
+
 def _hours(a: Optional[datetime], b: Optional[datetime]) -> Optional[float]:
     return round((b - a).total_seconds() / 3600, 1) if a and b else None
 
@@ -130,7 +142,10 @@ def agent_status(db: Session) -> dict:
             st = _status("warn", f"late: last run {_hours(last.started_at, now)} h ago")
         else:
             st = _status("ok", "running normally")
+        ribbon = [{"hours_ago": _hours(r.started_at, now), "status": r.status} for r in runs
+                  if r.started_at >= now - timedelta(hours=24)]
         jobs.append({"job": job, "label": label, "status": st, "last": _run_json(last), "failed_24h": failed_24h,
+                     "runs_24h": ribbon,
                      "last_error": (last_fail.summary or {}).get("error") if last_fail else None})
 
     start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -179,7 +194,7 @@ TURN_AWAY_TEXT = {
 def documents_in(db: Session, days: int = 14) -> dict:
     """Documents stored per day by channel and type; what happened to them;
     why the upload page turned files away (each turned-away file once)."""
-    since = _now() - timedelta(days=days)
+    since = _now() - timedelta(days=days) + _db_offset(db)        # in database time, like uploaded_at
     docs = db.query(Document).filter(Document.uploaded_at >= since).all()
     per_day = defaultdict(lambda: Counter())
     for d in docs:
@@ -284,16 +299,17 @@ def review_queue(db: Session) -> dict:
     """Waiting items by reason and age; decisions of the last 30 days and
     how long they took (created -> resolved); waiting items per RM."""
     now = _now()
+    off = _db_offset(db)
     pending = (db.query(ManualReviewQueue, Document, CSP).join(Document, Document.id == ManualReviewQueue.document_id)
                .join(CSP, CSP.id == Document.csp_id).filter(ManualReviewQueue.status == ReviewStatus.PENDING).all())
-    ages = [_hours(q.created_at, now) or 0 for q, _, _ in pending]
+    ages = [max(0.0, _hours(q.created_at - off, now) or 0) for q, _, _ in pending]
     buckets = Counter("under 2 h" if a < 2 else "2-24 h" if a < 24 else "1-2 days" if a < 48 else
                       "2-7 days" if a < 168 else "over 7 days" for a in ages)
     rms = {u.id: u.name for u in db.query(InternalUser)}
     per_rm = Counter(rms.get(c.rm_id, "TBA / no RM") for _, _, c in pending)
     oldest = max(ages) if ages else None
     done = db.query(ManualReviewQueue).filter(ManualReviewQueue.resolved_at >= now - timedelta(days=30)).all()
-    took = [_hours(q.created_at, q.resolved_at) for q in done if q.created_at and q.resolved_at]
+    took = [max(0.0, _hours(q.created_at - off, q.resolved_at)) for q in done if q.created_at and q.resolved_at]
     status = (_status("ok", "nothing waiting") if not pending else
               _status("bad", f"oldest waits {round(oldest / 24, 1)} days") if oldest >= 48 else
               _status("warn", f"oldest waits {round(oldest)} h") if oldest >= 24 else
@@ -316,6 +332,7 @@ def csp_experience(db: Session, days: int = 7) -> dict:
          uploads later accepted (see Reading accuracy);
        - failed sends (number not on WhatsApp, template error ...)."""
     since = _now() - timedelta(days=days)
+    off = _db_offset(db)
     msgs = (db.query(OutboundMessage).filter(OutboundMessage.sent_at >= since,
                                              OutboundMessage.status == OutboundStatus.SENT,
                                              OutboundMessage.recipient_role.in_(["CSP", None])).all())
@@ -330,14 +347,14 @@ def csp_experience(db: Session, days: int = 7) -> dict:
         if (q.reason or "").startswith(("Spot check", "Reference check")):
             continue
         end = q.resolved_at or _now()
-        waiting.setdefault(d.csp_id, []).append((q.created_at, end))
+        waiting.setdefault(d.csp_id, []).append((q.created_at - off, end))
     while_waiting = sorted({m.csp_id for m in msgs if m.csp_id in waiting and m.template_name != "UPLOAD_RECEIPT"
                             and any(a <= m.sent_at <= b for a, b in waiting[m.csp_id])})
-    failed = (db.query(OutboundMessage).filter(OutboundMessage.created_at >= since,
+    failed = (db.query(OutboundMessage).filter(OutboundMessage.created_at >= since + off,
                                                OutboundMessage.status == OutboundStatus.FAILED).all())
     fail_reasons = Counter((m.error_log or "unknown")[:80] for m in failed)
     codes = {c.id: c.current_code for c in db.query(CSP.id, CSP.current_code)}
-    wrong = reading_accuracy_wrong_messages(db, since)
+    wrong = reading_accuracy_wrong_messages(db, since + off)
     status = (_status("bad", f"{len(while_waiting)} CSP(s) messaged while their upload was being checked")
               if while_waiting else
               _status("warn", f"{len(over)} CSP(s) got more than one message on a day") if over else
@@ -366,12 +383,13 @@ def messaging(db: Session, days: int = 7) -> dict:
     """Messages created in the period by status and type; waiting for
     approval and their age; how people handled the ones they reviewed."""
     now = _now()
+    off = _db_offset(db)
     since = now - timedelta(days=days)
-    rows = db.query(OutboundMessage).filter(OutboundMessage.created_at >= since).all()
+    rows = db.query(OutboundMessage).filter(OutboundMessage.created_at >= since + off).all()
     by_status = Counter(m.status.value for m in rows)
     by_type = Counter(m.template_name for m in rows)
     waiting = db.query(OutboundMessage).filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW).all()
-    w_ages = [_hours(m.created_at, now) or 0 for m in waiting]
+    w_ages = [max(0.0, _hours(m.created_at - off, now) or 0) for m in waiting]
     reviewed = [m for m in rows if m.reviewed_by and not (m.reviewed_by or "").startswith("agent")]
     handled = Counter("edited" if (m.payload_json or {}).get("edited") else
                       "rejected" if m.status == OutboundStatus.REJECTED else "approved as is" for m in reviewed)
@@ -380,7 +398,7 @@ def messaging(db: Session, days: int = 7) -> dict:
         if m.sent_at:
             per_day[m.sent_at.date().isoformat()]["sent"] += 1
         if m.status == OutboundStatus.FAILED:
-            per_day[m.created_at.date().isoformat()]["failed"] += 1
+            per_day[(m.created_at - off).date().isoformat()]["failed"] += 1
     return {"days": days, "by_status": dict(by_status), "by_type": by_type.most_common(),
             "waiting_approval": len(waiting), "oldest_waiting_hours": max(w_ages) if w_ages else None,
             "handled_by_people": dict(handled), "per_day": [{"day": k, **v} for k, v in sorted(per_day.items())]}
