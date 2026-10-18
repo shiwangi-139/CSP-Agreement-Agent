@@ -133,3 +133,16 @@ def test_check_all_documents_lists_a_wrong_stored_expiry_and_changes_nothing(db_
     assert (tmp_path / "logs" / "document_check.csv").exists()
     db.refresh(doc)
     assert doc.expiry_date == date(2027, 7, 1)
+
+
+def test_a_file_that_hangs_is_listed_as_timeout_and_the_check_goes_on(tmp_path, monkeypatch):
+    import time
+    import scripts.check_all_documents as chk
+    monkeypatch.setattr(chk, "_read", lambda path, t, q: time.sleep(30))
+    f = tmp_path / "a.pdf"
+    _pdf(f)
+    started = time.time()
+    assert chk.read_isolated(f, "AGREEMENT", timeout=1) == {"timeout": True}
+    assert time.time() - started < 10
+    monkeypatch.undo()
+    assert chk.read_isolated(f, "AGREEMENT", timeout=120)["expiry_date"] == "2028-06-01"

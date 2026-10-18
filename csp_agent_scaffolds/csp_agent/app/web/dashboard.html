@@ -423,7 +423,7 @@
       // tabs filter CSPs by their latest submission.
       const d = await api(`/api/hub/form-uploads?days=${days}`);
       const k = d.counts;
-      const OUT = {accepted: ["VALID", "all accepted"], partly: ["REVIEW", "partly accepted"], rejected: ["EXPIRED", "nothing accepted"]};
+      const OUT = {accepted: ["VALID", "all accepted"], checking: ["REVIEW", "being checked"], partly: ["REVIEW", "partly accepted"], rejected: ["EXPIRED", "nothing accepted"]};
       const slabTxt = (n, sub) => n ? `Label ${sub || n}` : "—";
       const groups = [];
       const byCsp = {};
@@ -435,7 +435,7 @@
       const open = state.fopen || (state.fopen = new Set());
       const results = (r) => `<div class="kv" style="margin-top:6px">${r.results.map((x) => `
           <dt>${esc(DOC[x.type] || x.section)}</dt>
-          <dd>${x.ok ? "✅" : "❌"} ${esc(x.now ? x.now : x.reason)}${x.now ? ` <span class="muted">(at upload: ${esc(x.reason)})</span>` : ""}${x.read_as && !x.ok ? ` <span class="muted">(read as ${esc(DOC[x.read_as] || x.read_as)})</span>` : ""}
+          <dd>${x.in_review ? "🔍" : x.ok ? "✅" : "❌"} ${esc(x.now ? x.now : x.reason)}${x.now ? ` <span class="muted">(at upload: ${esc(x.reason)})</span>` : ""}${x.read_as && !x.ok ? ` <span class="muted">(read as ${esc(DOC[x.read_as] || x.read_as)})</span>` : ""}
             ${x.document_id ? ` · <a href="#" data-file="${x.document_id}">view</a>` : ""}${x.kept_file ? ` · <a href="#" data-keptfile="${r.id}/${x.i}">view what they sent</a>` : ""}
             ${x.filename ? `<span class="small muted"> · ${esc(x.filename)}</span>` : ""}</dd>`).join("")}</div>`;
       const attempt = (r, n) => `<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
@@ -445,7 +445,7 @@
           ${results(r)}
           ${r.contact_changes ? `<div class="small" style="margin-top:6px">Also changed ${r.contact_changes} contact detail(s): see <a href="#" data-go="contacts">Contacts</a>.</div>` : ""}</div>`;
       return `<p class="small muted">One row per CSP who used the upload page: their latest result and their label now. Click <b>Show all attempts</b> to see every try — what they sent, what was accepted or turned away and why. <b>"Tried, nothing accepted"</b> are the CSPs to call first.</p>
-      <div class="tabs">${[["", `All (${k.csps} CSPs)`], ["accepted", `All accepted (${k.accepted})`], ["partly", `Partly (${k.partly})`], ["rejected", `Tried, nothing accepted (${k.rejected})`]]
+      <div class="tabs">${[["", `All (${k.csps} CSPs)`], ["accepted", `All accepted (${k.accepted})`], ["checking", `Being checked (${k.checking})`], ["partly", `Partly (${k.partly})`], ["rejected", `Tried, nothing accepted (${k.rejected})`]]
         .map(([v, l]) => `<button class="tab ${out === v ? "active" : ""}" data-fout="${v}">${l}</button>`).join("")}</div>
       <div class="tabs">${[[0, "Any time"], [1, "Today"], [7, "Last 7 days"], [30, "Last 30 days"]]
         .map(([v, l]) => `<button class="tab ${days === v ? "active" : ""}" data-fdays="${v}">${l}</button>`).join("")}</div>

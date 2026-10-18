@@ -653,7 +653,7 @@ def _now_states(db: Session, results: list[dict], csp: Optional[CSP] = None) -> 
         if now == "accepted" and not r.get("ok"):
             r["ok"], r["now"] = True, "accepted later (re-check / review)"
         elif now == "in_review":
-            r["now"] = "our team is checking it"
+            r["now"], r["in_review"] = "our team is checking it", True
         elif now == "rejected_by_team" and r.get("ok"):
             r["ok"], r["now"] = False, "rejected by our team on review"
         out.append(r)
@@ -661,8 +661,12 @@ def _now_states(db: Session, results: list[dict], csp: Optional[CSP] = None) -> 
 
 
 def _outcome(results: list[dict]) -> str:
+    """accepted / checking (nothing turned away, something still waits for
+    a person) / partly / rejected."""
     oks = [bool(r.get("ok")) for r in results]
-    return "accepted" if oks and all(oks) else "rejected" if not any(oks) else "partly"
+    if oks and all(oks):
+        return "checking" if any(r.get("in_review") for r in results) else "accepted"
+    return "rejected" if not any(oks) else "partly"
 
 
 def _form_events(db: Session, me: Principal, days: int = 0):
@@ -679,6 +683,7 @@ def _form_upload_counts(db: Session, me: Principal) -> dict:
         if c.id not in latest:
             latest[c.id] = _outcome(_now_states(db, (e.payload or {}).get("results") or [], c))
     return {"csps": len(latest), "accepted": sum(v == "accepted" for v in latest.values()),
+            "checking": sum(v == "checking" for v in latest.values()),
             "partly": sum(v == "partly" for v in latest.values()),
             "rejected": sum(v == "rejected" for v in latest.values())}
 
@@ -704,7 +709,8 @@ def form_uploads(outcome: str = "", days: int = 0, me: Principal = Depends(requi
                          "reason": REASON_TEXT.get(r.get("reason"), "accepted" if r.get("ok") else "rejected"),
                          "read_as": r.get("read_as"), "filename": r.get("filename"),
                          "document_id": r.get("rechecked_document_id") or r.get("document_id"),
-                         "kept_file": bool(r.get("kept_file")), "now": r.get("now")}
+                         "kept_file": bool(r.get("kept_file")), "now": r.get("now"),
+                         "in_review": bool(r.get("in_review"))}
                         for i, r in enumerate(results)]})
     return {"rows": rows[:500], "counts": _form_upload_counts(db, me)}
 

@@ -629,3 +629,15 @@ def test_form_uploads_show_accepted_when_the_documents_are_on_record_now(client,
     s.close()
     [row] = [r for r in c.get("/api/hub/form-uploads", headers={"X-API-Key": "k"}).json()["rows"] if r["csp"]["id"] == cid]
     assert row["outcome"] == "accepted" and all(x["ok"] and x["now"] for x in row["results"])
+
+
+def test_form_uploads_say_being_checked_not_all_accepted_while_a_person_checks(client, monkeypatch):
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    c, Session = client
+    cid, _, token = _csp(Session)
+    issue = date.today() - timedelta(days=30)
+    c.post("/api/portal/upload", data=_form(token, iibf_issue_date=issue.isoformat()),
+           files={"iibf_file": ("x.pdf", _pvr_pdf(issue), "application/pdf")})          # goes to review
+    d = c.get("/api/hub/form-uploads", headers={"X-API-Key": "k"}).json()
+    [row] = [x for x in d["rows"] if x["csp"]["id"] == cid]
+    assert row["outcome"] == "checking" and row["results"][0]["in_review"] and d["counts"]["checking"] >= 1
