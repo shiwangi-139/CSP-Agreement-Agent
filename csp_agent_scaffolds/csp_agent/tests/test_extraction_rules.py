@@ -478,3 +478,24 @@ def test_effective_date_label_with_the_start_date_is_not_an_end_date():
     r = extract_agreement('CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 20/04/2024 ("Effective Date"), '
                           'CSP Name X\nThis Agreement shall remain valid for a period of three (3) years', TODAY)
     assert r["issue_date"] == date(2024, 4, 20) and r["explicit_expiry"] is None and r["has_explicit_3year_clause"]
+
+
+def test_effected_date_is_the_end_date():
+    """Krishna Kumar 1A850973: 'On this day of, 11-06-2026, effected date 10-06-2029'."""
+    r = extract_agreement("CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 11-06-2026, effected date 10-06-2029 "
+                          "CSP Name KRISHNA KUMAR CSP Code-", TODAY)
+    assert r["issue_date"] == date(2026, 6, 11) and r["explicit_expiry"] == date(2029, 6, 10)
+
+
+def test_a_valid_agreement_with_a_guessed_validity_gets_a_check(tmp_path):
+    import pymupdf
+    from app.ai.extraction.deterministic_extractor import extract_document_fields_deterministic
+    d = pymupdf.open()
+    page = d.new_page()
+    for i, line in enumerate(["CUSTOMER SERVICE POINT AGREEMENT", 'On this day of, 11/06/2026 ("Effective Date"), CSP Name X',
+                              "Eko hereby appoints the CSP. Security deposit. In witness whereof the parties sign."]):
+        page.insert_text((30, 60 + 20 * i), line, fontsize=8)
+    r = extract_document_fields_deterministic(d.tobytes(), "a.pdf", allow_llm_fallback=False, expected_type="AGREEMENT",
+                                              today=date(2026, 10, 18))
+    assert r["compliance_status"] == "VALID" and not r.get("type_review")
+    assert r["validity_check"].startswith("Validity check")

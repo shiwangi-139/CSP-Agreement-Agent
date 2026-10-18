@@ -142,7 +142,9 @@ END_DATE = re.compile(
     # 'On this day of, 29/08/2025 ("Effective Date") 27/08/2028': the last day
     # written right after the bracketed "Effective Date" (the start date is
     # before it, and a date only 30 days to 6 years later can be the end).
-    r"|effective\s*date\W{0,2}\s*\))\s*", re.I)
+    r"|effective\s*date\W{0,2}\s*\)"
+    # 'On this day of, 11-06-2026, effected date 10-06-2029' (typed for "end date")
+    r"|effected\s*date)\s*", re.I)
 BETWEEN_LABEL_AND_DATE = re.compile(r"^[\s:\-–—_.,(]{0,12}$")
 HINDI_UPTO = re.compile(r"\s*तक\s*(?:मान्य|वैध)")
 

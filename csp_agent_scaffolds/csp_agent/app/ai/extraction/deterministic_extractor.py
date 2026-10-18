@@ -424,6 +424,13 @@ def extract_document_fields_deterministic(
             f"{AGREEMENT_DEFAULT_YEARS} year would make it expired on {expiry:%d-%m-%Y}. Check the agreement for "
             "its term (e.g. 'for a period of 36 months … ending on …') and enter the right expiry, or reject it.")) if x)
 
+    validity_check = None
+    if doc_type == "AGREEMENT" and status == "VALID" and (validity_source or "").startswith("AGREEMENT_DEFAULT") \
+            and not three_year and not r.get("explicit_expiry"):
+        validity_check = (f"Validity check: no term or end date was read, so a default of {AGREEMENT_DEFAULT_YEARS} "
+                          f"year was used (expiry {expiry:%d-%m-%Y}). Accepted meanwhile. Read the term on the "
+                          "document and set it under 'Validity stated' (e.g. 3 years), then Accept.")
+
     from_model = date_source.startswith("MODEL_VISION")
     field_conf = {
         "document_type": gate_conf,
@@ -455,5 +462,6 @@ def extract_document_fields_deterministic(
         extraction_method=method,
         model_provider=(model_ans or {}).get("provider"),
         type_review=type_review,
+        validity_check=validity_check,
         **common,
     )

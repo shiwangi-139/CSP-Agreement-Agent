@@ -12,6 +12,9 @@ What happens to each current document (no AI model, one file at a time):
   to review     the new reading differs but is not clear (another issue
                 date, a default validity, a conflict): the document goes to
                 the Review queue with both readings; nobody is told anything.
+  check validity  an agreement still valid only by a guessed validity (no
+                term read): stays accepted, and a person sets its real term in
+                the Review queue ("Validity stated").
   kept          dates a person entered or confirmed are never changed.
 Nothing else changes, and no CSP is messaged unless --message is given.
 
@@ -48,6 +51,9 @@ def decide(doc: Document, ex: dict) -> tuple[str, str]:
     exp = ex.get("expiry_date")
     new_expiry = None if exp == "LIFETIME_NO_EXPIRY" else _d(exp)
     if new_issue == doc.issue_date and new_expiry == doc.expiry_date:
+        if doc.document_type == "AGREEMENT" and doc.status == DocumentStatus.VALID \
+                and "DEFAULT" in (doc.validity_rule_used or "").upper():
+            return "check validity", "still valid, but only by a guessed validity"
         return "same", ""
     rule = (ex.get("validity_rule_used") or "").upper()
     clear = (not ex.get("type_review") and "DEFAULT" not in rule
@@ -83,7 +89,7 @@ def main():
             ex = read_isolated(path, doc.document_type, a.timeout)
             what, why = decide(doc, ex)
             counts[what] = counts.get(what, 0) + 1
-            if what in ("corrected", "to review"):
+            if what in ("corrected", "to review", "check validity"):
                 print(f"{csp.current_code} {csp.name[:22]:22} {doc.document_type[:6]:6} {doc.issue_date} -> {doc.expiry_date}"
                       f"   now {ex.get('start_date')} -> {ex.get('expiry_date')}   [{what}] {why[:90]}", flush=True)
             if a.apply and what == "corrected":
@@ -101,6 +107,12 @@ def main():
                     f"Re-read with the current rules: stored {doc.issue_date} -> {doc.expiry_date}, now read "
                     f"{ex.get('start_date')} -> {ex.get('expiry_date')}. {why}. Check the dates on the document.")[:500]))
                 touched.add(csp.id)
+            elif a.apply and what == "check validity" and not db.query(ManualReviewQueue).filter(
+                    ManualReviewQueue.document_id == doc.id, ManualReviewQueue.status == ReviewStatus.PENDING).count():
+                db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=(
+                    f"Validity check: no term or end date was read, so a guessed validity was used (expiry "
+                    f"{doc.expiry_date:%d-%m-%Y}). Accepted meanwhile. Read the term on the document and set it "
+                    "under 'Validity stated' (e.g. 3 years), then Accept.")))
             if a.apply:
                 db.flush()
             if i % 25 == 0:

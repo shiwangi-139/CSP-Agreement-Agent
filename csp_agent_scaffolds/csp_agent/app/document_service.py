@@ -156,6 +156,11 @@ def store_extracted_document(
     if owner_review or type_review:
         db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
                                  reason=" ".join(r for r in (owner_review, type_review) if r)[:500]))
+    elif extraction.get("validity_check") and status == DocumentStatus.VALID:
+        # Accepted (it counts), but its validity is only a guess: a person
+        # reads the term and sets it with "Validity stated" in the queue.
+        db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
+                                 reason=extraction["validity_check"][:500]))
     else:
         from .accuracy import maybe_spot_check
         maybe_spot_check(db, doc)
