@@ -138,14 +138,19 @@ END_DATE = re.compile(
     r"|valid(?:ity)?\s*(?:up\s*to|upto|till|until|thru|through)(?:\s*date)?"
     r"|expir(?:y|es|ing|ation)(?:\s*date)?(?:\s*on)?"
     # "commencing from 26/05/2025 an(d) ending on 25/05/2028", "ends on", "up to and including"
-    r"|(?:\ba?n?d?\s*)?ending\s*(?:on|date)?|\bends?\s*on|up\s*to\s*and\s*including)\s*", re.I)
+    r"|(?:\ba?n?d?\s*)?ending\s*(?:on|date)?|\bends?\s*on|up\s*to\s*and\s*including"
+    # 'On this day of, 29/08/2025 ("Effective Date") 27/08/2028': the last day
+    # written right after the bracketed "Effective Date" (the start date is
+    # before it, and a date only 30 days to 6 years later can be the end).
+    r"|effective\s*date\W{0,2}\s*\))\s*", re.I)
 BETWEEN_LABEL_AND_DATE = re.compile(r"^[\s:\-–—_.,(]{0,12}$")
 HINDI_UPTO = re.compile(r"\s*तक\s*(?:मान्य|वैध)")
 
 
 def find_end_date(text: str, issue: date) -> Optional[date]:
     """A printed last day ("valid upto 25/10/2027", "END AND CLOSE DATE
-    01-06-2028", "Expiry Date: ...", "31/03/2027 तक मान्य") between 30 days
+    01-06-2028", "Expiry Date: ...", "31/03/2027 तक मान्य", '("Effective
+    Date") 27/08/2028') between 30 days
     and 6 years after the issue date (the scan may break the line before it)."""
     flat = re.sub(r"\s+", " ", normalize(text))
     ok = lambda d: 30 <= (d - issue).days <= 6 * 366

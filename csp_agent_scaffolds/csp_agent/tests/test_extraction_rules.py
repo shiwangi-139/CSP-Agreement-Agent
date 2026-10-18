@@ -463,3 +463,18 @@ def test_anuradha_valid_from_to_under_the_stamp(line):
          + "\nTerm: This Agreement shall be valid until terminated in accordance with Clause I(4)B.")
     r = extract_agreement(t, TODAY)
     assert r["issue_date"] == date(2025, 7, 12) and r["explicit_expiry"] == date(2028, 7, 11)
+
+
+@pytest.mark.parametrize("head", [
+    'On this day of, 29/08/2025 ("Effective Date") 27/08/2028 Sunil Kumar Gupta an Indian national',
+    'On this day of, 29/08/2025 (\n"Effective Date") 27/08/2028 Sunil Kumar',            # as OCR split it
+])
+def test_end_date_right_after_effective_date(head):
+    r = extract_agreement("CUSTOMER SERVICE POINT AGREEMENT\n" + head, TODAY)
+    assert r["issue_date"] == date(2025, 8, 29) and r["explicit_expiry"] == date(2028, 8, 27)
+
+
+def test_effective_date_label_with_the_start_date_is_not_an_end_date():
+    r = extract_agreement('CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 20/04/2024 ("Effective Date"), '
+                          'CSP Name X\nThis Agreement shall remain valid for a period of three (3) years', TODAY)
+    assert r["issue_date"] == date(2024, 4, 20) and r["explicit_expiry"] is None and r["has_explicit_3year_clause"]
