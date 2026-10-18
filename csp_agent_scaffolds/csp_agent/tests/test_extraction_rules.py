@@ -450,3 +450,16 @@ def test_this_day_of_with_the_first_letters_under_the_stamp():
          "This Agreement shall remain valid for a period of three (3) years from the Effective Date.")
     r = extract_agreement(t, TODAY)
     assert r["issue_date"] == date(2026, 4, 15) and r["has_explicit_3year_clause"]
+
+
+@pytest.mark.parametrize("line", [
+    "No te This agreem ent is Valid from_____ 12/07/2025 _____to_____ 11/07/2028",
+    "CIAL\nNo\ns agreemanis Valid from\n12/07/2025\nto\n11/07/2028\n1A185",
+    "is Valid from 12/07/2025\n1A85\nto 11/07/2028",
+    "is Valid from\n12/07/2025\n\n11/07/2028",
+])
+def test_anuradha_valid_from_to_under_the_stamp(line):
+    t = ('CUSTOMER SERVICE POINT AGREEMENT\nOn this day of 12/07/2025\n("Effective Date"), CSP Name ANURADHA\n' + line
+         + "\nTerm: This Agreement shall be valid until terminated in accordance with Clause I(4)B.")
+    r = extract_agreement(t, TODAY)
+    assert r["issue_date"] == date(2025, 7, 12) and r["explicit_expiry"] == date(2028, 7, 11)

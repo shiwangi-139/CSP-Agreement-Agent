@@ -63,6 +63,7 @@ THREE_YEAR = [
 # A raised "th" in "30th December 2023" often comes out of OCR as a quote
 # mark: "30” December 2023", "29" December 2026".
 _DATE = r"\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*(?:\d{4}|\d{2})(?!\d)|\d{1,2}(?:st|nd|rd|th|[\"”“'’`°]{1,2})?\s*[- ]?\s*[A-Za-z]{3,9}\.?\s*[- ,]?\s*\d{4}"
+VALID_FROM = re.compile(r"\bvalid\w*\s*(?:from|w\.?\s?e\.?\s?f\.?)", re.I)
 RANGE = [
     re.compile(r"(?:valid\s+)?(?:from|w\.?\s?e\.?\s?f\.?)\s*[:\-]?\s*(?P<a>[^\n]{6,30}?)\s*(?:to|till|until|upto|up\s+to)\s*(?P<b>[^\n]{6,30})", re.I),
     re.compile(r"(?:for\s+the\s+)?period\s+(?:of\s+)?(?P<a>[^\n]{6,30}?)\s*(?:to|till|until)\s*(?P<b>[^\n]{6,30})", re.I),
@@ -215,6 +216,16 @@ def find_validity_range(text: str, today: Optional[date] = None) -> Optional[tup
             if start is None:
                 continue
             end = b[0].value
+            if start.year >= 2010 and 30 <= (end - start).days <= 6 * 366:
+                return start, end
+    # "This agreement is Valid from ____ 12/07/2025 ____ to ____ 11/07/2028"
+    # with the stamp over it: OCR scatters the line ("Valid from\n12/07/2025\n
+    # 1A85\nto 11/07/2028", or loses "to"). The first two dates within a few
+    # lines after "valid from" are the range.
+    for m in VALID_FROM.finditer(flat):
+        found = find_dates(flat[m.end(): m.end() + 120])
+        if len(found) >= 2:
+            start, end = found[0].value, found[1].value
             if start.year >= 2010 and 30 <= (end - start).days <= 6 * 366:
                 return start, end
     return None
