@@ -29,6 +29,7 @@ that are not "same".
 import argparse
 import csv
 import multiprocessing as mp
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app import vault
@@ -45,7 +46,8 @@ def _read(path: str, doc_type: str, q) -> None:
         ex = extract_document_fields_deterministic(Path(path).read_bytes(), Path(path).name,
                                                    allow_llm_fallback=False, expected_type=doc_type)
         q.put({k: ex.get(k) for k in ("readability", "document_type", "start_date", "expiry_date",
-                                      "validity_rule_used", "type_review", "validity_conflict")})
+                                      "validity_rule_used", "type_review", "validity_conflict",
+                                      "compliance_status", "rejection_reason", "date_source")})
     except Exception as e:                                       # reported, the check goes on
         q.put({"error": f"{type(e).__name__}: {e}"[:200]})
 
@@ -75,6 +77,7 @@ def main():
     ap.add_argument("--resume", action="store_true", help="skip documents already in logs/document_check.csv")
     a = ap.parse_args()
     db = SessionLocal()
+    started = datetime.now(timezone.utc).replace(tzinfo=None)
     try:
         q = (db.query(Document, CSP).join(CSP, CSP.id == Document.csp_id)
              .filter(Document.document_type.in_([a.type] if a.type else TYPES),
@@ -132,6 +135,10 @@ def main():
                 if i % 25 == 0:
                     print(f"... {i}/{len(rows)} checked", flush=True)
         print(f"\n{len(rows)} documents checked: " + ", ".join(f"{v} {k}" for k, v in counts.items()))
+        if not a.csp:
+            from app.monitoring import record_run
+            record_run(db, "document_check", started, "OK", {"documents": len(rows), **counts,
+                                                             "type": a.type or "all", "resumed": bool(done)})
         print("Full list: logs/document_check.csv   (nothing in the database was changed)")
     finally:
         db.rollback()

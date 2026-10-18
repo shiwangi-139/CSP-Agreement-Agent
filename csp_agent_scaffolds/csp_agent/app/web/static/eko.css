@@ -151,3 +151,9 @@ textarea { width: 100%; min-height: 180px; font-family: var(--font-body); }
   main { padding: 16px; }
   .docgrid { grid-template-columns: 1fr; }
 }
+
+/* Monitoring page: status lines carry an icon and words, the colour only adds to them */
+.mon { display: inline-flex; gap: 6px; align-items: center; font-weight: 600; font-size: .86rem; border-radius: 999px; padding: 2px 10px; }
+.mon.ok { background: var(--mist); color: var(--ok-ink); }
+.mon.warn { background: var(--saffron-soft); color: var(--warn-ink); }
+.mon.bad { background: var(--danger-soft); color: var(--danger-ink); }

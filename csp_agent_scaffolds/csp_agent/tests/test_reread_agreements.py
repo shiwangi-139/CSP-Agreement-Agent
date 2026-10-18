@@ -1,8 +1,9 @@
 """scripts/reread_default_agreements.py: an agreement stored with the 1-year
 default is re-read with the current rules (dry run first, then --apply)."""
+import csv
 import sys
 import uuid
-from datetime import date
+from datetime import date, datetime
 
 import pymupdf
 from sqlalchemy.orm import sessionmaker
@@ -146,3 +147,39 @@ def test_a_file_that_hangs_is_listed_as_timeout_and_the_check_goes_on(tmp_path, 
     assert time.time() - started < 10
     monkeypatch.undo()
     assert chk.read_isolated(f, "AGREEMENT", timeout=120)["expiry_date"] == "2028-06-01"
+
+
+def test_eval_reading_scores_against_what_a_person_decided(db_session, tmp_path, monkeypatch, capsys):
+    import scripts.eval_reading as ev
+    from app.models import ManualReviewQueue, MonitorRun, ReviewStatus
+    db = db_session
+    code = f"9V{uuid.uuid4().int % 1000000:06d}"
+    csp = CSP(name="Eval CSP", current_code=code, lookup_code=code, phone="9876543210",
+              whatsapp_number="9876543210", is_active_in_calling_sheet=True)
+    db.add(csp)
+    db.flush()
+    f = tmp_path / "agreement.pdf"
+    _pdf(f)
+    right = Document(csp_id=csp.id, document_type="AGREEMENT", sha256=uuid.uuid4().hex,
+                     status=DocumentStatus.MANUAL_VERIFIED, issue_date=date(2025, 7, 1), expiry_date=date(2028, 6, 1),
+                     is_current=True, readability="READABLE", storage_path=str(f))
+    wrong = Document(csp_id=csp.id, document_type="AGREEMENT", sha256=uuid.uuid4().hex,
+                     status=DocumentStatus.MANUAL_VERIFIED, issue_date=date(2025, 7, 1), expiry_date=date(2027, 1, 1),
+                     is_current=False, readability="READABLE", storage_path=str(f))
+    db.add_all([right, wrong])
+    db.flush()
+    for d in (right, wrong):
+        db.add(ManualReviewQueue(document_id=d.id, status=ReviewStatus.APPROVED, reason="Spot check",
+                                 resolved_at=datetime.now()))
+    db.commit()
+    monkeypatch.setattr(ev, "SessionLocal", sessionmaker(bind=db.get_bind()))
+    monkeypatch.chdir(tmp_path)
+    verdicts = {}
+    for holdout in (False, True):
+        monkeypatch.setattr(sys, "argv", ["eval", "--type", "AGREEMENT"] + (["--holdout"] if holdout else []))
+        ev.main()
+        for row in csv.DictReader(open(tmp_path / "logs" / "reading_eval.csv")):
+            verdicts[int(row["doc_id"])] = row["verdict"]
+    capsys.readouterr()
+    assert verdicts[right.id] == "correct" and verdicts[wrong.id] == "WRONG ACCEPT"
+    assert db.query(MonitorRun).filter(MonitorRun.kind == "reading_eval").count() >= 2

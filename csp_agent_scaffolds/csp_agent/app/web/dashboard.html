@@ -6,7 +6,7 @@
 <title>Eko CSP Renewals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
-<link rel="stylesheet" href="static/eko.css?v=3">
+<link rel="stylesheet" href="static/eko.css?v=4">
 </head>
 <body>
 <div id="login" class="login card" style="display:none">
@@ -38,6 +38,7 @@
     <button data-view="formuploads">Form uploads <span class="count" id="n-form"></span></button>
     <button data-view="questions">CSP questions <span class="count" id="n-questions"></span></button>
     <button data-view="accuracy">Accuracy</button>
+    <button data-view="monitoring">Monitoring</button>
     <div class="foot" id="modes"></div>
     <div class="foot" id="whoami"></div>
   </nav>
@@ -131,6 +132,155 @@
     if (d.status === "EXPIRED") return `${badge("EXPIRED", "expired")}<div class="small muted mono">exp ${fmt(d.expiry_date)}</div>`;
     return badge(d.status, d.status === "UNREADABLE" ? "unreadable" : "missing");
   }
+
+  // ------------------------------------------------------- monitoring page
+  // Every status: icon + words + colour (never colour alone).
+  const ICON = {ok: "✅", warn: "⚠️", bad: "⛔"};
+  const mon = (s) => s ? `<span class="mon ${esc(s.level)}">${ICON[s.level] || ""} ${esc(s.text)}</span>` : "";
+  const tile = (label, n, sub, s) => `<div class="card kpi"><div class="label">${esc(label)}</div><div class="n">${n ?? "—"}</div>
+    <div class="small muted">${sub || ""}</div>${s ? `<div style="margin-top:6px">${mon(s)}</div>` : ""}</div>`;
+  const pairs = (rows, empty = "Nothing yet.") => rows && rows.length
+    ? `<dl class="kv">${rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd class="num">${esc(v)}</dd>`).join("")}</dl>` : `<p class="small muted">${empty}</p>`;
+  const ago = (iso) => iso ? when(iso) : "never";
+  // Horizontal bars (inline SVG): [[label, value], ...]; the number is written next to each bar.
+  function hbars(rows) {
+    if (!rows || !rows.length) return `<p class="small muted">Nothing yet.</p>`;
+    const max = Math.max(...rows.map((r) => r[1]), 1), h = 22;
+    return `<svg viewBox="0 0 320 ${rows.length * h}" width="100%" role="img" aria-label="bar chart">${rows.map(([l, v], i) => `
+      <text x="0" y="${i * h + 15}" font-size="11" fill="currentColor">${esc(String(l).slice(0, 28))}</text>
+      <rect x="150" y="${i * h + 5}" width="${Math.max(2, 130 * v / max)}" height="12" rx="3" fill="var(--primary)"></rect>
+      <text x="${154 + 130 * v / max}" y="${i * h + 15}" font-size="11" fill="currentColor">${v}</text>`).join("")}</svg>`;
+  }
+  // Columns per day (inline SVG), stacked by key: series = [{day, k1: n, k2: n}], keys = [[key, label, colourVar]].
+  function columns(series, keys) {
+    if (!series || !series.length) return `<p class="small muted">No history yet (it starts with the first daily snapshot).</p>`;
+    const tot = series.map((r) => keys.reduce((a, [k]) => a + (r[k] || 0), 0)), max = Math.max(...tot, 1);
+    const w = Math.max(8, Math.floor(300 / series.length)), H = 120;
+    const bars = series.map((r, i) => { let y = H; return keys.map(([k, , col]) => { const h = H * (r[k] || 0) / max; y -= h;
+      return h ? `<rect x="${i * w + 10}" y="${y}" width="${w - 2}" height="${h}" fill="var(${col})"><title>${esc(r.day)} ${esc(k)}: ${r[k]}</title></rect>` : ""; }).join(""); }).join("");
+    return `<svg viewBox="0 0 ${series.length * w + 20} ${H + 18}" width="100%" role="img" aria-label="per day">${bars}
+      <text x="10" y="${H + 14}" font-size="10" fill="currentColor">${esc(series[0].day)}</text>
+      <text x="${series.length * w + 10}" y="${H + 14}" font-size="10" text-anchor="end" fill="currentColor">${esc(series[series.length - 1].day)}</text></svg>
+      <div class="small">${keys.map(([k, l, col]) => `<span style="display:inline-block;width:10px;height:10px;background:var(${col});border-radius:2px"></span> ${esc(l)}`).join(" &nbsp; ")}</div>`;
+  }
+  const T3 = {AGREEMENT: "Agreement", POLICE_VERIFICATION: "Police certificate", IIBF_CERTIFICATE: "IIBF"};
+  const MON = {
+    status(d) {
+      return `<div class="card" style="margin-bottom:14px">${mon(d.overall)}</div>
+      <div class="grid k4">
+        ${tile("WhatsApp today", `${d.whatsapp.today} / ${d.whatsapp.limit}`, `${esc(d.whatsapp.mode)} mode · sends ${esc(d.whatsapp.send_hours)} (${d.whatsapp.send_window_open ? "open now" : "closed now"})`, d.whatsapp.status)}
+        ${tile("Last Gmail scan", d.gmail.last_scan ? ago(d.gmail.last_scan.at) : "never", d.gmail.backfill_done ? "2-year backfill done" : "backfill still running")}
+        ${tile("Review helper today", `${d.review_helper.read_today} / ${d.review_helper.limit}`, d.review_helper.on ? "local AI reads review documents, 8 pm–8 am" : "switched off")}
+        ${tile("Jobs with a problem", d.jobs.filter((j) => j.status.level !== "ok").length, `of ${d.jobs.length} jobs`)}
+      </div>
+      <div class="card tablewrap" style="margin-top:14px"><h2>Jobs</h2><table><thead><tr><th>Job</th><th>Status</th><th>Last run</th><th>Took</th><th>Failed (24 h)</th><th>Last error</th></tr></thead><tbody>
+        ${d.jobs.map((j) => `<tr><td>${esc(j.label)}</td><td>${mon(j.status)}</td><td>${j.last ? ago(j.last.at) : "—"}</td>
+          <td class="num">${j.last?.minutes != null ? j.last.minutes + " min" : "—"}</td><td class="num">${j.failed_24h}</td>
+          <td class="small">${esc(j.last_error || "")}</td></tr>`).join("")}</tbody></table></div>
+      <div class="card" style="margin-top:14px"><h2>Gmail messages by state</h2>${pairs(Object.entries(d.gmail.messages_by_status || {}))}</div>`;
+    },
+    documents(d) {
+      const up = d.upload_page;
+      return `<div class="grid k4">
+        ${tile(`Documents (${d.days} days)`, d.total, "stored from Gmail and the upload page")}
+        ${tile("Accepted", d.outcome.accepted || 0, `in review ${d.outcome["in review"] || 0} · unreadable ${d.outcome.unreadable || 0}`)}
+        ${tile("Upload page files", up.files || 0, `${up.submissions || 0} submissions`)}
+        ${tile("Tried twice, nothing accepted", up.csps_tried_twice_nothing_accepted, "CSPs to call first", up.csps_tried_twice_nothing_accepted ? {level: "warn", text: "call them"} : {level: "ok", text: "none"})}
+      </div>
+      <div class="grid k3" style="margin-top:14px">
+        <div class="card"><h2>Per day</h2>${columns(d.per_day, [["gmail", "Gmail", "--primary"], ["upload page", "Upload page", "--forest-light"]])}</div>
+        <div class="card"><h2>By document</h2>${hbars(Object.entries(d.by_type).map(([k, v]) => [T3[k] || k, v]))}</div>
+        <div class="card"><h2>Why the upload page turned files away</h2>${hbars(up.turned_away_reasons)}</div>
+      </div>`;
+    },
+    accuracy(d) {
+      const sc = d.spot_checks || {}, wr = d.wrong_rejections, ev = d.evaluations[0], ck = d.document_checks[0];
+      const evRows = ev ? Object.entries(ev.summary.by_type || {}).map(([t, s]) => `<tr><td>${esc(T3[t] || t)}</td><td class="num">${s.documents}</td>
+        <td class="num">${s.correct || 0}</td><td class="num">${s["safe review"] || 0}</td><td class="num"><b>${s["WRONG ACCEPT"] || 0}</b></td>
+        <td class="num">${s["wrong reject"] || 0}</td><td class="num">${esc(s.issue_date_right_when_found || "—")}</td></tr>`).join("") : "";
+      return `<div class="grid k4">
+        ${tile("Spot-check accuracy", sc.accuracy != null ? sc.accuracy + "%" : "—", `${sc.checked || 0} documents checked by a person`)}
+        ${tile("Wrong rejections", wr.count, `of ${wr.of_turned_away} turned-away uploads, later accepted`, wr.count ? {level: "bad", text: "CSPs were told wrongly"} : {level: "ok", text: "none"})}
+        ${tile("Wrong acceptances", d.wrong_acceptances, "spot checks a person rejected", d.wrong_acceptances ? {level: "bad", text: "accepted wrongly"} : {level: "ok", text: "none"})}
+        ${tile("Validity only a default", d.default_validity.count, "current documents with no stated validity", d.default_validity.count ? {level: "warn", text: "a person may check"} : null)}
+      </div>
+      <div class="card tablewrap" style="margin-top:14px"><h2>Latest reading evaluation ${ev ? `<span class="small muted">· ${ago(ev.at)} · ${esc(ev.summary.set)} set · code ${esc(ev.summary.commit || "")}</span>` : ""}</h2>
+        ${ev ? `<table><thead><tr><th></th><th>Documents</th><th>Correct</th><th>Safe review</th><th>WRONG ACCEPT</th><th>Wrong reject</th><th>Issue date right</th></tr></thead><tbody>${evRows}</tbody></table>`
+             : `<p class="small muted">Not run yet. On the server: <span class="mono">python -m scripts.eval_reading</span> (documents a person decided are the correct answers).</p>`}</div>
+      <div class="grid k3" style="margin-top:14px">
+        <div class="card"><h2>Latest full document check</h2>${ck ? pairs(Object.entries(ck.summary).filter(([k]) => !["type", "resumed"].includes(k))) + `<p class="small muted">${ago(ck.at)}</p>` : `<p class="small muted">Not run yet: <span class="mono">python -m scripts.check_all_documents</span></p>`}</div>
+        <div class="card"><h2>Wrong rejections (latest)</h2>${pairs(wr.examples.map((x) => [`${x.csp} ${x.section}`, x.reason]), "None.")}</div>
+        <div class="card"><h2>Which rule set the validity</h2>${pairs(d.rules_used.map((r) => [`${T3[r.type] || r.type}: ${r.rule}`, r.documents]))}</div>
+      </div>`;
+    },
+    review(d) {
+      return `<div class="card" style="margin-bottom:14px">${mon(d.status)}</div><div class="grid k4">
+        ${tile("Waiting", d.waiting, `<a href="#" data-go="review">Open the Review queue</a>`)}
+        ${tile("Oldest waits", d.oldest_hours != null ? (d.oldest_hours >= 48 ? Math.round(d.oldest_hours / 24) + " days" : Math.round(d.oldest_hours) + " h") : "—", "warning after 1 day, problem after 2")}
+        ${tile("Median time to decide", d.median_hours_to_decision != null ? d.median_hours_to_decision + " h" : "—", "last 30 days")}
+        ${tile("Decided (30 days)", Object.values(d.decided_30d).reduce((a, b) => a + b, 0), Object.entries(d.decided_30d).map(([k, v]) => `${k.toLowerCase()} ${v}`).join(" · "))}
+      </div><div class="grid k3" style="margin-top:14px">
+        <div class="card"><h2>Why they wait</h2>${hbars(d.by_reason)}</div>
+        <div class="card"><h2>How long they wait</h2>${hbars(d.by_age)}</div>
+        <div class="card"><h2>Waiting for (RM of the CSP)</h2>${hbars(d.by_rm)}</div></div>`;
+    },
+    experience(d) {
+      return `<div class="card" style="margin-bottom:14px">${mon(d.status)}</div><div class="grid k4">
+        ${tile(`CSPs messaged (${d.days} days)`, d.csps_messaged, `${d.messages} messages sent`)}
+        ${tile("More than one a day", d.over_policy.length, "CSPs over the message policy", d.over_policy.length ? {level: "warn", text: "check why"} : {level: "ok", text: "none"})}
+        ${tile("Messaged while being checked", d.while_in_review.length, "should be 0", d.while_in_review.length ? {level: "bad", text: "reminder while in review"} : {level: "ok", text: "none"})}
+        ${tile("Told wrongly", d.wrong_negative_messages, "expired / unreadable / wrong document, later accepted", d.wrong_negative_messages ? {level: "bad", text: "wrong message sent"} : {level: "ok", text: "none"})}
+      </div><div class="grid k3" style="margin-top:14px">
+        <div class="card"><h2>Messages per CSP</h2>${hbars(d.distribution.map(([k, v]) => [k + " message(s)", v]))}</div>
+        <div class="card"><h2>CSPs to look at</h2>${pairs([...d.while_in_review.map((c) => [c, "messaged while in review"]), ...d.over_policy.map((c) => [c, "2+ on one day"])], "None.")}</div>
+        <div class="card"><h2>Failed sends (${d.failed})</h2>${hbars(d.failed_reasons)}</div></div>`;
+    },
+    messaging(d) {
+      return `<div class="grid k4">
+        ${tile(`Sent (${d.days} days)`, d.by_status.SENT || 0, `failed ${d.by_status.FAILED || 0} · rejected ${d.by_status.REJECTED || 0}`)}
+        ${tile("Waiting for approval", d.waiting_approval, d.oldest_waiting_hours != null ? `oldest ${Math.round(d.oldest_waiting_hours)} h` : "", d.oldest_waiting_hours >= 24 ? {level: "warn", text: "waiting over a day"} : null)}
+        ${tile("Handled by people", Object.values(d.handled_by_people).reduce((a, b) => a + b, 0), Object.entries(d.handled_by_people).map(([k, v]) => `${k} ${v}`).join(" · "))}
+        ${tile("Message types", d.by_type.length, "used in the period")}
+      </div><div class="grid k3" style="margin-top:14px">
+        <div class="card"><h2>Per day</h2>${columns(d.per_day, [["sent", "Sent", "--forest-light"], ["failed", "Failed", "--danger"]])}</div>
+        <div class="card"><h2>By type</h2>${hbars(d.by_type)}</div>
+        <div class="card"><h2>By state</h2>${hbars(Object.entries(d.by_status))}</div></div>`;
+    },
+    network(d) {
+      const c = d.coverage, r = d.renewals_due, m = d.moves_7d;
+      return `<div class="grid k4">
+        ${tile("Label 1 now", d.labels_now["1"] || 0, `of ${d.active_csps} active CSPs`)}
+        ${tile("Moved up (7 days)", m.up, m.since ? `since ${fmt(m.since)}` : "needs 2 snapshots", m.up ? {level: "ok", text: "towards Label 1"} : null)}
+        ${tile("Moved down (7 days)", m.down, m.since ? `since ${fmt(m.since)}` : "", m.down ? {level: "warn", text: "lost a document"} : null)}
+        ${tile("Renewals in 30 days", Object.values(r).reduce((a, x) => a + x["30"], 0), "documents to renew soon")}
+      </div><div class="grid k3" style="margin-top:14px">
+        <div class="card"><h2>Labels per day</h2>${columns(d.series, [["1", "Label 1", "--forest-light"], ["2", "Label 2", "--saffron"], ["3", "Label 3", "--danger"], ["4", "Label 4", "--primary"]])}</div>
+        <div class="card tablewrap"><h2>Each document</h2><table><thead><tr><th></th><th>Valid</th><th>%</th><th>Expired</th><th>Due 30 / 60 / 90 days</th></tr></thead><tbody>
+          ${Object.entries(c).map(([t, v]) => `<tr><td>${esc(T3[t] || t)}</td><td class="num">${v.valid}</td><td class="num">${v.percent}%</td><td class="num">${d.expired[t] || 0}</td>
+          <td class="num">${r[t]["30"]} / ${r[t]["60"]} / ${r[t]["90"]}</td></tr>`).join("")}</tbody></table></div>
+        <div class="card"><h2>Sub-labels now</h2>${hbars(d.sub_labels_now.map(([k, l, n]) => [`${k} ${l}`, n]))}</div></div>`;
+    },
+    quality(d) {
+      const k = d.counts;
+      return `<div class="grid k4">
+        ${tile("No phone", k.no_phone, "active CSPs", k.no_phone ? {level: "warn", text: "can't be messaged"} : {level: "ok", text: "none"})}
+        ${tile("Phone looks wrong", k.bad_phone, "not a 10-digit mobile", k.bad_phone ? {level: "warn", text: "check the sheet"} : null)}
+        ${tile("Shared phone", k.shared_phone, "same number on several CSPs")}
+        ${tile("Document file missing", k.documents_file_missing, "current documents whose file is gone", k.documents_file_missing ? {level: "bad", text: "file lost"} : {level: "ok", text: "none"})}
+      </div><div class="grid k3" style="margin-top:14px">
+        <div class="card"><h2>Lists</h2>${pairs([["No phone", d.no_phone.join(", ") || "—"], ["Phone looks wrong", d.bad_phone.join(", ") || "—"], ["Shared phone", d.shared_phone.join(", ") || "—"]])}</div>
+        <div class="card"><h2>Other</h2>${pairs([["CSPs with no RM (TBA)", d.no_rm], ["Contact changes waiting", d.contact_changes_waiting], ["Active CSPs", d.active_csps]])}</div>
+        <div class="card"><h2>Files missing</h2>${pairs(d.documents_file_missing.map((x) => [`doc ${x.doc}`, x.type]), "None.")}</div></div>`;
+    },
+    use(d) {
+      return `<div class="grid k3">
+        <div class="card"><h2>Sign-ins per day (${d.days} days)</h2>${columns(d.sign_ins_per_day.map(([day, n]) => ({day, n})), [["n", "Sign-ins", "--primary"]])}</div>
+        <div class="card"><h2>Dashboard accounts</h2>${pairs(d.accounts.map((u) => [`${u.name} (${u.role})`, u.last_login ? "last " + fmt(u.last_login) : "never signed in"]))}</div>
+        <div class="card"><h2>Open CSP questions</h2><div class="n" style="font:800 2rem var(--font-heading)">${d.open_csp_questions}</div>
+          <p class="small"><a href="#" data-go="questions">Open CSP questions</a></p></div></div>
+      <p class="small muted" style="margin-top:10px">Totals only: no per-person pages, time or places are recorded.</p>`;
+    },
+  };
 
   // ------------------------------------------------------------- views
   const views = {
@@ -318,6 +468,15 @@
       </tbody></table></div>${unmatchedCard}`;
     },
 
+    async monitoring() {
+      const TABS = [["status", "Agent status"], ["documents", "Documents in"], ["accuracy", "Reading accuracy"],
+                    ["review", "Review queue"], ["experience", "CSP experience"], ["messaging", "Messaging"],
+                    ["network", "Network progress"], ["quality", "Data quality"], ["use", "Dashboard use"]];
+      const tab = state.mtab || "status";
+      const d = await api(`/api/hub/monitor/${tab}`);
+      const nav = `<div class="tabs">${TABS.map(([v, l]) => `<button class="${tab === v ? "active" : ""}" data-mtab="${v}">${l}</button>`).join("")}</div>`;
+      return nav + (MON[tab] ? MON[tab](d) : `<div class="card empty">Unknown tab.</div>`);
+    },
     async accuracy() {
       const a = await api("/api/hub/accuracy");
       const pct = (v) => v == null ? "—" : v + "%";
@@ -581,7 +740,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-mtab],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -624,6 +783,7 @@
       }
       if (ds.fcsp) { const id = +ds.fcsp, o = state.fopen || (state.fopen = new Set()); o.has(id) ? o.delete(id) : o.add(id); return render(); }
       if (ds.fout !== undefined) { state.fout = ds.fout; return render(); }
+      if (ds.mtab) { state.mtab = ds.mtab; return render(); }
       if (ds.fdays !== undefined) { state.fdays = +ds.fdays; return render(); }
       if (ds.keptfile) { e.preventDefault(); const [ev, i] = ds.keptfile.split("/"); return openPath(`api/hub/form-uploads/${ev}/file/${i}`); }
       if (ds.answer) { await post(`/api/hub/questions/${ds.answer}/answer`, {note: $(`#qn${ds.answer}`)?.value || ""}); toast("Marked answered."); return render(); }
@@ -673,7 +833,7 @@
   const TITLES = {overview: "Overview", categories: "Labels", documents: "Latest documents", comms: "Communication Hub",
                   contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy",
                   questions: "CSP questions", formuploads: "Form uploads", find: "Find CSPs",
-                  analytics: "Messaging analytics"};
+                  analytics: "Messaging analytics", monitoring: "Monitoring"};
   async function render() {
     try {
       state.summary = await api("/api/hub/summary");
@@ -688,7 +848,7 @@
       const me = s.me || {};
       $("#whoami").innerHTML = `${esc(me.name || "")} · <b>${esc(me.role || "")}</b><br><a href="#" id="logout">Sign out</a>`;
       $("#logout").onclick = (e) => { e.preventDefault(); logout(); };
-      document.querySelectorAll('#nav [data-view="contacts"],#nav [data-view="ingestion"],#nav [data-view="accuracy"]')
+      document.querySelectorAll('#nav [data-view="contacts"],#nav [data-view="ingestion"],#nav [data-view="accuracy"],#nav [data-view="monitoring"]')
         .forEach((b) => b.style.display = me.role === "ADMIN" ? "" : "none");
       window.WA_MODE = s.modes.whatsapp;
       $("#modes").innerHTML = `Outbound: <b>${esc(s.modes.outbound)}</b><br>WhatsApp: <b>${esc(s.modes.whatsapp)}</b><br>Sheet: ${esc(s.modes.calling_sheet)}`;

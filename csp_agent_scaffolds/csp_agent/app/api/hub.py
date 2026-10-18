@@ -784,6 +784,16 @@ def review_queue(me: Principal = Depends(require_user), db: Session = Depends(ge
                       "csp": {"id": c.id, "code": c.current_code, "name": c.name}} for q, d, c in rows]}
 
 
+@router.get("/monitor/{tab}", dependencies=[Depends(require_admin)])
+def monitor(tab: str, days: int = 0, db: Session = Depends(get_db)):
+    """Monitoring page (admins only): one tab's numbers (app/monitoring.py)."""
+    from .. import monitoring
+    fn = monitoring.TABS.get(tab)
+    if fn is None:
+        raise HTTPException(404, "unknown tab")
+    return fn(db, days=min(max(days, 1), 90)) if days and "days" in fn.__code__.co_varnames else fn(db)
+
+
 @router.get("/accuracy", dependencies=[Depends(require_admin)])
 def accuracy_stats(days: int = 90, db: Session = Depends(get_db)):
     from .. import accuracy

@@ -437,3 +437,29 @@ class AutoCallingSheetEntry(Base):
     promoted_at = Column(DateTime, nullable=True)
     extracted_metadata = Column(JSONB, nullable=True)
 
+
+
+class LabelSnapshot(Base):
+    """Each active CSP's Label once a day (app/monitoring.py), so progress
+    over time can be shown: the csp table holds only the current Label."""
+    __tablename__ = "label_snapshots"
+    __table_args__ = (UniqueConstraint("day", "csp_id", name="uq_label_snapshot_day_csp"),)
+    id = Column(Integer, primary_key=True)
+    day = Column(Date, nullable=False, index=True)
+    csp_id = Column(Integer, ForeignKey("csp.id"), nullable=False, index=True)
+    category = Column(Integer)
+    sub_slab = Column(String)
+    rm_id = Column(Integer, nullable=True)
+    docs = Column(JSONB)                     # {"AGREEMENT": "VALID" | "EXPIRED" | "MISSING" | "IN_REVIEW" | ...}
+
+
+class MonitorRun(Base):
+    """One run of a worker job, a reading-accuracy evaluation or a full
+    document check, kept for the Monitoring page (app/monitoring.py)."""
+    __tablename__ = "monitor_runs"
+    id = Column(Integer, primary_key=True)
+    kind = Column(String, nullable=False, index=True)    # job:gmail, reading_eval, document_check
+    started_at = Column(DateTime, nullable=False, index=True)
+    finished_at = Column(DateTime)
+    status = Column(String)                              # OK, FAILED, SKIPPED
+    summary = Column(JSONB)

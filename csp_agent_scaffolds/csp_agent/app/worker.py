@@ -15,6 +15,7 @@ Schedule (Asia/Kolkata):
   Outbox sender / retries                          every 2 minutes
   Vault: expiry renames + INDEX.xlsx               daily 00:10
   Excel reports (CSP report, Contacts & gaps)      daily 07:30
+  Daily Label snapshot (Monitoring page history)   daily 09:30 (and at start if missed)
   Review helper (local Ollama, capped, see app/model_assist.py)  hourly at :15
   Ollama memory guard (stops this project's Ollama)             every minute
 Missed runs (server off) are run once when it comes back (coalesce + 6 h grace).
@@ -23,7 +24,7 @@ import logging
 import signal
 import zlib
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import text
 
@@ -55,15 +56,29 @@ def _run(name: str, fn):
             logger.info("job_skipped_already_running job=%s", name)
             return {"skipped": "already running elsewhere"}
         started = datetime.now()
+        started_utc = datetime.now(timezone.utc).replace(tzinfo=None)
         try:
             result = fn()
             LAST_RUNS[name] = {"status": "OK", "at": started.isoformat(timespec="seconds"), "result": result}
             logger.info("job_done job=%s result=%s", name, result)
+            _save_run(name, started_utc, "SKIPPED" if isinstance(result, dict) and result.get("skipped") else "OK",
+                      result if isinstance(result, dict) else {"result": result})
             return result
         except Exception as e:
             LAST_RUNS[name] = {"status": "FAILED", "at": started.isoformat(timespec="seconds"), "error": str(e)}
             logger.exception("job_failed job=%s", name)
+            _save_run(name, started_utc, "FAILED", {"error": f"{type(e).__name__}: {e}"[:500]})
             raise
+
+
+def _save_run(name: str, started_utc: datetime, status: str, summary: dict) -> None:
+    """Kept for the Monitoring page (the worker's memory is lost on restart)."""
+    from .monitoring import record_run
+    db = SessionLocal()
+    try:
+        record_run(db, f"job:{name}", started_utc, status, summary)
+    finally:
+        db.close()
 
 
 def job_gmail():
@@ -149,6 +164,30 @@ def job_model_assist():
     return _run("model_assist", go)
 
 
+def job_snapshot():
+    from . import monitoring
+
+    def go():
+        db = SessionLocal()
+        try:
+            return {"csps": monitoring.snapshot_labels(db)}
+        finally:
+            db.close()
+    return _run("snapshot", go)
+
+
+def job_snapshot_if_missing():
+    """At start: take today's Label snapshot if the 09:30 one was missed."""
+    from . import monitoring
+    db = SessionLocal()
+    try:
+        missing = not monitoring.has_snapshot(db)
+    finally:
+        db.close()
+    if missing:
+        job_snapshot()
+
+
 def job_model_guard():
     """Every minute, no lock or log unless it acts: cheap /proc reads."""
     from . import model_assist
@@ -177,6 +216,8 @@ def build_scheduler():
     sched.add_job(job_vault, CronTrigger(hour=VAULT_JOB_HOUR, minute=VAULT_JOB_MINUTE), id="vault")
     sched.add_job(job_reports, CronTrigger(hour=7, minute=30), id="reports")
     sched.add_job(job_model_assist, CronTrigger(minute=15), id="model_assist")
+    sched.add_job(job_snapshot, CronTrigger(hour=9, minute=30), id="snapshot")
+    sched.add_job(job_snapshot_if_missing, id="snapshot_at_start", next_run_time=datetime.now())
     sched.add_job(job_model_guard, IntervalTrigger(minutes=1), id="model_guard", next_run_time=datetime.now())
     return sched
 
