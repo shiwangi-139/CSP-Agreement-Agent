@@ -912,3 +912,152 @@ def scan_document(file_bytes: bytes,
         doc.close()
         _cache_save(sha, new_pages)
     return DocumentScan(mime, pages, page_count, file_bytes)
+
+
+# ------------------------------------------------------- focused re-read
+# When the normal read leaves the issue date or the validity unknown (a stamp
+# over the line, a faint handwritten date), the lines around the words that
+# matter are cut out, enlarged and read again three ways: as they are, with
+# coloured stamp ink whitened, and high-contrast; by Tesseract and RapidOCR.
+# Blue-pen handwriting is coloured too, so the as-is version is always kept.
+FOCUS_ANCHORS = {
+    "AGREEMENT": r"valid|period|commenc|ending|end\s*(?:and|&)?\s*close|expir|effective|th[il1]s\s+d[aeo][yv]|\bterm\b",
+    "POLICE_VERIFICATION": r"valid|issue|dated?\b|month|year|वैध|तिथि|माह|महीन|दिनांक|निर्गत|जारी",
+    "IIBF_CERTIFICATE": r"dated?\b|passed|examination|certif",
+}
+FOCUS_MAX_PAGES = 4
+FOCUS_MAX_BANDS = 6
+FOCUS_VERSION = "focus-v1"
+
+
+def _stamp_free_gray(bgr):
+    """Grey page with strongly coloured ink (stamps, seals) turned white."""
+    import cv2
+    import numpy as np
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    mask = (hsv[:, :, 1] > 90) & (hsv[:, :, 2] > 60)
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+    out = gray.copy()
+    out[mask] = 255
+    return out
+
+
+def _ocr_lines(gray, lang: str) -> list[tuple[str, int, int]]:
+    """Each OCR line with its top and bottom pixel rows."""
+    import pytesseract
+    with _TESS_SLOTS:
+        data = pytesseract.image_to_data(gray, lang=lang, config="--psm 3", output_type=pytesseract.Output.DICT)
+    lines: dict = {}
+    for i, word in enumerate(data["text"]):
+        if not (word or "").strip() or float(data["conf"][i]) < 0:
+            continue
+        key = (data["block_num"][i], data["par_num"][i], data["line_num"][i])
+        t, b = data["top"][i], data["top"][i] + data["height"][i]
+        words, top, bottom = lines.get(key, ([], t, b))
+        lines[key] = (words + [word], min(top, t), max(bottom, b))
+    return [(" ".join(w), t, b) for w, t, b in lines.values()]
+
+
+def _ocr_psm6(gray, lang: str) -> str:
+    import pytesseract
+    with _TESS_SLOTS:
+        return pytesseract.image_to_string(gray, lang=lang, config="--psm 6")
+
+
+def _focus_bands(scan: "DocumentScan", doc_type: str, up: float = 1.5, down: float = 3.0, limit: int = FOCUS_MAX_BANDS):
+    """(page index, colour band, grey band, stamp-free band, hindi) around
+    each line holding one of the words that matter, at most `limit`."""
+    import cv2
+    import numpy as np
+    # A line with a date counts too: the stamp may have destroyed the word next to it.
+    pat = re.compile(FOCUS_ANCHORS.get(doc_type, FOCUS_ANCHORS["AGREEMENT"]) + r"|\d{1,2}\s?[./-]\s?\d{1,2}\s?[./-]\s?\d{2,4}"
+                     r"|\d{1,2}\S{0,3}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)", re.I)
+    langs = ["eng"] + (["hin"] if doc_type == "POLICE_VERIFICATION" and "hin" in _languages() else [])
+    found = 0
+    for p in scan.pages[:FOCUS_MAX_PAGES]:
+        if p.source == "DIGITAL":
+            continue
+        png = page_png(scan.source_bytes, p.index, dpi=OCR_DPI) if scan.source_bytes else p.image_png
+        bgr = cv2.imdecode(np.frombuffer(png, np.uint8), cv2.IMREAD_COLOR) if png else None
+        if bgr is None:
+            continue
+        h, w = bgr.shape[:2]
+        if max(h, w) < 2000:
+            s = 2000 / max(h, w)
+            bgr = cv2.resize(bgr, None, fx=s, fy=s, interpolation=cv2.INTER_CUBIC)
+            h, w = bgr.shape[:2]
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        clean = _stamp_free_gray(bgr)
+        taken: list[tuple[int, int]] = []
+        # Key words are looked for on both versions: whitening a stamp can
+        # also cut letters where it crosses them.
+        for lang, img in [(l, x) for l in langs for x in (clean, gray)]:
+            for text, top, bottom in _ocr_lines(img, lang):
+                if not pat.search(text):
+                    continue
+                lh = max(bottom - top, 12)
+                y0, y1 = max(0, int(top - up * lh)), min(h, int(bottom + down * lh))
+                if any(a <= (y0 + y1) / 2 <= b for a, b in taken):
+                    continue
+                taken.append((y0, y1))
+                yield p.index, bgr[y0:y1], gray[y0:y1], clean[y0:y1], lang == "hin"
+                found += 1
+                if found >= limit:
+                    return
+
+
+def _focus_cache(sha: str, doc_type: str, value: Optional[str] = None) -> Optional[str]:
+    if not _cache_on:
+        return None
+    f = _cache_file(sha).with_suffix(f".{doc_type}.focus.json")
+    try:
+        if value is None:
+            data = json.loads(f.read_text())
+            return data["text"] if data.get("key") == f"{FOCUS_VERSION}:{_cache_key()}" else None
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({"key": f"{FOCUS_VERSION}:{_cache_key()}", "text": value}))
+    except (OSError, ValueError, KeyError):
+        return None
+    return value
+
+
+def focused_reread(scan: "DocumentScan", doc_type: str) -> str:
+    """Text read again from the regions around the words that matter (see
+    above), or "" when there is nothing to re-read. Cached per file."""
+    if not scan.source_bytes and not any(p.image_png for p in scan.pages):
+        return ""
+    sha = hashlib.sha256(scan.source_bytes).hexdigest() if scan.source_bytes else None
+    if sha:
+        hit = _focus_cache(sha, doc_type)
+        if hit is not None:
+            return hit
+    import cv2
+    t0 = time.perf_counter()
+    parts = []
+    try:
+        for _, bgr, gray, clean, hindi in _focus_bands(scan, doc_type):
+            big = [cv2.resize(x, None, fx=1.5, fy=1.5, interpolation=cv2.INTER_CUBIC) for x in (gray, clean)]
+            adaptive = cv2.adaptiveThreshold(big[1], 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 15)
+            texts = [_ocr_psm6(x, "hin" if hindi else "eng") for x in (*big, adaptive)]
+            second = _ocr_second(big[0])
+            if second:
+                texts.append(second[0])
+            parts.append("\n".join(t.strip() for t in texts if t and t.strip()))
+    except Exception as e:                       # best effort: the normal read stands
+        logger.warning(f"focused re-read failed: {e}")
+    finally:
+        _timed("focused_reread", t0)
+    text = "\n".join(parts)
+    if sha:
+        _focus_cache(sha, doc_type, text)
+    return text
+
+
+def focus_image(scan: "DocumentScan", doc_type: str) -> Optional[bytes]:
+    """The region around the first line that matters, a little larger, as
+    JPEG: what the review helper shows the AI model (smaller than a page)."""
+    import cv2
+    for _, bgr, _, _, _ in _focus_bands(scan, doc_type, up=4, down=10, limit=1):
+        ok, buf = cv2.imencode(".jpg", bgr, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        return buf.tobytes() if ok else None
+    return None

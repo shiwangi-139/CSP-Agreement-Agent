@@ -191,6 +191,10 @@ OCR_SECOND_ENGINE = os.getenv("OCR_SECOND_ENGINE", "rapidocr").strip().lower()
 # spot check, to measure real accuracy (app/accuracy.py). 0 turns it off.
 SPOT_CHECK_RATE = float(os.getenv("SPOT_CHECK_RATE", "0.05"))
 OCR_SECOND_ENGINE_BELOW = float(os.getenv("OCR_SECOND_ENGINE_BELOW", "80"))
+# When the issue date or the validity is still unknown after reading, cut
+# out the lines around "valid / period / issue date ..." and read them again,
+# enlarged, with stamp ink removed (app/ocr_service.py: focused_reread).
+FOCUSED_REREAD = os.getenv("FOCUSED_REREAD", "on").strip().lower() not in ("0", "off", "false", "no")
 
 # Gmail
 GMAIL_BACKFILL_DAYS = int(os.getenv("GMAIL_BACKFILL_DAYS", "730"))

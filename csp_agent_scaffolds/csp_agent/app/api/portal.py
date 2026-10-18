@@ -456,7 +456,7 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         # The section is a hint: a readable file whose wording or date the
         # rules don't recognise goes to a person instead of being turned away.
         ex = await run_in_threadpool(lambda: extract_document_fields_deterministic(
-            data, upload.filename, expected_type=doc_type))
+            data, upload.filename, expected_type=doc_type, typed_issue_date=typed))
         if ex["readability"] == "UNREADABLE":
             # OCR could not read it (a faint scan, handwriting): a person
             # looks before the CSP is told it is unreadable. (Blurry, dark or

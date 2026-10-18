@@ -28,9 +28,9 @@ import re
 from datetime import date
 from typing import Any, Dict, Optional
 
-from ...config import CSP_CODE_REGEX, MODEL_AUTO_FALLBACK
+from ...config import CSP_CODE_REGEX, FOCUSED_REREAD, MODEL_AUTO_FALLBACK
 from ...expiry_engine import calculate_document_expiry, add_years, ExpiryRule, AGREEMENT_DEFAULT_YEARS  # noqa: F401 (add_years re-exported)
-from ...ocr_service import scan_document, classify_allowlist_gate, DocumentScan
+from ...ocr_service import scan_document, classify_allowlist_gate, focused_reread, DocumentScan
 from ...validation import normalize_csp_code
 from .rules import extract_agreement, extract_pvr, extract_iibf
 from .rules.agreement import HEADING, ESTAMP_LABEL
@@ -126,9 +126,17 @@ def _ask_model(scan: DocumentScan, doc_type: str) -> Optional[dict]:
 
 def suggest_with_local_model(file_bytes: bytes, doc_type: str, timeout: int = 300) -> Optional[dict]:
     """Review helper (app/model_assist.py): what the local model reads on the
-    most relevant page. Local Ollama only; the image never leaves the server."""
+    most relevant page. Local Ollama only; the image never leaves the server.
+    It gets the region around the key words when one is found (smaller than
+    a page, so faster), else the page."""
+    from ...ocr_service import focus_image
     scan = scan_document(file_bytes)
-    image = _page_for_model(scan, doc_type)
+    image = None
+    try:
+        image = focus_image(scan, doc_type)
+    except Exception as e:
+        logger.warning(f"focus image failed: {e}")
+    image = image or _page_for_model(scan, doc_type)
     if image is None:
         return None
     from ..providers.vision_fallback import read_page
@@ -149,6 +157,55 @@ def read_owner_with_model(file_bytes: bytes, doc_type: str) -> Optional[dict]:
     if not ans:
         return None
     return {"csp_code": ans.get("csp_code"), "csp_name": ans.get("csp_name"), "provider": ans.get("provider")}
+
+
+def _uncertain(doc_type: str, r: dict) -> bool:
+    """The rules found no issue date, or only a default validity."""
+    if not r.get("issue_date"):
+        return True
+    if doc_type == "AGREEMENT":
+        return not (r.get("has_explicit_3year_clause") or r.get("explicit_expiry")) \
+            and (r.get("validity_source") or "").startswith("AGREEMENT_DEFAULT")
+    if doc_type == "POLICE_VERIFICATION":
+        return r.get("validity_source") == "PVR_DEFAULT_1_YEAR"
+    return False
+
+
+def _second_look(scan: DocumentScan, doc_type: str, text: str, r: dict, today: date) -> tuple[dict, str, Optional[str]]:
+    """When the first reading is uncertain, read the regions around the key
+    words again (ocr_service.focused_reread) and keep the result only if it
+    settles what was missing. A printed last day that the re-read sees
+    differently goes to a person."""
+    if not FOCUSED_REREAD or not _uncertain(doc_type, r) or not any(p.source == "OCR" for p in scan.pages):
+        return r, text, None
+    extra = focused_reread(scan, doc_type)
+    if not extra.strip():
+        return r, text, None
+    combined = f"{text}\n--- focused re-read ---\n{extra}"
+    r2 = _rules_for(doc_type, combined, today)
+    if not ((not r.get("issue_date") and r2.get("issue_date")) or not _uncertain(doc_type, r2)):
+        return r, text, None
+    note = None
+    alone = _rules_for(doc_type, extra, today)
+    a, b = alone.get("explicit_expiry"), r2.get("explicit_expiry")
+    if a and b and abs((a - b).days) > 31:
+        note = (f"The page and a closer re-read give different last days ({b:%d-%m-%Y} and {a:%d-%m-%Y}): "
+                "check which is right.")
+    return r2, combined, note
+
+
+_REPAIRED_YEAR = re.compile(r"(?<!\d)(\d{1,2})\s?[./-]\s?(\d{1,2})\s?[./-]\s?9(0[1-3]\d)(?!\d)")
+
+
+def _year_repaired(text: str, d: date) -> bool:
+    """Is `d` only there because a year like 9026 was read as 2026?"""
+    for m in _REPAIRED_YEAR.finditer(text or ""):
+        try:
+            if date(2000 + int(m.group(3)), int(m.group(2)), int(m.group(1))) == d:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def _model_date(ans: dict, today: date) -> Optional[date]:
@@ -202,6 +259,7 @@ def extract_document_fields_deterministic(
     allow_llm_fallback: Optional[bool] = None,
     today: Optional[date] = None,
     expected_type: Optional[str] = None,
+    typed_issue_date: Optional[date] = None,
 ) -> Dict[str, Any]:
     """Read one file (PDF, JPEG or PNG) and return the final decision plus
     every extracted field. The name is historical; it now handles photos.
@@ -275,6 +333,10 @@ def extract_document_fields_deterministic(
                            model_provider=(model_ans or {}).get("provider"), **common)
 
     r = _rules_for(doc_type, text, today)
+    raw_text = text
+    r, text, focus_note = _second_look(scan, doc_type, text, r, today)
+    if focus_note:
+        type_review = " ".join(x for x in (type_review, focus_note) if x)
     issue = r.get("issue_date")
     date_source = r.get("date_source")
     three_year = bool(r.get("has_explicit_3year_clause"))
@@ -302,6 +364,12 @@ def extract_document_fields_deterministic(
                     validity_source = f"MODEL_VISION_{months}_MONTHS"
                 if doc_type == "IIBF_CERTIFICATE" and not holder and model_ans.get("holder_name"):
                     holder = str(model_ans["holder_name"]).strip().title()[:80]
+
+    if issue is not None and _year_repaired(raw_text, issue) and issue != typed_issue_date:
+        # "15-04-9026" read as 15-04-2026: likely, but a guess until someone confirms it.
+        type_review = " ".join(x for x in (type_review, (
+            f"The year of the issue date was read as 9{issue.year % 1000:03d} and taken as {issue.year}: "
+            "check the date on the document.")) if x)
 
     code_match = CSP_CODE_PATTERN.search(text.upper())
     csp_code = normalize_csp_code(code_match.group(0)) if code_match else None
