@@ -6,6 +6,7 @@ import io
 import logging
 import threading
 import zipfile
+import re
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -327,6 +328,8 @@ def csp_detail(csp_id: int, me: Principal = Depends(require_user), db: Session =
     rm, dc = staff.get(c.rm_id), staff.get(c.dc_id)
     return {
         "csp": {"id": c.id, "code": c.current_code, "name": c.name, "phone": c.phone, "alt_phone": c.alt_phone,
+                "preferred_phone": c.preferred_phone, "preferred_phone_set_by": c.preferred_phone_set_by,
+                "preferred_phone_set_at": _iso(c.preferred_phone_set_at),
                 "email": c.email, "state": c.state, "branch": c.branch, "circle": c.circle,
                 "terminal_status": c.terminal_status, "folder": str(csp_folder(c.current_code, c.name)),
                 "rm": {"name": rm.name, "phone": rm.phone, "email": rm.email} if rm else None,
@@ -345,6 +348,30 @@ def csp_detail(csp_id: int, me: Principal = Depends(require_user), db: Session =
         "emails": [{"id": i.id, "subject": i.subject, "sender": i.sender, "received_at": _iso(i.received_at),
                     "status": i.status, "decisions": i.attachment_decisions or []} for i in inbound],
     }
+
+
+@router.post("/csp/{csp_id}/whatsapp-number")
+def set_whatsapp_number(csp_id: int, phone: str = Body("", embed=True), me: Principal = Depends(require_user),
+                        db: Session = Depends(get_db)):
+    """The number the CSP asked us to use for WhatsApp (after a call). Empty =
+    back to the calling sheet's numbers. Unsent WhatsApp messages to another
+    number are retired and drafted again to this one."""
+    from ..comms.outbound import _phone10, use_preferred_phone
+    c = _own_csp(db, csp_id, me)
+    if phone.strip():
+        p = _phone10(phone)
+        if not p or not re.fullmatch(r"[6-9]\d{9}", p):
+            raise HTTPException(422, "Enter a 10-digit Indian mobile number.")
+        c.preferred_phone, c.preferred_phone_set_by = p, me.name
+        c.preferred_phone_set_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    else:
+        c.preferred_phone = c.preferred_phone_set_by = c.preferred_phone_set_at = None
+    retired = use_preferred_phone(db, c)
+    db.commit()
+    return {"preferred_phone": c.preferred_phone, "retired": retired,
+            "waiting": [m.destination for m in db.query(OutboundMessage).filter(
+                OutboundMessage.csp_id == c.id, OutboundMessage.channel == "WHATSAPP",
+                OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW)]}
 
 
 @router.post("/csp/{csp_id}/upload-link")

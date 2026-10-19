@@ -68,3 +68,29 @@ def test_inactive_label_on_the_dashboard(client, monkeypatch):
     in4 = {r["id"] for r in c.get("/api/hub/csps?category=4&size=200", headers=key).json()["rows"]}
     assert gone_id in in5 and gone_id not in in4 and works_id in in4 and works_id not in in5
     assert c.get("/api/hub/summary", headers=key).json()["categories"][str(INACTIVE_LABEL)] >= 1
+
+
+def test_whatsapp_number_set_on_the_dashboard_wins_over_the_sheet(client, monkeypatch):
+    """Nusrat's case: the sheet's main number is not in use; the CSP asked for her other number."""
+    from app.comms.sheets_sync import clean_phones  # noqa: F401  (the sheet keeps its own numbers)
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    s = Session()
+    csp = _csp(s, "Active")
+    csp.phone, csp.whatsapp_number, csp.alt_phone = "8421293070", "8421293070", "9975051660"
+    old = OutboundMessage(csp_id=csp.id, template_name="ONBOARD_ALL", channel="WHATSAPP", destination="8421293070",
+                          status=OutboundStatus.QUEUED_FOR_REVIEW, recipient_role="CSP", payload_json={})
+    s.add(old)
+    s.commit()
+    cid, old_id = csp.id, old.id
+    s.close()
+    assert c.post(f"/api/hub/csp/{cid}/whatsapp-number", json={"phone": "12345"}, headers=hdr).status_code == 422
+    r = c.post(f"/api/hub/csp/{cid}/whatsapp-number", json={"phone": "9975051660"}, headers=hdr)
+    assert r.status_code == 200, r.text
+    assert r.json()["preferred_phone"] == "9975051660" and r.json()["retired"] == 1
+    assert all(w == "9975051660" for w in r.json()["waiting"])
+    s = Session()
+    assert s.get(OutboundMessage, old_id).status == OutboundStatus.REJECTED
+    assert outbound.allowed_destinations(s, s.get(CSP, cid), "CSP", "WHATSAPP") == ["9975051660"]
+    s.close()

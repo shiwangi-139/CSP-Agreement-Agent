@@ -28,6 +28,9 @@ MIGRATIONS = [
     "ALTER TABLE internal_users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;",
     "ALTER TABLE internal_users ADD COLUMN IF NOT EXISTS last_login_at TIMESTAMP;",
     "CREATE INDEX IF NOT EXISTS ix_csp_sub_slab ON csp (sub_slab);",
+    "ALTER TABLE csp ADD COLUMN IF NOT EXISTS preferred_phone VARCHAR;",
+    "ALTER TABLE csp ADD COLUMN IF NOT EXISTS preferred_phone_set_by VARCHAR;",
+    "ALTER TABLE csp ADD COLUMN IF NOT EXISTS preferred_phone_set_at TIMESTAMP;",
     "CREATE INDEX IF NOT EXISTS ix_csp_is_active_in_calling_sheet ON csp (is_active_in_calling_sheet);",
 
     # Document table enhancements

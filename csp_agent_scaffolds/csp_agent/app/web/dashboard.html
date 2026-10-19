@@ -787,7 +787,10 @@
       <div class="topbar"><div><h1 style="font-size:1.25rem">${esc(c.name)}</h1><div class="mono muted">KO ${esc(c.code)} · ${esc(c.terminal_status || "")}</div></div>
         <button class="btn" id="closedrawer">Close</button></div>
       <div class="card"><div class="meta">${badge("c" + d.category, slab(d.category))} <span class="muted">${esc(d.reason)}</span></div>
-        <dl class="kv" style="margin-top:10px"><dt>Mobile</dt><dd>${esc(c.phone || "—")}${c.alt_phone ? " / " + esc(c.alt_phone) : ""}</dd>
+        <dl class="kv" style="margin-top:10px"><dt>Mobile (sheet)</dt><dd>${esc(c.phone || "—")}${c.alt_phone ? " / " + esc(c.alt_phone) : ""}</dd>
+          <dt>WhatsApp to</dt><dd><input id="wa${c.id}" inputmode="numeric" maxlength="10" placeholder="as on the sheet" value="${esc(c.preferred_phone || "")}" style="width:9.5rem">
+            <button class="btn" data-wanum="${c.id}">Save</button>
+            <span class="small muted">${c.preferred_phone ? `set by ${esc(c.preferred_phone_set_by || "")} ${fmt(c.preferred_phone_set_at)}; WhatsApp goes only here` : `WhatsApp goes to ${esc(c.phone || c.alt_phone || "—")}`}</span></dd>
           <dt>Email</dt><dd>${esc(c.email || "—")}</dd><dt>RM</dt><dd>${person(c.rm, "RM")}</dd><dt>DC</dt><dd>${person(c.dc, "DC")}</dd>
           <dt>Branch</dt><dd>${esc(c.branch || "—")}, ${esc(c.state || "")}</dd><dt>Next action</dt><dd class="mono">${fmt(c.next_action_at)}</dd>
           <dt>Folder</dt><dd class="mono small">${esc(c.folder)}</dd></dl>
@@ -824,7 +827,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -891,6 +894,13 @@
         const r = await post("/api/hub/messages/approve-bulk", {ids}); toast("Done: " + JSON.stringify(r.result)); return render();
       }
       if (ds.run) { await post(`/api/hub/run/${ds.run}`); toast(`Started: ${ds.run}. Refresh in a moment.`); return; }
+      if (ds.wanum) {
+        try {
+          const r = await post(`/api/hub/csp/${ds.wanum}/whatsapp-number`, {phone: $(`#wa${ds.wanum}`).value});
+          toast(r.preferred_phone ? `WhatsApp now goes to ${r.preferred_phone}. ${r.waiting.length} message(s) waiting for approval.` : "Back to the calling sheet's numbers.");
+          return openCsp(+ds.wanum);
+        } catch (err) { toast(err.message); return; }
+      }
       if (ds.link) { const r = await post(`/api/hub/csp/${ds.link}/upload-link`); prompt("Upload link (valid 7 days; replaces older links):", r.link); return; }
       if (ds.savestaff) {
         const id = ds.savestaff;

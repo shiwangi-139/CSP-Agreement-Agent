@@ -108,6 +108,12 @@ class CSP(Base):
     sub_slab = Column(String, index=True)   # e.g. "2.3" = slab 2, IIBF missing (app/compliance.py: SUB_SLABS)
     category_updated_at = Column(DateTime)
     next_action_at = Column(Date, index=True)
+    # The WhatsApp number the CSP asked us to use, set on the dashboard after
+    # a call. The calling-sheet reload never touches it; while set, WhatsApp
+    # goes to this number only.
+    preferred_phone = Column(String)
+    preferred_phone_set_by = Column(String)
+    preferred_phone_set_at = Column(DateTime)
 
     agreements = relationship("Agreement", back_populates="csp")
     documents = relationship("Document", back_populates="csp")

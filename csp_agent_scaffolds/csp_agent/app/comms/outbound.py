@@ -65,6 +65,8 @@ def allowed_destinations(db: Session, csp: CSP, role: str, channel: str) -> list
     """Destinations the calling sheet permits for this CSP / RM / DC."""
     if role == "CSP":
         phones = [csp.whatsapp_number, csp.phone, csp.alt_phone]
+        if channel == "WHATSAPP" and getattr(csp, "preferred_phone", None):
+            phones = [csp.preferred_phone]            # the number the CSP asked us to use, only
         emails = [csp.email]
     else:
         user = _staff(db, csp, role)
@@ -290,6 +292,23 @@ def _fail(msg: OutboundMessage, error: Optional[str], retryable: bool) -> None:
 
 INACTIVE_REASON = "Not sent: the CSP's terminal is Inactive on the calling sheet."
 UNSENT = (OutboundStatus.DRAFT, OutboundStatus.QUEUED_FOR_REVIEW, OutboundStatus.APPROVED, OutboundStatus.READY_NOT_SENT)
+
+
+def use_preferred_phone(db: Session, csp: CSP) -> int:
+    """After the WhatsApp number changed: unsent WhatsApp messages to an old
+    number are retired, and the follow-ups drafted again to the new one."""
+    want = allowed_destinations(db, csp, "CSP", "WHATSAPP")
+    n = 0
+    for m in db.query(OutboundMessage).filter(OutboundMessage.csp_id == csp.id, OutboundMessage.channel == "WHATSAPP",
+                                              OutboundMessage.recipient_role == "CSP", OutboundMessage.status.in_(UNSENT)):
+        if _phone10(m.destination) not in want:
+            m.status, m.error_log = OutboundStatus.REJECTED, "Superseded: the CSP's WhatsApp number changed"
+            m.reviewed_by, m.reviewed_at = "agent", _now()
+            n += 1
+    db.flush()
+    from ..renewal_engine import run_for_csp
+    run_for_csp(db, csp)
+    return n
 
 
 def block_inactive(db: Session) -> int:
