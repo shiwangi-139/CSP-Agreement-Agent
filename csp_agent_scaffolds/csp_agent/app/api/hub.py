@@ -861,6 +861,7 @@ VALIDITY_CHOICES = {"AGREEMENT": (12, 24, 36, 60), "POLICE_VERIFICATION": (6, 12
 @router.post("/review/{item_id}/resolve")
 def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept: bool = Body(True),
                    validity_months: Optional[int] = Body(None), document_type: Optional[str] = Body(None),
+                   expiry_date: Optional[str] = Body(None),
                    me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     """Accept (with the issue date, and optionally the validity the document
     states and its real type) or reject a document waiting in the queue."""
@@ -885,7 +886,15 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
     # "Corrected" only when the reviewer actually changed something (the date
     # field is pre-filled with the stored date): that is what accuracy counts.
     date_changed = bool(issue_date) and date.fromisoformat(issue_date) != d.issue_date
-    changed = date_changed or bool(new_type) or bool(validity_months and validity_months != d.validity_months)
+    # A last day written on the document (anywhere on it), typed by the reviewer.
+    new_expiry = date.fromisoformat(expiry_date) if accept and expiry_date else None
+    if new_expiry and new_expiry == d.expiry_date:
+        new_expiry = None
+    if new_expiry:
+        start = date.fromisoformat(issue_date) if issue_date else d.issue_date
+        if start and new_expiry <= start:
+            raise HTTPException(422, "The expiry date must be after the issue date.")
+    changed = date_changed or bool(new_type) or bool(new_expiry) or bool(validity_months and validity_months != d.validity_months)
     old_type = d.document_type
     if accept:
         if new_type:
@@ -909,6 +918,9 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
                                             # a clearance certificate keeps "no expiry" when only its date changes
                                             validity_rule=d.validity_rule_used if d.validity_rule_used == "PVR_PCC_LIFETIME" else None)
             d.expiry_date = exp["calculated_expiry"]
+        if new_expiry:
+            d.expiry_date, d.validity_rule_used = new_expiry, "MANUAL_REVIEW_EXPIRY_DATE"
+            d.validity_months = None
         d.status = DocumentStatus.MANUAL_VERIFIED
         q.status = ReviewStatus.CORRECTED if changed else ReviewStatus.APPROVED
         seen = (d.extracted_fields or {}).get("owner_seen_name")

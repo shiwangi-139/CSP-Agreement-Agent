@@ -732,6 +732,7 @@
         ${aiHint(r.document.model_suggestion)}
         <div class="toolbar"><a href="#" data-file="${r.document.id}">View document</a>
           <label>Correct issue date <input type="date" id="rv${r.id}" value="${esc(r.document.issue_date || "")}"></label>
+          <label>Expiry date <input type="date" id="re${r.id}" value="${esc(r.document.expiry_date || "")}" title="The last day written on the document (overrides 'Validity stated')"></label>
           <label>Type <select id="rt${r.id}">${["AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"].map((t) =>
             `<option value="${t}" ${t === r.document.type ? "selected" : ""}>${esc(DOC[t] || t)}</option>`).join("")}</select></label>
           <label>Validity stated <select id="rm${r.id}"><option value="">as read</option>
@@ -910,7 +911,8 @@
       if (ds.cc) { await post(`/api/hub/contact-changes/${ds.cc}`); return render(); }
       if (ds.resolve) {
         await post(`/api/hub/review/${ds.resolve}/resolve`, {accept: ds.accept === "1", issue_date: $(`#rv${ds.resolve}`)?.value || null,
-          document_type: $(`#rt${ds.resolve}`)?.value || null, validity_months: Number($(`#rm${ds.resolve}`)?.value) || null});
+          document_type: $(`#rt${ds.resolve}`)?.value || null, validity_months: Number($(`#rm${ds.resolve}`)?.value) || null,
+          expiry_date: $(`#re${ds.resolve}`)?.value || null});
         toast("Resolved."); return render();
       }
     } catch (err) { toast(err.message); }

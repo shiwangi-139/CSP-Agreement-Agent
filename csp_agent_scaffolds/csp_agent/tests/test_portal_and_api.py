@@ -704,3 +704,32 @@ def test_reviewer_can_mark_a_police_clearance_certificate_as_no_expiry(client, m
     d = s.get(Document, did)
     assert d.expiry_date is None and d.validity_rule_used == "PVR_PCC_LIFETIME" and d.status == DocumentStatus.MANUAL_VERIFIED
     s.close()
+
+
+def test_reviewer_types_the_expiry_date_written_on_the_document(client, monkeypatch):
+    """Ravi Kant: start 21/03/2025 above the heading, last day 20/02/2027 written in the 'Effective Date' blank."""
+    from app.models import ManualReviewQueue, ReviewStatus
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    cid, _, _ = _csp(Session)
+    s = Session()
+    d = Document(csp_id=cid, document_type="AGREEMENT", sha256=uuid.uuid4().hex, readability="READABLE",
+                 status=DocumentStatus.NEEDS_REVIEW, is_current=False, issue_date=date(2025, 3, 21),
+                 expiry_date=date(2026, 3, 21), validity_rule_used="AGREEMENT_DEFAULT_1_YEAR")
+    s.add(d)
+    s.flush()
+    q = ManualReviewQueue(document_id=d.id, status=ReviewStatus.PENDING, reason="Validity check")
+    s.add(q)
+    s.commit()
+    qid, did = q.id, d.id
+    s.close()
+    bad = c.post(f"/api/hub/review/{qid}/resolve", headers=hdr, json={"accept": True, "expiry_date": "2024-01-01"})
+    assert bad.status_code == 422
+    r = c.post(f"/api/hub/review/{qid}/resolve", headers=hdr, json={"accept": True, "expiry_date": "2027-02-20"})
+    assert r.status_code == 200, r.text
+    s = Session()
+    d = s.get(Document, did)
+    assert d.expiry_date == date(2027, 2, 20) and d.status == DocumentStatus.MANUAL_VERIFIED
+    assert s.get(ManualReviewQueue, qid).status == ReviewStatus.CORRECTED
+    s.close()
