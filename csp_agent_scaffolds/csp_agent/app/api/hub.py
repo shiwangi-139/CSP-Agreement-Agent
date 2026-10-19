@@ -16,7 +16,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from ..auth import Principal, require_admin, require_user
-from ..compliance import (CATEGORY_NAMES, DOC_LABELS, REQUIRED_TYPES, SUB_SLABS, canonical_type, evaluate,
+from ..compliance import (CATEGORY_NAMES, INACTIVE_LABEL, inactive_clause, DOC_LABELS, REQUIRED_TYPES, SUB_SLABS, canonical_type, evaluate,
                           sub_slab, sub_slab_label)
 from ..comms import outbound
 from ..config import (OUTBOUND_COMMUNICATION_MODE, WHATSAPP_MODE, CALLING_SHEET_LINK, CALLING_SHEET_SOURCE, local_now,
@@ -102,7 +102,9 @@ def _msg_json(m: OutboundMessage, csp: Optional[CSP]) -> dict:
 # ------------------------------------------------------------------ summary
 @router.get("/summary")
 def summary(me: Principal = Depends(require_user), db: Session = Depends(get_db)):
-    active = _mine(db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)), me)
+    on_sheet = _mine(db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)), me)
+    inactive = on_sheet.filter(inactive_clause()).count()
+    active = on_sheet.filter(~inactive_clause())          # Labels 1-4: working terminals only
     cats = dict(active.with_entities(CSP.category, func.count()).group_by(CSP.category).all())
     # Within each slab: CSPs with at least one expired document (renewal due).
     expired_in = dict(active.filter(CSP.category_reason.ilike("%Expired:%"))
@@ -126,7 +128,7 @@ def summary(me: Principal = Depends(require_user), db: Session = Depends(get_db)
     from ..gmail_ingest import ingestion_status
     return {
         "total_csps": active.count(),
-        "categories": {str(k): cats.get(k, 0) for k in (1, 2, 3, 4)},
+        "categories": {**{str(k): cats.get(k, 0) for k in (1, 2, 3, 4)}, str(INACTIVE_LABEL): inactive},
         "categories_with_expired": {str(k): expired_in.get(k, 0) for k in (1, 2, 3, 4)},
         "sub_slabs": {code: {"label": label, "count": subs.get(code, 0)} for code, label in SUB_SLABS.items()},
         "tags": {"expired": sum(expired_in.values()),
@@ -161,7 +163,11 @@ def list_csps(category: Optional[int] = None, q: str = "", rm: str = "", expired
               sub: str = "", tag: str = "", page: int = 1, size: int = 50,
               me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     query = _mine(db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)), me)
-    if category:
+    if category == INACTIVE_LABEL:
+        query = query.filter(inactive_clause())
+    else:
+        query = query.filter(~inactive_clause())
+    if category and category != INACTIVE_LABEL:
         query = query.filter(CSP.category == category)
     if expired or tag == "expired":
         query = query.filter(CSP.category_reason.ilike("%Expired:%"))
@@ -226,7 +232,11 @@ def _form_outcomes(db: Session, ids: list[int]) -> dict[int, str]:
 def _find(db: Session, me: Principal, agr: str = "", pvr: str = "", iibf: str = "", slab: Optional[int] = None,
           rm: str = "", form: str = "") -> list[tuple]:
     query = _mine(db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)), me)
-    if slab:
+    if slab == INACTIVE_LABEL:
+        query = query.filter(inactive_clause())
+    else:
+        query = query.filter(~inactive_clause())
+    if slab and slab != INACTIVE_LABEL:
         query = query.filter(CSP.category == slab)
     staff = _staff_map(db)
     if rm:

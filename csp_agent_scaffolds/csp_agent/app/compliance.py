@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Optional
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .models import CSP, Document, DocumentStatus, ManualReviewQueue, ReviewStatus
@@ -86,6 +87,26 @@ DOC_LABELS = {
 USABLE = {DocumentStatus.VALID, DocumentStatus.NEEDS_APPROVAL, DocumentStatus.MANUAL_VERIFIED,
           DocumentStatus.EXPIRED, DocumentStatus.EXTRACTED_DETERMINISTIC, DocumentStatus.EXTRACTED_AI,
           DocumentStatus.NEEDS_REVIEW}
+
+
+INACTIVE_LABEL = 5          # shown as "Inactive"; Labels 1-4 are for working terminals
+
+
+def is_inactive(csp: CSP) -> bool:
+    """The calling sheet's Terminal Status says the terminal is not working."""
+    from .config import INACTIVE_TERMINAL_STATUSES
+    return " ".join((csp.terminal_status or "").lower().split()) in INACTIVE_TERMINAL_STATUSES
+
+
+def inactive_clause():
+    """SQL form of is_inactive(), for queries."""
+    from .config import INACTIVE_TERMINAL_STATUSES
+    return func.lower(func.trim(func.coalesce(CSP.terminal_status, ""))).in_(INACTIVE_TERMINAL_STATUSES)
+
+
+def working_clause():
+    """CSPs on the calling sheet whose terminal is working (Labels 1-4)."""
+    return CSP.is_active_in_calling_sheet.is_(True) & ~inactive_clause()
 
 
 def canonical_type(doc_type: Optional[str]) -> Optional[str]:

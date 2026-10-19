@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 from ..config import (AUTO_SEND_CHANNELS, AUTO_SEND_HOURS, OUTBOUND_COMMUNICATION_MODE, WHATSAPP_DAILY_LIMIT,
                       WHATSAPP_MODE)
 from ..models import CSP, InternalUser, OutboundMessage, OutboundStatus
+from ..compliance import is_inactive
 from ..portal_tokens import extend_for_sent_message, live_link
 from .templates import render
 from .whatsapp import send_wabs, send_whatsapp
@@ -108,7 +109,10 @@ def draft(db: Session, *, csp: CSP, role: str, template_key: str, ctx: dict, key
             idempotency_key=key, cycle_id=cycle_id, document_type=document_type,
             stage=stage, recipient_role=role, attempts=0, created_at=_now(),
         )
-        if not dests:
+        if is_inactive(csp):
+            msg.status = OutboundStatus.BLOCKED
+            msg.error_log = INACTIVE_REASON
+        elif not dests:
             where = "email" if channel == "EMAIL" else "WhatsApp number"
             msg.status = OutboundStatus.BLOCKED
             msg.error_log = f"No {where} for this {role} on the calling sheet."
@@ -193,6 +197,10 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
     if msg.status != OutboundStatus.APPROVED:
         return msg
     csp = db.get(CSP, msg.csp_id) if msg.csp_id else None
+    if csp is not None and is_inactive(csp):
+        msg.status, msg.error_log = OutboundStatus.BLOCKED, INACTIVE_REASON
+        logger.info("outbound_blocked_inactive_terminal message_id=%s", msg.id)
+        return msg
     if csp is None or not recipient_allowed(db, csp, msg.recipient_role or "CSP", msg.channel, msg.destination):
         msg.status = OutboundStatus.BLOCKED
         msg.error_log = "Recipient guard: destination is not on the calling sheet for this CSP/RM/DC."
@@ -280,6 +288,23 @@ def _fail(msg: OutboundMessage, error: Optional[str], retryable: bool) -> None:
         msg.status = OutboundStatus.FAILED
 
 
+INACTIVE_REASON = "Not sent: the CSP's terminal is Inactive on the calling sheet."
+UNSENT = (OutboundStatus.DRAFT, OutboundStatus.QUEUED_FOR_REVIEW, OutboundStatus.APPROVED, OutboundStatus.READY_NOT_SENT)
+
+
+def block_inactive(db: Session) -> int:
+    """Every message not yet sent to (or about) an inactive CSP is stopped."""
+    from ..compliance import inactive_clause
+    rows = (db.query(OutboundMessage).join(CSP, CSP.id == OutboundMessage.csp_id)
+            .filter(OutboundMessage.status.in_(UNSENT), inactive_clause()).all())
+    for m in rows:
+        m.status, m.error_log = OutboundStatus.BLOCKED, INACTIVE_REASON
+    if rows:
+        db.commit()
+        logger.info("outbound_blocked_inactive count=%s", len(rows))
+    return len(rows)
+
+
 def auto_approve(db: Session, now: Optional[datetime] = None) -> dict:
     """Auto mode: approve waiting CSP drafts, oldest first, on
     AUTO_SEND_CHANNELS and only during AUTO_SEND_HOURS (server time). Stops
@@ -292,6 +317,7 @@ def auto_approve(db: Session, now: Optional[datetime] = None) -> dict:
         return {"outside_hours": True}
     counts: dict[str, int] = {}
     for channel in AUTO_SEND_CHANNELS:
+        block_inactive(db)
         q = (db.query(OutboundMessage)
              .filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW,
                      OutboundMessage.channel == channel, OutboundMessage.recipient_role == "CSP")
@@ -312,6 +338,7 @@ def auto_approve(db: Session, now: Optional[datetime] = None) -> dict:
 def process_outbox(db: Session, limit: int = 50) -> dict:
     """Send approved messages whose retry time has come. Called by the worker."""
     now = _now()
+    block_inactive(db)
     if WHATSAPP_MODE == "push":
         # Drafts approved while WhatsApp was in stub mode go out now.
         for m in db.query(OutboundMessage).filter(OutboundMessage.channel == "WHATSAPP",

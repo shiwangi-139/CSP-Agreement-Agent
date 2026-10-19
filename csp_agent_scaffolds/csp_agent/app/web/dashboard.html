@@ -70,8 +70,9 @@
   const CAT = {1: ["All documents on file", "Agreement, PVR and IIBF all received"],
                2: ["1 document missing", "Two received, one missing or unreadable"],
                3: ["2 documents missing", "One received, two missing or unreadable"],
-               4: ["No documents", "Nothing readable on file in 2 years"]};
-  const slab = (k) => `Label ${k} · ${CAT[k][0]}`;          // "slab" is used elsewhere at Eko: users see "Label"
+               4: ["No documents", "Nothing readable on file in 2 years"],
+               5: ["Inactive", "Terminal Inactive on the calling sheet: no messages are sent"]};
+  const slab = (k) => k === 5 ? "Inactive" : `Label ${k} · ${CAT[k][0]}`;          // "slab" is used elsewhere at Eko: users see "Label"
   // Find CSPs: one state per document; "" = any.
   const FSTATES = [["", "any"], ["VALID", "valid"], ["EXPIRING", "expiring ≤60d"], ["EXPIRED", "expired"], ["MISSING", "missing"], ["UNREADABLE", "unreadable"]];
   const FPRESETS = [
@@ -383,6 +384,8 @@
           <div class="small" style="margin-top:6px">${Object.entries(s.sub_slabs || {}).filter(([x]) => x.startsWith(k + ".")).map(([x, v]) => `${x} ${esc(v.label)}: <b>${v.count}</b>`).join("<br>")}</div>
           ${k < 4 ? `<div class="small" style="margin-top:6px">${badge("EXPIRED", (s.categories_with_expired?.[k] ?? 0) + " with an expired document")}</div>` : ""}</div>`).join("")}
       </div>
+      <div class="small muted" style="margin-top:8px"><a href="#" data-cat="5"><b>Inactive: ${c[5] ?? 0} CSPs</b></a> · terminal Inactive on the calling sheet, not in Labels 1–4, never messaged
+      </div>
       <div class="grid k3" style="margin-top:14px">
         <div class="card"><h2>Waiting for your approval</h2>
           <div class="kv"><dt>WhatsApp drafts</dt><dd class="num">${s.drafts_pending.WHATSAPP}</dd>
@@ -421,7 +424,7 @@
       const tags = [["", "All"], ["expired", "Has an expired document"], ["unreachable", "Can't be reached (no phone or email)"], ["no_rm", "No RM assigned"]];
       const pages = Math.max(1, Math.ceil(d.total / d.size));
       return `
-      <div class="tabs">${[1,2,3,4].map((k) => `<button data-cat="${k}" class="${state.cat === k ? "active" : ""}">${slab(k)} (${state.summary.categories[k] ?? 0})</button>`).join("")}</div>
+      <div class="tabs">${[1,2,3,4,5].map((k) => `<button data-cat="${k}" class="${state.cat === k ? "active" : ""}">${slab(k)} (${state.summary.categories[k] ?? 0})</button>`).join("")}</div>
       <div class="tabs"><button data-sub="" class="${!state.sub ? "active" : ""}">All with this label</button>${subs.map(([k, v]) => `<button data-sub="${k}" class="${state.sub === k ? "active" : ""}">${k} · ${esc(v.label)} (${v.count})</button>`).join("")}</div>
       <div class="tabs small">${tags.map(([k, l]) => `<button data-tag="${k}" class="${(state.tag || "") === k ? "active" : ""}">${l}${k ? ` (${state.summary.tags?.[k] ?? 0} overall)` : ""}</button>`).join("")}</div>
       <div class="toolbar"><input type="search" id="q" placeholder="Search code, name or phone" value="${esc(state.q)}">

@@ -29,7 +29,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from .compliance import ComplianceState, DOC_LABELS, refresh_category
+from .compliance import INACTIVE_LABEL, ComplianceState, DOC_LABELS, is_inactive, refresh_category
 from .models import CSP, InternalUser, OutboundMessage, OutboundStatus, OutreachCycle
 from .comms.outbound import cancel_superseded, draft
 from .portal_tokens import current_upload_link, issue_upload_link
@@ -315,6 +315,16 @@ def on_documents_received(db: Session, csp: CSP, today: Optional[date] = None) -
 def run_for_csp(db: Session, csp: CSP, today: Optional[date] = None) -> ComplianceState:
     today = today or date.today()
     state = refresh_category(db, csp, today)
+    if is_inactive(csp):
+        # Terminal not working: no reminders; open follow-ups are closed and
+        # anything unsent is stopped (they restart if the sheet says Active again).
+        closed = []
+        for cyc in db.query(OutreachCycle).filter(OutreachCycle.csp_id == csp.id, OutreachCycle.closed_at.is_(None)):
+            _close(cyc, "TERMINAL_INACTIVE")
+            closed.append(cyc.id)
+        cancel_superseded(db, csp, closed, "the CSP's terminal is Inactive on the calling sheet")
+        csp.next_action_at = None
+        return state
     next_dates = _run_renewals(db, csp, state, today)
     up = _run_upload_cycle(db, csp, state, today)
     if up:
@@ -327,7 +337,7 @@ def run(db: Session, today: Optional[date] = None) -> dict:
     """One daily pass over every active CSP. Commits per CSP so one bad row
     can't block the rest."""
     today = today or date.today()
-    summary = {"csps": 0, "errors": 0, "categories": {1: 0, 2: 0, 3: 0, 4: 0}}
+    summary = {"csps": 0, "errors": 0, "categories": {1: 0, 2: 0, 3: 0, 4: 0, INACTIVE_LABEL: 0}}
     ids = [i for (i,) in db.query(CSP.id).filter(CSP.is_active_in_calling_sheet.is_(True)).order_by(CSP.id)]
     before = db.query(OutboundMessage).count()
     for csp_id in ids:
@@ -336,7 +346,7 @@ def run(db: Session, today: Optional[date] = None) -> dict:
             state = run_for_csp(db, csp, today)
             db.commit()
             summary["csps"] += 1
-            summary["categories"][state.category] += 1
+            summary["categories"][INACTIVE_LABEL if is_inactive(csp) else state.category] += 1
         except Exception:
             db.rollback()
             summary["errors"] += 1

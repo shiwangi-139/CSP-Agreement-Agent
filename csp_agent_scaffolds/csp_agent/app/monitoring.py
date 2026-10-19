@@ -21,7 +21,7 @@ from typing import Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .compliance import REQUIRED_TYPES, SUB_SLABS, canonical_type, evaluate
+from .compliance import INACTIVE_LABEL, REQUIRED_TYPES, SUB_SLABS, canonical_type, evaluate, is_inactive
 from .models import (AdminSession, AgreementEvent, CSP, CspQuestion, ContactChangeRequest, Document, DocumentStatus,
                      InternalUser, LabelSnapshot, ManualReviewQueue, MonitorRun, OutboundMessage, OutboundStatus,
                      ReviewStatus)
@@ -64,7 +64,7 @@ def snapshot_labels(db: Session, day: Optional[date] = None) -> int:
     n = 0
     for csp in db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)):
         st = evaluate(db, csp)
-        db.add(LabelSnapshot(day=day, csp_id=csp.id, category=st.category, sub_slab=csp.sub_slab, rm_id=csp.rm_id,
+        db.add(LabelSnapshot(day=day, csp_id=csp.id, category=INACTIVE_LABEL if is_inactive(csp) else st.category, sub_slab=csp.sub_slab, rm_id=csp.rm_id,
                              docs={t: s.shown_status for t, s in st.docs.items()}))
         n += 1
     db.commit()
@@ -415,8 +415,10 @@ def network(db: Session, days: int = 60) -> dict:
     for day, cat, n in (db.query(LabelSnapshot.day, LabelSnapshot.category, func.count())
                         .filter(LabelSnapshot.day >= since).group_by(LabelSnapshot.day, LabelSnapshot.category)):
         series[day.isoformat()][str(cat)] = n
-    active = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).all()
+    on_sheet = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).all()
+    active = [c for c in on_sheet if not is_inactive(c)]          # Labels 1-4: working terminals
     labels = Counter(str(c.category) for c in active)
+    labels[str(INACTIVE_LABEL)] = len(on_sheet) - len(active)
     subs = Counter(c.sub_slab for c in active if c.sub_slab)
     today = date.today()
     cover, due, expired = Counter(), Counter(), Counter()

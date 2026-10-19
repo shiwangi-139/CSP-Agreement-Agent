@@ -144,6 +144,12 @@ ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "")
 TBA_CSPS_RM = os.getenv("TBA_CSPS_RM", "").strip().lower()
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "")
 
+# "Terminal Status" values on the calling sheet that mean the CSP's terminal
+# is not working: such CSPs get the "Inactive" label (not Labels 1-4) and are
+# never sent a message.
+INACTIVE_TERMINAL_STATUSES = tuple(s.strip().lower() for s in os.getenv(
+    "INACTIVE_TERMINAL_STATUSES", "inactive,in active,closed,terminated,deactivated,suspended,blocked,dormant"
+).split(",") if s.strip())
 # Vision model (local Ollama, then Groq) when the rules can't read a
 # document. "off" (default): never asked automatically; what the rules can't
 # read goes to the Review queue and a person decides. "on": asked during
