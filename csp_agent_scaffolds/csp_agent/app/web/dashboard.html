@@ -727,7 +727,7 @@
       return `<p class="small muted">Conflicts the agent can't decide (a different CSP's name on the document, a typed date that differs from the one read…), plus <b>spot checks</b> (5% of documents the agent accepted on its own) and <b>reference checks</b>. Open the document, then <b>Accept</b> if the type, the CSP and the issue date are right, correct the date if it's wrong, or <b>Reject</b> if it's the wrong document or CSP. Your answers measure the agent's accuracy (see Accuracy).</p>
       ${d.rows.map((r) => `<div class="card" style="margin-bottom:10px">
         <div class="meta">${badge(kind(r.reason)[0], kind(r.reason)[1])} <b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)} · ${esc(DOC[r.document.type] || r.document.type)}
-          · issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : ""}</div>
+          · issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : r.document.validity_rule === "PVR_PCC_LIFETIME" ? ` · <b>no expiry</b> (Police Clearance Certificate)` : ""}</div>
         <p>${esc(r.reason)}</p>
         ${aiHint(r.document.model_suggestion)}
         <div class="toolbar"><a href="#" data-file="${r.document.id}">View document</a>
@@ -736,7 +736,7 @@
             `<option value="${t}" ${t === r.document.type ? "selected" : ""}>${esc(DOC[t] || t)}</option>`).join("")}</select></label>
           <label>Validity stated <select id="rm${r.id}"><option value="">as read</option>
             <optgroup label="Agreement"><option value="12">1 year</option><option value="24">2 years</option><option value="36">3 years</option><option value="60">5 years</option></optgroup>
-            <optgroup label="Police certificate"><option value="6">6 months</option><option value="12">1 year</option></optgroup></select></label>
+            <optgroup label="Police certificate"><option value="6">6 months</option><option value="12">1 year</option><option value="-1">No expiry (Police Clearance Certificate)</option></optgroup></select></label>
           <button class="btn" data-reread="${r.id}" title="Read the document again with the agent's latest rules (doesn't accept it)">Re-read with current rules</button>
           <button class="btn primary" data-resolve="${r.id}" data-accept="1">Accept</button>
           <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button></div></div>`).join("") || `<div class="card empty">Nothing to review.</div>`}`;

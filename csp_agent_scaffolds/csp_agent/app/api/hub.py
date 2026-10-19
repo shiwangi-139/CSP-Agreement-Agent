@@ -853,7 +853,9 @@ def reread_review(item_id: int, me: Principal = Depends(require_user), db: Sessi
 
 
 # Validity a reviewer may pick, in months (what the document states).
-VALIDITY_CHOICES = {"AGREEMENT": (12, 24, 36, 60), "POLICE_VERIFICATION": (6, 12)}
+# -1 = no expiry (a Police Clearance Certificate states no validity).
+NO_EXPIRY = -1
+VALIDITY_CHOICES = {"AGREEMENT": (12, 24, 36, 60), "POLICE_VERIFICATION": (6, 12, NO_EXPIRY)}
 
 
 @router.post("/review/{item_id}/resolve")
@@ -891,7 +893,9 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
         if date_changed:
             d.issue_date = date.fromisoformat(issue_date)
             d.date_source = "MANUAL_REVIEW"
-        if validity_months:
+        if validity_months == NO_EXPIRY:
+            d.validity_months, d.expiry_date, d.validity_rule_used = None, None, "PVR_PCC_LIFETIME"
+        elif validity_months:
             # The validity the document states, as the reviewer read it.
             d.validity_months = validity_months
             d.has_explicit_3year_clause = validity_months == 36
@@ -901,7 +905,9 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
         elif date_changed or new_type:
             exp = calculate_document_expiry(canonical_type(d.document_type), d.issue_date,
                                             has_explicit_3year_clause=d.has_explicit_3year_clause,
-                                            validity_months=d.validity_months)
+                                            validity_months=d.validity_months,
+                                            # a clearance certificate keeps "no expiry" when only its date changes
+                                            validity_rule=d.validity_rule_used if d.validity_rule_used == "PVR_PCC_LIFETIME" else None)
             d.expiry_date = exp["calculated_expiry"]
         d.status = DocumentStatus.MANUAL_VERIFIED
         q.status = ReviewStatus.CORRECTED if changed else ReviewStatus.APPROVED

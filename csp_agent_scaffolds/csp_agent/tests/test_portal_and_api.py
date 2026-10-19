@@ -679,3 +679,28 @@ def test_rereading_a_waiting_item_updates_its_dates_but_does_not_accept_it(clien
     assert s.get(ManualReviewQueue, qid).status == ReviewStatus.PENDING
     assert "valid till 27-08-2028" in s.get(ManualReviewQueue, qid).reason
     s.close()
+
+
+def test_reviewer_can_mark_a_police_clearance_certificate_as_no_expiry(client, monkeypatch):
+    from app.models import ManualReviewQueue, ReviewStatus
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    cid, _, _ = _csp(Session)
+    s = Session()
+    d = Document(csp_id=cid, document_type="POLICE_VERIFICATION", sha256=uuid.uuid4().hex, readability="READABLE",
+                 status=DocumentStatus.NEEDS_REVIEW, is_current=False, issue_date=date(2025, 4, 11),
+                 expiry_date=date(2026, 4, 11), validity_rule_used="PVR_DEFAULT_1_YEAR")
+    s.add(d)
+    s.flush()
+    q = ManualReviewQueue(document_id=d.id, status=ReviewStatus.PENDING, reason="check")
+    s.add(q)
+    s.commit()
+    qid, did = q.id, d.id
+    s.close()
+    r = c.post(f"/api/hub/review/{qid}/resolve", headers=hdr, json={"accept": True, "validity_months": -1})
+    assert r.status_code == 200, r.text
+    s = Session()
+    d = s.get(Document, did)
+    assert d.expiry_date is None and d.validity_rule_used == "PVR_PCC_LIFETIME" and d.status == DocumentStatus.MANUAL_VERIFIED
+    s.close()
