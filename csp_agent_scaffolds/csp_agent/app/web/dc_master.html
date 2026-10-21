@@ -233,28 +233,33 @@
 
   function addYears(iso, n) { return String(Number(iso.slice(0, 4)) + n).padStart(4, "0") + iso.slice(4, 10); }
   const open = () => ctx.docs.filter((d) => !d.locked);
+  // Sections with a file whose date is wrong: left out of the upload, the rest go.
   function checkDates() {
-    let ok = true;
+    const bad = [];
     for (const d of open()) {
       const file = $(d.section + "_file").files[0], v = $(d.section + "_issue_date").value, err = $(d.section + "_err");
       err.textContent = "";
       if (!file) continue;
-      if (!v) { err.textContent = "कृपया तारीख भरें / Please enter the issue date."; ok = false; continue; }
-      if (v > ctx.today) { err.textContent = "तारीख आज के बाद की नहीं हो सकती / The date can't be in the future."; ok = false; continue; }
+      if (!v) { err.textContent = "कृपया तारीख भरें / Please enter the issue date."; bad.push(d.section); continue; }
+      if (v > ctx.today) { err.textContent = "तारीख आज के बाद की नहीं हो सकती / The date can't be in the future."; bad.push(d.section); continue; }
       if (d.max_validity_years && addYears(v, d.max_validity_years) < ctx.today) {
-        err.textContent = "इस डॉक्यूमेंट की तारीख निकल चुकी है / This document has expired; upload the renewed one."; ok = false;
+        err.textContent = "इस डॉक्यूमेंट की तारीख निकल चुकी है / This document has expired; upload the renewed one."; bad.push(d.section);
       }
     }
-    return ok;
+    return bad;
   }
   $("docs").addEventListener("change", checkDates);
 
   $("f").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("formerr").textContent = "";
-    if (!open().some((d) => $(d.section + "_file").files[0])) { $("formerr").textContent = "कम से कम एक डॉक्यूमेंट चुनें / Choose at least one document."; return; }
-    if (!checkDates()) return;
+    const chosen = open().filter((d) => $(d.section + "_file").files[0]);
+    if (!chosen.length) { $("formerr").textContent = "कम से कम एक डॉक्यूमेंट चुनें / Choose at least one document."; return; }
+    const bad = checkDates(), good = chosen.filter((d) => !bad.includes(d.section));
+    if (!good.length) { $("formerr").textContent = "चुने गए डॉक्यूमेंट की तारीख ठीक करें / Fix the date of the chosen document(s)."; return; }
+    const skipped = chosen.filter((d) => bad.includes(d.section)).map((d) => ({ d, msg: $(d.section + "_err").textContent }));
     const fd = new FormData($("f"));
+    for (const d of skipped) { fd.delete(d.d.section + "_file"); fd.delete(d.d.section + "_issue_date"); }
     fd.append("dc", dc);
     fd.append("code", ctx.csp.code);
     $("send").disabled = true;
@@ -263,10 +268,10 @@
       const r = await fetch("api/portal/upload", { method: "POST", body: fd });
       const j = await r.json();
       if (!r.ok) { const m = j.detail || {}; $("formerr").textContent = (m.hi || "") + " / " + (m.en || "Upload failed."); return; }
-      const lines = j.results.map((res) => {
+      const lines = skipped.map(({ d, msg }) => `<div class="err">⏭️ <b>${esc(d.label_hi)}</b> <span class="en">/ ${esc(d.label_en)}</span>: नहीं भेजा गया / not sent — ${esc(msg)}</div>`).concat(j.results.map((res) => {
         const d = ctx.docs.find((x) => x.section === res.section) || { label_hi: res.section, label_en: res.section };
         return `<div class="${res.ok ? "ok" : "err"}">${res.ok ? "✅" : "❌"} <b>${esc(d.label_hi)}</b> <span class="en">/ ${esc(d.label_en)}</span>: ${esc(res.message?.hi || "")} <span class="en">(${esc(res.message?.en || "")})</span></div>`;
-      });
+      }));
       const code = ctx.csp.code;
       await load(code);                                       // live status after the upload
       $("result").style.display = "block";
