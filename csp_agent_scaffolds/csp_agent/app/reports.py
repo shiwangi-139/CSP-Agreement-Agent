@@ -115,7 +115,7 @@ def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
             if s.status == "VALID" and s.days_left is not None and s.days_left <= EXPIRING_WITHIN_DAYS:
                 expiring.append([c.current_code, c.name, rm.name if rm else None, dc.name if dc else None,
                                  DOC_LABELS[t][0], s.issue_date, s.expiry_date, s.days_left])
-        row += [c.next_action_at.date() if c.next_action_at else None, vault.folder_name(c.current_code, c.name)]
+        row += [c.next_action_at, vault.folder_name(c.current_code, c.name)]   # a date column
         rows.append(row)
         fills.append(fill)
         by_cat[st.category].append((row, fill))
