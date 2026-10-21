@@ -142,3 +142,44 @@ def test_admin_makes_and_switches_off_the_link(client, monkeypatch):
     assert c.get("/api/hub/master-link", headers=hdr).json()["active"]
     assert c.post("/api/hub/master-link/revoke", headers=hdr).json()["revoked"] >= 1
     assert not c.get("/api/hub/master-link", headers=hdr).json()["active"]
+
+
+def _rename(Session, cid, name):
+    s = Session()
+    s.get(CSP, cid).name = name
+    s.commit()
+    s.close()
+
+
+def test_another_csps_document_under_a_wrong_ko_code_is_refused(client):
+    c, Session = client
+    cid_a, code_a, _ = _csp(Session)
+    cid_b, code_b, _ = _csp(Session)
+    _rename(Session, cid_a, "Ramesh Yadav")
+    _rename(Session, cid_b, "Suresh Chaurasia")
+    dc = _link(Session)
+    issue = date.today() - timedelta(days=20)
+    res = _upload(c, dc, code_a, issue, _pvr_pdf(issue, holder="SURESH CHAURASIA")).json()["results"][0]
+    assert not res["ok"] and "another CSP" in res["message"]["en"] and code_b in res["message"]["en"]
+    s = Session()
+    assert s.query(Document).filter(Document.csp_id.in_([cid_a, cid_b])).count() == 0
+    s.close()
+    ok = _upload(c, dc, code_a, issue, _pvr_pdf(issue, holder="RAMESH YADAV")).json()["results"][0]
+    assert ok["ok"]                                                    # this CSP's own document goes in
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid_a).one()
+    assert "not confirmed" not in s.query(ManualReviewQueue).filter_by(document_id=d.id).one().reason
+    s.close()
+
+
+def test_document_without_a_readable_name_is_taken_and_flagged(client):
+    c, Session = client
+    cid, code, _ = _csp(Session)
+    _rename(Session, cid, "Mahendra Prajapati")
+    dc = _link(Session)
+    issue = date.today() - timedelta(days=20)
+    assert _upload(c, dc, code, issue, _pvr_pdf(issue, holder="")).json()["results"][0]["ok"]
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    assert "not confirmed" in s.query(ManualReviewQueue).filter_by(document_id=d.id).one().reason
+    s.close()

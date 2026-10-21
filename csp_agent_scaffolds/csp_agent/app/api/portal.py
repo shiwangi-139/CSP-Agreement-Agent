@@ -28,6 +28,7 @@ import base64
 import hashlib
 import html
 import json
+import re
 import logging
 import threading
 import time
@@ -96,6 +97,8 @@ MSG = {
     "dc_in_review": ("यह डॉक्यूमेंट अभी जाँच में है।", "This document is being checked by our team."),
     "dup_other": ("यह फ़ाइल किसी दूसरे CSP के रिकॉर्ड में पहले से है। इसी CSP का अपना डॉक्यूमेंट अपलोड करें।",
                   "This file is already on record for another CSP. Upload this CSP's own document."),
+    "dc_other_csp": ("यह डॉक्यूमेंट किसी दूसरे CSP का है। सही KO कोड डालकर उसी CSP के लिए अपलोड करें।",
+                     "This document belongs to another CSP. Enter that CSP's KO code and upload it there."),
     "dup_same": ("यह वही डॉक्यूमेंट है जो पहले से हमारे पास है। रिन्यू किया हुआ नया डॉक्यूमेंट अपलोड करें।",
                  "This is the same document we already have. Please upload the renewed one."),
     "iibf_receipt": ("यह IIBF परीक्षा की फीस की रसीद (या एडमिट कार्ड) है, IIBF सर्टिफिकेट नहीं। कृपया पास होने के बाद मिला IIBF सर्टिफिकेट अपलोड करें।",
@@ -214,10 +217,26 @@ def _same_as_on_file(db: Session, csp: CSP, doc_type: str, ex: dict) -> bool:
     return bool(s.document is not None and s.status == "VALID" and read and s.document.issue_date == read)
 
 
-def _list_for_review(db: Session, doc, section: str) -> None:
+def _other_owner(db: Session, csp: CSP, ex: dict) -> tuple[Optional[str], Optional[str]]:
+    """Master link: whose document is this? (the Gmail check, without the
+    model). Returns (KO code of the other CSP it shows, or "" when it names
+    another CSP without a code; None when it is not another CSP's), and a note
+    when neither this CSP's code nor name could be read on it."""
+    from ..gmail_ingest import check_owner
+    everyone = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).all()
+    owner, _, review = check_owner(db, csp, ex, everyone)
+    if owner.id != csp.id:
+        return owner.current_code, None
+    if review and review.startswith(("Document names", "Document shows CSP codes")):
+        m = re.search(r"\(([0-9A-Z]{6,12})\)|codes ([0-9A-Z, ]+), not", review)
+        return (m.group(1) or m.group(2).split(",")[0].strip()) if m else "", None
+    return None, ("name / KO code not confirmed on the document" if review else None)
+
+
+def _list_for_review(db: Session, doc, section: str, note: Optional[str] = None) -> None:
     """Every document stored through the master link appears in the Review
     queue for the daily report (it already counts if it was clear)."""
-    label = DOC_LABELS[SECTIONS[section]][0]
+    label = DOC_LABELS[SECTIONS[section]][0] + (f"; {note}" if note else "")
     pending = (db.query(ManualReviewQueue).filter(ManualReviewQueue.document_id == doc.id,
                                                   ManualReviewQueue.status == ReviewStatus.PENDING).first())
     if pending is not None:
@@ -643,6 +662,16 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         if via_dc and _same_as_on_file(db, csp, doc_type, ex):
             turn_away("dup_same", data, mime)
             continue
+        owner_note = None
+        if via_dc:
+            # A wrong KO code typed by the DC: the document shows another CSP.
+            other, owner_note = _other_owner(db, csp, ex)
+            if other is not None:
+                turn_away("dc_other_csp", data, mime)
+                if other:
+                    hi, en = MSG["dc_other_csp"]
+                    res["message"] = {"hi": f"{hi} (KO {other})", "en": f"{en} (KO {other})"}
+                continue
         out = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel=channel,
                                        sender_on_sheet=True)
         if out.decision == "DUPLICATE":
@@ -658,7 +687,7 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
                                      reason=f"Typed issue date {typed} differs from date read by model {read_date}."))
         if via_dc:
             db.flush()
-            _list_for_review(db, doc, section)
+            _list_for_review(db, doc, section, owner_note)
         said = "received_check" if ex.get("type_review") else ("review" if needs_review else "accepted")
         res.update(ok=True, message=_msg(said), reason=said, document_id=doc.id,
                    issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))
