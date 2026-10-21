@@ -674,7 +674,11 @@
           <p class="small muted">One link for all DCs: they pick a KO code and upload for any CSP in Labels 1–4. Documents valid for more than 60 days are locked. Their uploads appear in the Review queue as "DC upload".</p>
           ${state.mlUrl ? `<div class="toolbar"><input type="text" readonly value="${esc(state.mlUrl)}" style="flex:1" class="mono" onclick="this.select()"><span class="small muted">Copy it now: it is shown only once.</span></div>` : ""}
           <div class="toolbar"><button class="btn primary" data-mlink="new">${m.active ? "Make a new link (the old one stops)" : "Make the link"}</button>
-          ${m.active ? `<button class="btn" data-mlink="revoke">Switch it off</button>` : ""}</div></div>`;
+          ${m.active ? `<button class="btn" data-mlink="revoke">Switch it off</button>` : ""}</div>
+          <div class="meta" style="margin-top:14px"><b>Excel for one DC</b></div>
+          <p class="small muted">That DC's CSPs in plain words: what is on file and what to upload, needs first, coloured green / yellow / red. Download it and share it with the DC yourself.</p>
+          <div class="toolbar"><select id="dcxl">${m.dcs.map((u) => `<option value="${u.id}">${esc(u.name)} (${u.csps} CSPs)</option>`).join("")}</select>
+          <button class="btn" data-dcxlsx="1" ${m.dcs.length ? "" : "disabled"}>Download DC Excel</button></div></div>`;
       }
       const OUT = {accepted: ["VALID", "all accepted"], checking: ["REVIEW", "being checked"], partly: ["REVIEW", "partly accepted"], rejected: ["EXPIRED", "nothing accepted"]};
       const slabTxt = (n, sub) => n ? `Label ${sub || n}` : "—";
@@ -839,7 +843,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-dcxlsx],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -870,6 +874,12 @@
         a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "documents.zip"; a.click(); return;
       }
       if (ds.csp) return openCsp(ds.csp);
+      if (ds.dcxlsx) {
+        const r = await fetch(`api/hub/dc-report.xlsx?dc_id=${$("#dcxl").value}`, {credentials: "same-origin", headers: H});
+        if (!r.ok) return alert("Download failed: " + r.status);
+        const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
+        a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "dc.xlsx"; a.click(); return;
+      }
       if (ds.mlink === "new") { if (!confirm("Make a new DC master link? Any older master link stops working.")) return; state.mlUrl = (await post("/api/hub/master-link")).url; return render(); }
       if (ds.mlink === "revoke") { if (!confirm("Switch off the DC master link? DCs can no longer use it.")) return; await post("/api/hub/master-link/revoke"); state.mlUrl = ""; return render(); }
       if (ds.approve) { const m = await post(`/api/hub/messages/${ds.approve}/approve`); toast(`Approved → ${m.status.replaceAll("_", " ").toLowerCase()}`); return refreshAfterAction(); }

@@ -38,7 +38,7 @@ def test_page_and_context_need_a_live_link(client):
     assert "Get your upload link" in c.get("/upload?dc=nope").text
     dc = _link(Session)
     page = c.get(f"/upload?dc={dc}").text
-    assert code in page and "__CONTEXT_JSON__" not in page
+    assert "Show details" in page and "__CONTEXT_JSON__" not in page
     r = c.post("/upload", data={"action": "dc_context", "dc": dc, "code": code})
     assert r.status_code == 200 and r.json()["context"]["csp"]["code"] == code
     assert c.post("/upload", data={"action": "dc_context", "dc": dc, "code": "1A000000"}).status_code == 404
@@ -93,13 +93,44 @@ def test_file_on_record_for_another_csp_is_refused(client):
     s.close()
 
 
-def test_excel_lists_only_the_working_csps(client):
+def test_dc_page_lists_no_csps_and_offers_no_excel(client):
     c, Session = client
     _, code, _ = _csp(Session)
     dc = _link(Session)
+    page = c.get(f"/upload?dc={dc}").text
+    assert code not in page and "Portal CSP" not in page and "dc_report" not in page
     r = c.post("/upload", data={"action": "dc_report", "dc": dc})
-    assert r.status_code == 200 and r.content[:2] == b"PK"
-    assert c.post("/upload", data={"action": "dc_report", "dc": "nope"}).status_code == 403
+    assert r.status_code == 200 and "PK" not in r.text[:2]          # just the get-a-link page, no file
+
+
+def test_admin_downloads_one_dcs_excel_in_plain_words(client, monkeypatch):
+    import io
+    from openpyxl import load_workbook
+    from app.models import InternalUser
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    cid, code, _ = _csp(Session)
+    other, other_code, _ = _csp(Session)
+    s = Session()
+    dc = InternalUser(name="DC Test Person", role="DC")
+    s.add(dc)
+    s.flush()
+    s.get(CSP, cid).dc_id = dc.id
+    s.commit()
+    dc_id = dc.id
+    s.close()
+    _valid_doc(Session, cid, "POLICE_VERIFICATION", date.today() + timedelta(days=200))
+    assert any(u["id"] == dc_id and u["csps"] == 1 for u in c.get("/api/hub/master-link", headers=hdr).json()["dcs"])
+    r = c.get(f"/api/hub/dc-report.xlsx?dc_id={dc_id}", headers=hdr)
+    assert r.status_code == 200
+    ws = load_workbook(io.BytesIO(r.content)).active
+    text = [[str(v) for v in row if v is not None] for row in ws.iter_rows(values_only=True)]
+    assert "DC Test Person" in text[0][0]
+    row = next(r for r in text if code in r)
+    assert "CSP Agreement, IIBF Certificate" in row and any(v.startswith("OK till") for v in row)
+    assert not any(other_code in r for r in text)                     # another DC's CSP is not in it
+    assert c.get("/api/hub/dc-report.xlsx?dc_id=999999", headers=hdr).status_code == 404
 
 
 def test_admin_makes_and_switches_off_the_link(client, monkeypatch):

@@ -148,6 +148,84 @@ def csp_report(db: Session, today: Optional[date] = None, csp_ids: Optional[list
 
 
 # ------------------------------------------------------- contacts & gaps
+# ------------------------------------------------------------- DC report
+def _dc_doc_text(t: str, s, today: date) -> tuple[str, Optional[PatternFill]]:
+    """One document in plain words for a DC, with its colour."""
+    fmt = lambda d: d.strftime("%d-%m-%Y")
+    if s.in_review:
+        return "Being checked by Eko – nothing to do", AMBER
+    if s.status == "VALID":
+        if s.expiry_date is None:
+            return "OK (no expiry)", GREEN
+        if s.days_left is not None and s.days_left <= EXPIRING_WITHIN_DAYS:
+            return f"Renew now – expires {fmt(s.expiry_date)} ({s.days_left} days left)", AMBER
+        return f"OK till {fmt(s.expiry_date)}", GREEN
+    if s.status == "EXPIRED":
+        return f"EXPIRED on {fmt(s.expiry_date)} – upload the renewed one" if s.expiry_date else "EXPIRED – upload the renewed one", RED
+    if s.status == "UNREADABLE":
+        return "Not readable – upload a clear scan", RED
+    return "MISSING – upload it", RED
+
+
+def dc_report(db: Session, dc: InternalUser, today: Optional[date] = None) -> io.BytesIO:
+    """One DC's working CSPs (Labels 1-4), one row each, in plain words: what
+    is on file and what to upload. CSPs with something to do come first."""
+    from .compliance import working_clause
+    today = today or date.today()
+    staff = {u.id: u for u in db.query(InternalUser).all()}
+    csps = db.query(CSP).filter(working_clause(), CSP.dc_id == dc.id).order_by(CSP.current_code).all()
+    rows = []
+    for c in csps:
+        st = evaluate(db, c, today)
+        cells, todo = [], []
+        for t in REQUIRED_TYPES:
+            s = st.docs[t]
+            text, fill = _dc_doc_text(t, s, today)
+            cells.append((text, fill))
+            if fill is RED or (fill is AMBER and not s.in_review):
+                todo.append(DOC_LABELS[t][0])
+        rm = staff.get(c.rm_id)
+        rows.append((len(todo), c, rm, cells, todo))
+    rows.sort(key=lambda r: (-r[0], r[1].current_code))
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "My CSPs"
+    need = sum(1 for r in rows if r[0])
+    ws.append([f"CSP documents – DC {dc.name}"])
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.append([f"As on {today.strftime('%d-%m-%Y')} · {len(rows)} CSPs · {need} need a document · "
+               f"{len(rows) - need} have everything"])
+    ws.append(["Colours:  green = OK  ·  yellow = renew soon / being checked  ·  red = upload needed. "
+               "CSPs that need something are at the top."])
+    ws.append([])
+    head = ["KO code", "CSP name", "Phone", "State", "What to upload", "Agreement", "Police Verification",
+            "IIBF Certificate", "RM"]
+    ws.append(head)
+    hr = ws.max_row
+    for cell in ws[hr]:
+        cell.font, cell.fill = Font(bold=True, color="FFFFFF"), HEADER
+        cell.alignment = Alignment(vertical="center", wrap_text=True)
+    for n, c, rm, cells, todo in rows:
+        ws.append([c.current_code, c.name, c.phone, c.state, ", ".join(todo) if todo else "Nothing – all OK"]
+                  + [t for t, _ in cells] + [rm.name if rm else ""])
+        r = ws.max_row
+        ws.cell(row=r, column=5).fill = RED if todo else GREEN
+        ws.cell(row=r, column=5).font = Font(bold=True)
+        for i, (_, fill) in enumerate(cells):
+            if fill is not None:
+                ws.cell(row=r, column=6 + i).fill = fill
+    for col, w in zip("ABCDEFGHI", (11, 26, 13, 14, 34, 34, 34, 34, 14)):
+        ws.column_dimensions[col].width = w
+    for row in ws.iter_rows(min_row=hr + 1):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    ws.freeze_panes = ws.cell(row=hr + 1, column=3)
+    if rows:
+        ws.auto_filter.ref = f"A{hr}:I{ws.max_row}"
+    return _save(wb)
+
+
 def _staff_rows(db: Session, csps: list[CSP], staff: dict) -> list[list]:
     """RM / DC directory: name, role, number of CSPs, phone, email, what is missing."""
     counts: dict[int, int] = {}

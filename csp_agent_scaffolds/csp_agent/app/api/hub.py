@@ -836,7 +836,29 @@ def monitor(tab: str, days: int = 0, db: Session = Depends(get_db)):
 @router.get("/master-link", dependencies=[Depends(require_admin)])
 def master_link_status(db: Session = Depends(get_db)):
     from .. import master_link
-    return master_link.status(db)
+    return {**master_link.status(db), "dcs": _dc_names(db)}
+
+
+def _dc_names(db: Session) -> list[dict]:
+    from sqlalchemy import func
+    from ..compliance import working_clause
+    counts = dict(db.query(CSP.dc_id, func.count(CSP.id)).filter(working_clause(), CSP.dc_id.isnot(None))
+                  .group_by(CSP.dc_id).all())
+    return [{"id": u.id, "name": u.name, "csps": counts.get(u.id, 0)}
+            for u in db.query(InternalUser).filter(InternalUser.role == "DC").order_by(InternalUser.name)
+            if counts.get(u.id)]
+
+
+@router.get("/dc-report.xlsx", dependencies=[Depends(require_admin)])
+def dc_report_xlsx(dc_id: int, db: Session = Depends(get_db)):
+    """One DC's CSPs in plain words, to share with that DC."""
+    from .. import reports
+    dc = db.get(InternalUser, dc_id)
+    if dc is None or dc.role != "DC":
+        raise HTTPException(404, "No such DC")
+    name = f"CSPs_DC_{re.sub(r'[^A-Za-z0-9]+', '_', dc.name).strip('_')}_{date.today().isoformat()}.xlsx"
+    return StreamingResponse(reports.dc_report(db, dc), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 @router.post("/master-link", dependencies=[Depends(require_admin)])

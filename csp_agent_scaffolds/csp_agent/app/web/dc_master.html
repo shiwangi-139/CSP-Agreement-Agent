@@ -63,8 +63,6 @@
   .secondary { background: var(--forest); margin-top: 12px; }
   .lock { background: var(--mist); border-radius: .6rem; padding: 10px 12px; margin-top: 8px; font-size: .92rem; }
   .allok { background: var(--mist); border-color: hsl(150 40% 70%); }
-  .row { display: flex; gap: 10px; flex-wrap: wrap; }
-  .row > * { flex: 1 1 200px; }
   .meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: .92rem; margin-top: 8px; }
   .meta b { font-weight: 600; color: var(--muted); }
   .days { font-weight: 600; }
@@ -82,22 +80,11 @@
 <div class="trust">Eko · SBI कियोस्क बैंकिंग पार्टनर <span class="en">· SBI Kiosk Banking partner</span></div>
 <main>
   <section class="card">
-    <h2>CSP चुनें <span class="en">/ Choose a CSP</span></h2>
-    <div class="row">
-      <div>
-        <label for="dcsel">DC <span class="en">/ filter</span></label>
-        <select id="dcsel"><option value="">सभी / All DCs</option></select>
-      </div>
-      <div>
-        <label for="pick">KO कोड या नाम <span class="en">/ KO code or name</span></label>
-        <input type="text" id="pick" list="csplist" class="code" autocomplete="off" placeholder="1A85…">
-        <datalist id="csplist"></datalist>
-      </div>
-    </div>
+    <h2>CSP का KO कोड डालें <span class="en">/ Enter the CSP's KO code</span></h2>
+    <label for="pick">KO कोड <span class="en">/ KO code</span></label>
+    <input type="text" id="pick" class="code" autocomplete="off" placeholder="1A85…" maxlength="12">
     <div id="pickerr" class="err"></div>
-    <div class="hint" id="count"></div>
-    <button type="button" id="report" class="secondary">Excel डाउनलोड करें (लाइव) / Download live Excel</button>
-    <div id="reporterr" class="err"></div>
+    <button type="button" id="showcsp" style="margin-top:12px">विवरण देखें / Show details</button>
   </section>
 
   <div id="csp" style="display:none">
@@ -134,7 +121,7 @@
 <script type="application/json" id="ctx">__CONTEXT_JSON__</script>
 <script>
 (function () {
-  const all = JSON.parse(document.getElementById("ctx").textContent);
+  const page = JSON.parse(document.getElementById("ctx").textContent);
   const dc = new URLSearchParams(location.search).get("dc") || "";
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -142,23 +129,6 @@
   const fmt = (iso) => iso ? iso.split("-").reverse().join("-") : "";
   const netErr = "नेटवर्क समस्या, दोबारा कोशिश करें / Network problem, please try again.";
   let ctx = null;
-
-  for (const n of all.dcs) $("dcsel").insertAdjacentHTML("beforeend", `<option>${esc(n)}</option>`);
-  function fillList() {
-    const want = $("dcsel").value, rows = all.csps.filter((r) => !want || r.dc === want);
-    $("csplist").innerHTML = rows.map((r) => `<option value="${esc(r.code)}">${esc(r.name)}${r.dc ? " · DC " + esc(r.dc) : ""}</option>`).join("");
-    $("count").textContent = `${rows.length} CSP${want ? " · DC " + want : ""}`;
-  }
-  $("dcsel").addEventListener("change", fillList);
-  fillList();
-
-  function codeFrom(v) {
-    v = v.trim();
-    const byCode = all.csps.find((r) => r.code.toUpperCase() === v.toUpperCase());
-    if (byCode) return byCode.code;
-    const byName = all.csps.filter((r) => r.name.toLowerCase() === v.toLowerCase());
-    return byName.length === 1 ? byName[0].code : v;
-  }
 
   async function post(fields) {
     const fd = new FormData();
@@ -177,13 +147,13 @@
       show();
     } catch (e) { $("pickerr").textContent = netErr; }
   }
-  let last = "";
-  function maybeLoad() {
-    const code = codeFrom($("pick").value);
-    if (code.length >= 6 && code !== last) { last = code; load(code); }
+  function showCsp() {
+    const code = $("pick").value.trim().toUpperCase();
+    if (code.length < 6) { $("pickerr").textContent = "पूरा KO कोड डालें / Enter the full KO code."; return; }
+    load(code);
   }
-  $("pick").addEventListener("change", maybeLoad);
-  $("pick").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); last = ""; maybeLoad(); } });
+  $("showcsp").addEventListener("click", showCsp);
+  $("pick").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); showCsp(); } });
 
   function daysText(d) {
     if (d.days_left == null || d.status !== "VALID" && d.status !== "EXPIRED") return "";
@@ -286,20 +256,6 @@
     }
   });
 
-  $("report").addEventListener("click", async () => {
-    $("reporterr").textContent = "";
-    $("report").disabled = true;
-    try {
-      const r = await post({ action: "dc_report", dc_name: $("dcsel").value });
-      if (!r.ok) { $("reporterr").textContent = "डाउनलोड नहीं हुआ / Download failed."; return; }
-      const blob = await r.blob(), a = document.createElement("a");
-      const m = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "");
-      a.href = URL.createObjectURL(blob); a.download = m ? m[1] : "CSPs.xlsx";
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    } catch (e) { $("reporterr").textContent = netErr; }
-    finally { $("report").disabled = false; }
-  });
 })();
 </script>
 </body>

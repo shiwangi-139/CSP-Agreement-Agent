@@ -195,35 +195,11 @@ def _dc_context(db: Session, csp: CSP) -> dict:
     return ctx
 
 
-def _dc_list(db: Session) -> list[dict]:
-    staff = {u.id: u.name for u in db.query(InternalUser.id, InternalUser.name)}
-    return [{"code": c.current_code, "name": c.name, "dc": staff.get(c.dc_id) or "", "rm": staff.get(c.rm_id) or "",
-             "state": c.state or "", "label": c.category}
-            for c in master_link.eligible(db).order_by(CSP.current_code)]
-
-
 def _dc_page(token: str, db: Session) -> HTMLResponse:
-    rows = _dc_list(db)
-    blob = json.dumps({"csps": rows, "dcs": sorted({r["dc"] for r in rows if r["dc"]}),
-                       "today": date.today().isoformat(),
-                       "max_upload_mb": round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)},
-                      ensure_ascii=False).replace("<", "\\u003c")
+    # No list of CSPs in the page: the DC types a KO code and sees only that CSP.
+    blob = json.dumps({"today": date.today().isoformat(),
+                       "max_upload_mb": round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)})
     return HTMLResponse(DC_PAGE.read_text(encoding="utf-8").replace("__LOGO__", LOGO).replace("__CONTEXT_JSON__", blob))
-
-
-def _dc_report(db: Session, dc_name: str):
-    """Live Excel of the CSPs on the master link (one DC's, or all)."""
-    from fastapi.responses import StreamingResponse
-    from .. import reports
-    staff = {u.name.strip().lower(): u.id for u in db.query(InternalUser).filter(InternalUser.role == "DC")}
-    q = master_link.eligible(db)
-    if dc_name.strip():
-        q = q.filter(CSP.dc_id == staff.get(dc_name.strip().lower(), -1))
-    ids = [c.id for c in q]
-    name = f"CSPs_{(dc_name.strip() or 'all').replace(' ', '_')}_{date.today().isoformat()}.xlsx"
-    return StreamingResponse(reports.csp_report(db, csp_ids=ids),
-                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 def _on_record_elsewhere(db: Session, csp: CSP, data: bytes) -> bool:
@@ -245,8 +221,11 @@ def _list_for_review(db: Session, doc, section: str) -> None:
     pending = (db.query(ManualReviewQueue).filter(ManualReviewQueue.document_id == doc.id,
                                                   ManualReviewQueue.status == ReviewStatus.PENDING).first())
     if pending is not None:
-        if not (pending.reason or "").startswith(master_link.REVIEW_PREFIX):
-            pending.reason = f"{master_link.REVIEW_PREFIX} via the master link ({label}). {pending.reason}"[:500]
+        reason = pending.reason or ""
+        if not reason.startswith(master_link.REVIEW_PREFIX):
+            # A spot / reference check is of a document that already counts.
+            counted = ": already counted." if reason.startswith(("Spot check", "Reference check")) else "."
+            pending.reason = f"{master_link.REVIEW_PREFIX} via the master link ({label}){counted} {reason}"[:500]
         return
     db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=(
         f"{master_link.REVIEW_PREFIX} via the master link ({label}): already counted. Check it and accept, "
@@ -380,14 +359,12 @@ def _ask_question(db: Session, token: str, category: str, text: str, phone: str)
 @router.post("/upload", response_class=HTMLResponse)
 def request_link(request: Request, background: BackgroundTasks, code: str = Form(""), mobile: str = Form(""),
                  action: str = Form(""), token: str = Form(""), category: str = Form(""), text: str = Form(""),
-                 dc: str = Form(""), dc_name: str = Form(""), db: Session = Depends(get_db)):
+                 dc: str = Form(""), db: Session = Depends(get_db)):
     ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
-    if action in ("dc_context", "dc_report"):
+    if action == "dc_context":
         # The DC master link: only the upload routes are public, so it uses this one.
         if master_link.resolve(db, dc) is None:
             return JSONResponse({"ok": False, "message": _msg("bad_link")}, status_code=403)
-        if action == "dc_report":
-            return _dc_report(db, dc_name)
         csp = master_link.find(db, code)
         if csp is None:
             return JSONResponse({"ok": False, "message": _msg("dc_unknown_csp")}, status_code=404)
