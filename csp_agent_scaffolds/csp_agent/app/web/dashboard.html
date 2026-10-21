@@ -665,6 +665,17 @@
       // tabs filter CSPs by their latest submission.
       const d = await api(`/api/hub/form-uploads?days=${days}`);
       const k = d.counts;
+      // DC master link (admins): one link for every working CSP; the URL is shown once, when made.
+      let ml = "";
+      if (state.summary.me.role === "ADMIN") {
+        const m = await api("/api/hub/master-link");
+        ml = `<div class="card" style="margin-bottom:12px"><div class="meta"><b>DC master link</b>
+          ${m.active ? badge("VALID", "active") + ` <span class="small muted">made by ${esc(m.created_by || "")} ${when(m.created_at)} · works till ${when(m.expires_at)}</span>` : badge("EXPIRED", "none active")}</div>
+          <p class="small muted">One link for all DCs: they pick a KO code and upload for any CSP in Labels 1–4. Documents valid for more than 60 days are locked. Their uploads appear in the Review queue as "DC upload".</p>
+          ${state.mlUrl ? `<div class="toolbar"><input type="text" readonly value="${esc(state.mlUrl)}" style="flex:1" class="mono" onclick="this.select()"><span class="small muted">Copy it now: it is shown only once.</span></div>` : ""}
+          <div class="toolbar"><button class="btn primary" data-mlink="new">${m.active ? "Make a new link (the old one stops)" : "Make the link"}</button>
+          ${m.active ? `<button class="btn" data-mlink="revoke">Switch it off</button>` : ""}</div></div>`;
+      }
       const OUT = {accepted: ["VALID", "all accepted"], checking: ["REVIEW", "being checked"], partly: ["REVIEW", "partly accepted"], rejected: ["EXPIRED", "nothing accepted"]};
       const slabTxt = (n, sub) => n ? `Label ${sub || n}` : "—";
       const groups = [];
@@ -686,7 +697,7 @@
             <span class="muted" style="margin-left:auto">${when(r.at)}</span></div>
           ${results(r)}
           ${r.contact_changes ? `<div class="small" style="margin-top:6px">Also changed ${r.contact_changes} contact detail(s): see <a href="#" data-go="contacts">Contacts</a>.</div>` : ""}</div>`;
-      return `<p class="small muted">One row per CSP who used the upload page: their latest result and their label now. Click <b>Show all attempts</b> to see every try — what they sent, what was accepted or turned away and why. <b>"Tried, nothing accepted"</b> are the CSPs to call first.</p>
+      return `${ml}<p class="small muted">One row per CSP who used the upload page: their latest result and their label now. Click <b>Show all attempts</b> to see every try — what they sent, what was accepted or turned away and why. <b>"Tried, nothing accepted"</b> are the CSPs to call first.</p>
       <div class="tabs">${[["", `All (${k.csps} CSPs)`], ["accepted", `All accepted (${k.accepted})`], ["checking", `Being checked (${k.checking})`], ["partly", `Partly (${k.partly})`], ["rejected", `Tried, nothing accepted (${k.rejected})`]]
         .map(([v, l]) => `<button class="tab ${out === v ? "active" : ""}" data-fout="${v}">${l}</button>`).join("")}</div>
       <div class="tabs">${[[0, "Any time"], [1, "Today"], [7, "Last 7 days"], [30, "Last 30 days"]]
@@ -723,7 +734,7 @@
 
     async review() {
       const d = await api("/api/hub/review");
-      const kind = (reason) => /^Spot check/.test(reason) ? ["APPROVAL", "spot check"] : /^Reference check/.test(reason) ? ["APPROVAL", "reference check"] : ["REVIEW", "needs a decision"];
+      const kind = (reason) => /^Spot check/.test(reason) ? ["APPROVAL", "spot check"] : /^DC upload/.test(reason) ? ["APPROVAL", "DC upload"] : /^Reference check/.test(reason) ? ["APPROVAL", "reference check"] : ["REVIEW", "needs a decision"];
       return `<p class="small muted">Conflicts the agent can't decide (a different CSP's name on the document, a typed date that differs from the one read…), plus <b>spot checks</b> (5% of documents the agent accepted on its own) and <b>reference checks</b>. Open the document, then <b>Accept</b> if the type, the CSP and the issue date are right, correct the date if it's wrong, or <b>Reject</b> if it's the wrong document or CSP. Your answers measure the agent's accuracy (see Accuracy).</p>
       ${d.rows.map((r) => `<div class="card" style="margin-bottom:10px">
         <div class="meta">${badge(kind(r.reason)[0], kind(r.reason)[1])} <b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)} · ${esc(DOC[r.document.type] || r.document.type)}
@@ -828,7 +839,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -859,6 +870,8 @@
         a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "documents.zip"; a.click(); return;
       }
       if (ds.csp) return openCsp(ds.csp);
+      if (ds.mlink === "new") { if (!confirm("Make a new DC master link? Any older master link stops working.")) return; state.mlUrl = (await post("/api/hub/master-link")).url; return render(); }
+      if (ds.mlink === "revoke") { if (!confirm("Switch off the DC master link? DCs can no longer use it.")) return; await post("/api/hub/master-link/revoke"); state.mlUrl = ""; return render(); }
       if (ds.approve) { const m = await post(`/api/hub/messages/${ds.approve}/approve`); toast(`Approved → ${m.status.replaceAll("_", " ").toLowerCase()}`); return refreshAfterAction(); }
       if (ds.sendnow) { if (!confirm("Send this WhatsApp message to the CSP now?")) return; const m = await post(`/api/hub/messages/${ds.sendnow}/send-now`); toast(`→ ${m.status.replaceAll("_", " ").toLowerCase()}${m.error ? ": " + m.error : ""}`); return refreshAfterAction(); }
       if (ds.findset) { e.preventDefault(); state.find = JSON.parse(ds.findset); state.page = 1; state.view = "find"; return render(); }

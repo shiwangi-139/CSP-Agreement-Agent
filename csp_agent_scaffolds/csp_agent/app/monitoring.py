@@ -280,6 +280,8 @@ def _review_kind(reason: str) -> str:
         return "reference check"
     if r.startswith("validity check"):
         return "validity only guessed"
+    if r.startswith("dc upload"):
+        return "DC upload (master link)"
     if "could not read" in r or "ocr could not" in r:
         return "not readable by OCR"
     if "issue date could not be read" in r:

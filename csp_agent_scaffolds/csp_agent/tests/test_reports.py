@@ -26,7 +26,7 @@ def test_csp_report_tabs_and_rows(db_session):
     rm = InternalUser(name=f"RM {uuid.uuid4().hex[:4]}", role="RM")
     db.add(rm)
     db.flush()
-    c = _csp(db, rm_id=rm.id, phone="9876543210", category=3)
+    c = _csp(db, rm_id=rm.id, phone="9876543210", category=3, next_action_at=date.today() + timedelta(days=4))
     db.add(Document(csp_id=c.id, document_type="POLICE_VERIFICATION", sha256=uuid.uuid4().hex,
                     status=DocumentStatus.VALID, readability="READABLE", is_current=True,
                     issue_date=date.today() - timedelta(days=400), expiry_date=date.today() - timedelta(days=35)))
@@ -41,6 +41,7 @@ def test_csp_report_tabs_and_rows(db_session):
     head = [h.value for h in wb["All CSPs"][1]]
     assert row[head.index("PVR status")] == "EXPIRED" and row[head.index("Agreement days left")] == 25
     assert row[head.index("IIBF status")] == "MISSING" and row[head.index("RM")] == rm.name
+    assert row[head.index("Next action")].date() == date.today() + timedelta(days=4)
     assert _rows(wb["Label 2 1 document missing"], c.current_code)      # 2 of 3 on file
     assert _rows(wb["Renewal due"], c.current_code)                     # its PVR is expired
     exp = _rows(wb["Expiring 60 days"], c.current_code)

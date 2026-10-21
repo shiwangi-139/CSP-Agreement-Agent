@@ -25,6 +25,7 @@ Server-side rules (the page enforces the same, but the server decides):
   - contact edits never overwrite calling-sheet data; they're queued
 """
 import base64
+import hashlib
 import html
 import json
 import logging
@@ -42,13 +43,13 @@ from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 
 from ..ai.extraction.deterministic_extractor import extract_document_fields_deterministic
-from ..compliance import DOC_LABELS, evaluate, refresh_category
+from ..compliance import DOC_LABELS, evaluate, refresh_category, slab_label, sub_slab_label
 from ..config import FEATURE_MESSAGING_ANALYTICS, MAX_UPLOAD_SIZE_BYTES, local_now
 from ..db import SessionLocal, get_db
 from ..document_service import store_extracted_document
-from ..models import (AgreementEvent, ContactChangeRequest, CSP, CspQuestion, DocumentStatus, InternalUser,
+from ..models import (AgreementEvent, ContactChangeRequest, CSP, CspQuestion, Document, DocumentStatus, InternalUser,
                       ManualReviewQueue, OutboundMessage, OutboundStatus, ReviewStatus)
-from .. import pages, vault
+from .. import master_link, pages, vault
 from ..ocr_service import detect_mime, photo_problem
 from ..portal_tokens import issue_upload_link, resolve_token, revoke_if_complete
 from ..validation import normalize_csp_code
@@ -58,6 +59,7 @@ router = APIRouter()
 
 PAGE = Path(__file__).resolve().parent.parent / "web" / "portal.html"
 GET_LINK_PAGE = PAGE.parent / "get_link.html"
+DC_PAGE = PAGE.parent / "dc_master.html"
 # Inlined: only the upload routes are public, so the page can't fetch /static.
 LOGO = "data:image/png;base64," + base64.b64encode(
     (PAGE.parent / "static" / "logo.png").read_bytes()).decode()
@@ -87,6 +89,15 @@ MSG = {
     "application_only": ("यह पुलिस प्रमाण पत्र का आवेदन या उसकी रसीद है, प्रमाण पत्र नहीं। पुलिस से प्रमाण पत्र मिलने के बाद उसे यहाँ अपलोड करें।",
                          "This is the application or receipt for the police certificate, not the certificate itself. "
                          "Upload the certificate once the police issue it."),
+    # DC master link (app/master_link.py)
+    "dc_unknown_csp": ("यह KO कोड सक्रिय CSP सूची में नहीं है। कोड जाँचें।",
+                       "This KO code is not in the list of active CSPs. Please check the code."),
+    "dc_valid": ("यह डॉक्यूमेंट पहले से हमारे पास है और अभी मान्य है।", "Already on file and still valid."),
+    "dc_in_review": ("यह डॉक्यूमेंट अभी जाँच में है।", "This document is being checked by our team."),
+    "dup_other": ("यह फ़ाइल किसी दूसरे CSP के रिकॉर्ड में पहले से है। इसी CSP का अपना डॉक्यूमेंट अपलोड करें।",
+                  "This file is already on record for another CSP. Upload this CSP's own document."),
+    "dup_same": ("यह वही डॉक्यूमेंट है जो पहले से हमारे पास है। रिन्यू किया हुआ नया डॉक्यूमेंट अपलोड करें।",
+                 "This is the same document we already have. Please upload the renewed one."),
     "iibf_receipt": ("यह IIBF परीक्षा की फीस की रसीद (या एडमिट कार्ड) है, IIBF सर्टिफिकेट नहीं। कृपया पास होने के बाद मिला IIBF सर्टिफिकेट अपलोड करें।",
                      "This is the IIBF exam fee receipt (or admit letter), not the IIBF certificate. "
                      "Please upload the certificate you received after passing."),
@@ -165,6 +176,83 @@ def _context(db: Session, csp: CSP, requested: list[str]) -> dict:
             "max_upload_mb": round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)}
 
 
+def _dc_context(db: Session, csp: CSP) -> dict:
+    """The CSP's page as the DC master link shows it: the same details, plus
+    which documents are locked (valid for more than 60 days, or being
+    checked) and why."""
+    ctx = _context(db, csp, [])
+    state = evaluate(db, csp)
+    locks = master_link.locks(state)
+    for d in ctx["docs"]:
+        lock = locks.get(d["type"])
+        d["days_left"] = state.docs[d["type"]].days_left
+        d["locked"] = bool(lock)
+        d["lock_message"] = master_link.lock_message(lock) if lock else None
+        d["requested"] = not lock
+    ctx["csp"].update(label=slab_label(csp.category) if csp.category else "", sub_label=sub_slab_label(csp.sub_slab),
+                      state=csp.state or "")
+    ctx["nothing_needed"] = all(lock is not None and lock["key"] == "dc_valid" for lock in locks.values())
+    return ctx
+
+
+def _dc_list(db: Session) -> list[dict]:
+    staff = {u.id: u.name for u in db.query(InternalUser.id, InternalUser.name)}
+    return [{"code": c.current_code, "name": c.name, "dc": staff.get(c.dc_id) or "", "rm": staff.get(c.rm_id) or "",
+             "state": c.state or "", "label": c.category}
+            for c in master_link.eligible(db).order_by(CSP.current_code)]
+
+
+def _dc_page(token: str, db: Session) -> HTMLResponse:
+    rows = _dc_list(db)
+    blob = json.dumps({"csps": rows, "dcs": sorted({r["dc"] for r in rows if r["dc"]}),
+                       "today": date.today().isoformat(),
+                       "max_upload_mb": round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)},
+                      ensure_ascii=False).replace("<", "\\u003c")
+    return HTMLResponse(DC_PAGE.read_text(encoding="utf-8").replace("__LOGO__", LOGO).replace("__CONTEXT_JSON__", blob))
+
+
+def _dc_report(db: Session, dc_name: str):
+    """Live Excel of the CSPs on the master link (one DC's, or all)."""
+    from fastapi.responses import StreamingResponse
+    from .. import reports
+    staff = {u.name.strip().lower(): u.id for u in db.query(InternalUser).filter(InternalUser.role == "DC")}
+    q = master_link.eligible(db)
+    if dc_name.strip():
+        q = q.filter(CSP.dc_id == staff.get(dc_name.strip().lower(), -1))
+    ids = [c.id for c in q]
+    name = f"CSPs_{(dc_name.strip() or 'all').replace(' ', '_')}_{date.today().isoformat()}.xlsx"
+    return StreamingResponse(reports.csp_report(db, csp_ids=ids),
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+def _on_record_elsewhere(db: Session, csp: CSP, data: bytes) -> bool:
+    sha = hashlib.sha256(data).hexdigest()
+    return db.query(Document.id).filter(Document.sha256 == sha, Document.csp_id != csp.id).first() is not None
+
+
+def _same_as_on_file(db: Session, csp: CSP, doc_type: str, ex: dict) -> bool:
+    """The document read is the one already on file (same issue date)."""
+    s = evaluate(db, csp).docs[doc_type]
+    read = _parse_date(ex.get("start_date"))
+    return bool(s.document is not None and s.status == "VALID" and read and s.document.issue_date == read)
+
+
+def _list_for_review(db: Session, doc, section: str) -> None:
+    """Every document stored through the master link appears in the Review
+    queue for the daily report (it already counts if it was clear)."""
+    label = DOC_LABELS[SECTIONS[section]][0]
+    pending = (db.query(ManualReviewQueue).filter(ManualReviewQueue.document_id == doc.id,
+                                                  ManualReviewQueue.status == ReviewStatus.PENDING).first())
+    if pending is not None:
+        if not (pending.reason or "").startswith(master_link.REVIEW_PREFIX):
+            pending.reason = f"{master_link.REVIEW_PREFIX} via the master link ({label}). {pending.reason}"[:500]
+        return
+    db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=(
+        f"{master_link.REVIEW_PREFIX} via the master link ({label}): already counted. Check it and accept, "
+        "or reject it if it is wrong.")))
+
+
 def _get_link_page(notice: str = "", result: str = "") -> HTMLResponse:
     def card(cls: str, key: str) -> str:
         hi, en = MSG[key]
@@ -188,7 +276,12 @@ def _record_link_open(db: Session, csp_id: int) -> None:
 
 
 @router.get("/upload", response_class=HTMLResponse)
-def upload_page(token: str = Query(""), db: Session = Depends(get_db)):
+def upload_page(token: str = Query(""), dc: str = Query(""), db: Session = Depends(get_db)):
+    if dc:
+        # The DC master link (app/master_link.py).
+        if master_link.resolve(db, dc) is None:
+            return _get_link_page(notice="bad_link")
+        return _dc_page(dc, db)
     row = resolve_token(db, token)
     if row is None:
         # No token (someone typed the address) or a dead one: let the CSP ask
@@ -287,8 +380,18 @@ def _ask_question(db: Session, token: str, category: str, text: str, phone: str)
 @router.post("/upload", response_class=HTMLResponse)
 def request_link(request: Request, background: BackgroundTasks, code: str = Form(""), mobile: str = Form(""),
                  action: str = Form(""), token: str = Form(""), category: str = Form(""), text: str = Form(""),
-                 db: Session = Depends(get_db)):
+                 dc: str = Form(""), dc_name: str = Form(""), db: Session = Depends(get_db)):
     ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
+    if action in ("dc_context", "dc_report"):
+        # The DC master link: only the upload routes are public, so it uses this one.
+        if master_link.resolve(db, dc) is None:
+            return JSONResponse({"ok": False, "message": _msg("bad_link")}, status_code=403)
+        if action == "dc_report":
+            return _dc_report(db, dc_name)
+        csp = master_link.find(db, code)
+        if csp is None:
+            return JSONResponse({"ok": False, "message": _msg("dc_unknown_csp")}, status_code=404)
+        return JSONResponse({"ok": True, "context": _dc_context(db, csp)})
     if action == "question":
         # Only Nginx's public routes reach the app, so questions share this one.
         if not _ip_allowed(ip):
@@ -386,14 +489,27 @@ def _record_contact_changes(db: Session, csp: CSP, form: dict) -> int:
 @router.post("/api/portal/upload")
 async def portal_upload(request: Request, background: BackgroundTasks, db: Session = Depends(get_db)):
     form = await request.form()
-    row = resolve_token(db, str(form.get("token") or ""))
-    if row is None:
-        raise HTTPException(403, detail=_msg("bad_link"))
-    csp = db.get(CSP, row.csp_id)
+    via_dc = bool(form.get("dc"))
+    if via_dc:
+        # The DC master link: any working CSP, chosen by KO code.
+        if master_link.resolve(db, str(form.get("dc") or "")) is None:
+            raise HTTPException(403, detail=_msg("bad_link"))
+        csp = master_link.find(db, str(form.get("code") or ""))
+        if csp is None:
+            raise HTTPException(404, detail=_msg("dc_unknown_csp"))
+        row = None
+    else:
+        row = resolve_token(db, str(form.get("token") or ""))
+        if row is None:
+            raise HTTPException(403, detail=_msg("bad_link"))
+        csp = db.get(CSP, row.csp_id)
+    channel = master_link.CHANNEL if via_dc else "CSP_UPLOAD_PORTAL"
     today = date.today()
+    # Valid for more than 60 days, or being checked: the DC may not upload it again.
+    dc_locks = master_link.locks(evaluate(db, csp)) if via_dc else {}
 
     for field in ("name", "mobile"):
-        if not str(form.get(field) or "").strip():
+        if not via_dc and not str(form.get(field) or "").strip():
             raise HTTPException(422, detail={"hi": "नाम और मोबाइल नंबर ज़रूरी हैं।",
                                               "en": "Name and mobile number are required."})
 
@@ -418,6 +534,11 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
                 except OSError:
                     logger.exception("portal_rejected_file_not_kept csp_id=%s", csp.id)
 
+        lock = dc_locks.get(doc_type)
+        if lock:
+            turn_away(lock["key"])
+            res["message"] = master_link.lock_message(lock)
+            continue
         typed = _parse_date(form.get(f"{section}_issue_date"))
         problem = _typed_date_problem(doc_type, typed, today)
         if problem:
@@ -453,6 +574,9 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
             # Photos -> one small PDF (shrunk, upright, pages in order).
             data = await run_in_threadpool(lambda: pages.photos_to_pdf([pages.shrink_photo(f) for f in files]))
             mime = "application/pdf"
+        if via_dc and _on_record_elsewhere(db, csp, data):
+            turn_away("dup_other", data, mime)
+            continue
         # The section is a hint: a readable file whose wording or date the
         # rules don't recognise goes to a person instead of being turned away.
         ex = await run_in_threadpool(lambda: extract_document_fields_deterministic(
@@ -469,7 +593,7 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
                                      "issue date, or reject it if it really is unreadable.")
             else:
                 ex["document_type"] = ex.get("document_type") if ex.get("document_type") != "UNKNOWN" else doc_type
-                kept = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel="CSP_UPLOAD_PORTAL")
+                kept = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel=channel)
                 turn_away("unreadable")
                 res["document_id"] = kept.document.id if kept.document is not None else None
                 continue
@@ -539,7 +663,10 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         if read_date and typed != read_date:
             ex["typed_issue_date"] = typed.isoformat()
             needs_review = (ex.get("date_source") or "").startswith("MODEL_VISION")
-        out = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel="CSP_UPLOAD_PORTAL",
+        if via_dc and _same_as_on_file(db, csp, doc_type, ex):
+            turn_away("dup_same", data, mime)
+            continue
+        out = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel=channel,
                                        sender_on_sheet=True)
         if out.decision == "DUPLICATE":
             res.update(message=_msg("duplicate"), reason="duplicate", ok=True,
@@ -552,6 +679,9 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
             doc.status = DocumentStatus.NEEDS_REVIEW
             db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
                                      reason=f"Typed issue date {typed} differs from date read by model {read_date}."))
+        if via_dc:
+            db.flush()
+            _list_for_review(db, doc, section)
         said = "received_check" if ex.get("type_review") else ("review" if needs_review else "accepted")
         res.update(ok=True, message=_msg(said), reason=said, document_id=doc.id,
                    issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))
@@ -559,7 +689,7 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
     if not results:
         raise HTTPException(422, detail={"hi": "कम से कम एक डॉक्यूमेंट चुनें।", "en": "Please choose at least one document."})
 
-    changes = _record_contact_changes(db, csp, {k: form.get(k) for k in ("name", "email", "mobile", "rm", "dc")})
+    changes = 0 if via_dc else _record_contact_changes(db, csp, {k: form.get(k) for k in ("name", "email", "mobile", "rm", "dc")})
     slab_before = csp.category
     # Category, and the follow-up cycles this upload satisfies, update now
     # (queued reminders for them are cancelled), not at the next daily run.
@@ -567,12 +697,13 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
     state = on_documents_received(db, csp, today)
     # One row per submission: the "Form uploads" page reads these.
     keep = ("section", "ok", "reason", "filename", "document_id", "kept_file", "read_as", "issue_date", "expiry_date")
-    db.add(AgreementEvent(csp_id=csp.id, event_type="PORTAL_UPLOAD", source="CSP_UPLOAD_PORTAL", channel="WEB",
+    db.add(AgreementEvent(csp_id=csp.id, event_type="PORTAL_UPLOAD", source=channel, channel="WEB",
                           payload={"results": [{k: r.get(k) for k in keep if r.get(k) is not None} for r in results],
                                    "contact_changes": changes, "slab_before": slab_before,
                                    "slab_after": state.category, "sub_slab_after": csp.sub_slab,
                                    "still_needed": state.needs_upload}))
-    revoke_if_complete(db, row, state.needs_upload)
+    if row is not None:
+        revoke_if_complete(db, row, state.needs_upload)
     db.commit()
 
     # Reply to the CSP at once: what was recorded and what wasn't (and why).

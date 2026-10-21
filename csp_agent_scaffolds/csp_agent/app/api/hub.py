@@ -650,6 +650,8 @@ REASON_TEXT = {
     "unreadable": "unreadable (counts as missing)", "received_check": "received, our team is checking it", "wrong_doc": "wrong document", "expired": "expired",
     "application_only": "application receipt, not the certificate",
     "iibf_receipt": "IIBF fee receipt, not the certificate",
+    "dc_valid": "already valid (master link: not needed yet)", "dc_in_review": "already being checked",
+    "dup_other": "file already on record for another CSP", "dup_same": "same document as the one on file",
     "too_small": "photo too small", "too_dark": "photo too dark", "washed_out": "photo washed out",
     "blurry": "photo blurry", "no_date": "no issue date", "future": "date in the future",
     "too_big": "file too large", "file_type": "not a PDF/JPG/PNG",
@@ -831,6 +833,29 @@ def monitor(tab: str, days: int = 0, db: Session = Depends(get_db)):
     return fn(db, days=min(max(days, 1), 90)) if days and "days" in fn.__code__.co_varnames else fn(db)
 
 
+@router.get("/master-link", dependencies=[Depends(require_admin)])
+def master_link_status(db: Session = Depends(get_db)):
+    from .. import master_link
+    return master_link.status(db)
+
+
+@router.post("/master-link", dependencies=[Depends(require_admin)])
+def master_link_create(me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """A new DC master link (the old one stops working). The URL is shown once."""
+    from .. import master_link
+    url = master_link.create(db, me.name)
+    db.commit()
+    return {"url": url, **master_link.status(db)}
+
+
+@router.post("/master-link/revoke", dependencies=[Depends(require_admin)])
+def master_link_revoke(db: Session = Depends(get_db)):
+    from .. import master_link
+    n = master_link.revoke_all(db)
+    db.commit()
+    return {"revoked": n}
+
+
 @router.get("/accuracy", dependencies=[Depends(require_admin)])
 def accuracy_stats(days: int = 90, db: Session = Depends(get_db)):
     from .. import accuracy
@@ -950,7 +975,11 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
     db.commit()
     # A CSP's own upload that waited for a person: tell them the outcome now
     # (not for spot / reference checks of documents already accepted).
-    if d.upload_channel == "CSP_UPLOAD_PORTAL" and not (q.reason or "").startswith(("Spot check", "Reference check")):
+    # (A master-link listing of a document that already counts: accepting it
+    # changes nothing for the CSP, so no second message.)
+    dc_listing = (q.reason or "").startswith("DC upload") and "already counted" in (q.reason or "")[:80]
+    if d.upload_channel in ("CSP_UPLOAD_PORTAL", "DC_MASTER_LINK") \
+            and not (q.reason or "").startswith(("Spot check", "Reference check")) and not (dc_listing and accept):
         from ..comms.upload_receipt import send_upload_receipt
         from sqlalchemy.orm import sessionmaker
         send_upload_receipt(c.id, [{"type": canonical_type(d.document_type), "ok": accept,

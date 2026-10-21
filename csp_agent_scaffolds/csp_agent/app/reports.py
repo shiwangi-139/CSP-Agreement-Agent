@@ -84,10 +84,14 @@ def _save(wb: Workbook) -> io.BytesIO:
 
 
 # ------------------------------------------------------------ CSP report
-def csp_report(db: Session, today: Optional[date] = None) -> io.BytesIO:
+def csp_report(db: Session, today: Optional[date] = None, csp_ids: Optional[list[int]] = None) -> io.BytesIO:
+    """The CSP report; csp_ids limits it to those CSPs (e.g. one DC's)."""
     today = today or date.today()
     staff = {u.id: u for u in db.query(InternalUser).all()}
-    csps = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).order_by(CSP.current_code).all()
+    q = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True))
+    if csp_ids is not None:
+        q = q.filter(CSP.id.in_(csp_ids or [-1]))
+    csps = q.order_by(CSP.current_code).all()
 
     head = ["CSP code", "CSP name", "State", "Branch", "Phone", "Email", "RM", "DC", "Label", "Label name",
             "Sub-group", "Reason"]

@@ -469,3 +469,15 @@ class MonitorRun(Base):
     finished_at = Column(DateTime)
     status = Column(String)                              # OK, FAILED, SKIPPED
     summary = Column(JSONB)
+
+
+class MasterLink(Base):
+    """The DC master upload link (app/master_link.py): one link for all
+    working CSPs. Only the SHA-256 of the token is stored."""
+    __tablename__ = "master_links"
+    id = Column(Integer, primary_key=True)
+    token_hash = Column(String, unique=True, nullable=False)
+    created_by = Column(String)
+    created_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    revoked_at = Column(DateTime)
