@@ -3,7 +3,9 @@ Police Verification (PVR) / Character Certificate rules.
 
 Issue date:
   1. The digital-signature date, e.g.
-     "Digitally signed by KESHAV KUMAR  Date: 2026.01.28 18:29:17 +05'30'".
+     "Digitally signed by KESHAV KUMAR  Date: 2026.01.28 18:29:17 +05'30'",
+     or its time stamp alone when OCR garbles the "Digitally signed by" or
+     the "T" of "2025-08-26T12:45:25+05:30" (Haryana Police).
   2. Otherwise the date at the top of the certificate, e.g.
      "Application No. - 2025... Date - 07-05-2025 CHARACTER CERTIFICATE",
      "Date- 29/05/2025", "दिनांक 07/05/2025", "Approval Date: 10/07/2025".
@@ -24,7 +26,13 @@ from typing import Optional
 
 from .dates import find_dates, dates_after, plausible_issue_date, normalize
 
-SIGNATURE = re.compile(r"digitally\s*sign\w*\s*by", re.I)
+SIGNATURE = re.compile(r"digitally\s*s\w{0,2}[gq]?n\w*\s*by", re.I)   # also OCR's "Sianed", "Sigend"
+# The time stamp under a digital signature, e.g. Haryana's
+# "Date: 2025-08-26T12:45:25.8392903+05:30". OCR often reads the "T" as 1 / I
+# or drops it ("2025-08-2612:45"), which hides the date from find_dates; the
+# time and the +05:30 after it still say it is the signing moment.
+SIGN_STAMP = re.compile(r"(?<!\d)(20\d\d)\s?-\s?(0[1-9]|1[0-2])\s?-\s?(0[1-9]|[12]\d|3[01])"
+                        r"\s?[T1Il|]?\s?\d{1,2}\s?[:.?]\s?[\d?]{1,2}[^\n]{0,25}?\+\s?0?5\s?[:.]?\s?30")
 SIGN_DATE_LABEL = re.compile(r"\bdate\s*[:\-]?\s*", re.I)
 TOP_LABEL = re.compile(r"(?:approval\s*date|issue\s*date|date\s*of\s*issue|dated|date|दिनांक|तिथि|जारी\s*दिनांक|निर्गत\s*तिथि)\s*[:\-–.]*\s*", re.I)
 VALID_UPTO = re.compile(r"(?:valid\s*(?:up\s*to|upto|till|until)|वैध\s*(?:तिथि)?)\s*[:\-]?\s*", re.I)
@@ -81,6 +89,16 @@ def extract_pvr(text: str, today: Optional[date] = None) -> dict:
                 break
         if out["issue_date"]:
             break
+
+    if out["issue_date"] is None:
+        for m in SIGN_STAMP.finditer(text):
+            try:
+                d = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            except ValueError:
+                continue
+            if plausible_issue_date(d, today):
+                out["issue_date"], out["date_source"] = d, "PVR_DIGITAL_SIGNATURE_DATE"
+                break
 
     if out["issue_date"] is None:
         top = text[: max(800, len(text) // 4)]

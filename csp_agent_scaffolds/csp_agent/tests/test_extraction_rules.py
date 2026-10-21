@@ -499,3 +499,29 @@ def test_a_valid_agreement_with_a_guessed_validity_gets_a_check(tmp_path):
                                               today=date(2026, 10, 18))
     assert r["compliance_status"] == "VALID" and not r.get("type_review")
     assert r["validity_check"].startswith("Validity check")
+
+
+# Haryana Police "Character Verification Certificate": the police line's
+# "TILL DATED 25.08.2025" is the record-check date; the certificate is issued
+# when it is digitally signed, the next day.
+HARYANA_CVC = ("HARYANA POLICE CITIZEN SERVICES\nCharacter Verification Certificate\nTo Whomsoever It May Concern\n"
+               "The above-mentioned person has applied for Character Verification Certificate on Haryana Police "
+               "citizen portal on\n06/a8lzozs\nTFIERE 15 NOTHING ADVERSE AGAII\\ST THE APPLICANT AS PER REPORT OF "
+               "POLICE STATION PARTAP NAGAR TILL DATED 25.08.2025\n")
+
+
+@pytest.mark.parametrize("stamp", [
+    "Digitally Signed by:\nKanwal Jeet\nPersonal\nDate: 2025-08-26T12:45:25.8392903+05:30",
+    "Digitally Signed by:\nKanwal Jeet\nPersonal\nDate: 2025-08-2612:45:25.8392903+05:30",     # "T" lost
+    "Digitally Signed by:\nKanwal Jeet\nPersonal\nDate: 2025-08-26I12:?5:25.8392903+05:30",    # "T" as I, digit hidden
+    "Digitally Sianed by:\nKanwal Jeet\nPersonal\nDate: 2025-08-26T12:45:25.8392903+05:30",    # "Signed" misread
+])
+def test_pvr_haryana_signature_date_even_when_ocr_garbles_it(stamp):
+    r = extract_pvr(HARYANA_CVC + stamp, date(2026, 10, 21))
+    assert r["issue_date"] == date(2025, 8, 26) and r["date_source"] == "PVR_DIGITAL_SIGNATURE_DATE"
+    assert r["validity_months"] == 12 and r["validity_source"] == "PVR_DEFAULT_1_YEAR"
+
+
+def test_pvr_haryana_without_signature_keeps_the_dated_line():
+    r = extract_pvr(HARYANA_CVC, date(2026, 10, 21))
+    assert r["issue_date"] == date(2025, 8, 25)
