@@ -898,12 +898,12 @@
           <td class="num">${r.valid_before}</td><td class="num">${r.valid_now}</td><td class="num">${ch(r.valid_before, r.valid_now)}</td>
           <td class="num">${r.improved}</td><td class="num">${r.worse}</td><td class="num">${r.need_now}</td></tr>`;
         const text = [`DC progress: ${fmtD(d.base_day)} → ${fmtD(d.today)}`, "",
-          "DC | CSPs | Left to upload (Labels 2-4) | All 3 OK (before → now) | Valid docs (before → now) | Improved | Still need docs",
+          "DC | CSPs | Left to upload | All 3 OK (before → now) | Valid docs (before → now) | Improved | Still need docs",
           ...d.rows.concat([{...d.total, dc: "TOTAL"}]).map((r) => `${r.dc} | ${r.csps} | ${r.left_now} | ${r.complete_before} → ${r.complete_now} | ${r.valid_before} → ${r.valid_now} | ${r.improved} | ${r.need_now}`)].join("\n");
         state.dcProgText = text;
         $("#dcprog").innerHTML = !d.base_day ? `<p class="small muted">No earlier day saved yet: the first daily snapshot is taken at 09:30. Try again tomorrow.</p>` :
           `<p class="small muted">Previous day = the 09:30 snapshot of <b>${fmtD(d.base_day)}</b>; now = live. Only CSPs in Labels 1–4. "All 3 OK" = all three documents valid.</p>
-          <div class="tablewrap"><table><thead><tr><th>DC</th><th class="num">CSPs</th><th class="num">Left to upload<br>(Labels 2–4)</th>
+          <div class="tablewrap"><table><thead><tr><th>DC</th><th class="num">CSPs</th><th class="num">Left to upload</th>
           <th class="num">All 3 OK<br>before</th><th class="num">All 3 OK<br>now</th><th class="num">Change</th>
           <th class="num">Valid docs<br>before</th><th class="num">Valid docs<br>now</th><th class="num">Change</th>
           <th class="num">CSPs<br>improved</th><th class="num">CSPs<br>went back</th><th class="num">Still need<br>docs</th></tr></thead>
