@@ -183,3 +183,26 @@ def test_document_without_a_readable_name_is_taken_and_flagged(client):
     d = s.query(Document).filter_by(csp_id=cid).one()
     assert "not confirmed" in s.query(ManualReviewQueue).filter_by(document_id=d.id).one().reason
     s.close()
+
+
+def test_dc_text_summary_counts_and_lists(client, monkeypatch):
+    from app.models import InternalUser
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    cid_a, code_a, _ = _csp(Session)
+    cid_b, code_b, _ = _csp(Session)
+    s = Session()
+    dc = InternalUser(name="DC Summary Person", role="DC")
+    s.add(dc)
+    s.flush()
+    s.get(CSP, cid_a).dc_id = s.get(CSP, cid_b).dc_id = dc.id
+    s.commit()
+    dc_id = dc.id
+    s.close()
+    _valid_doc(Session, cid_a, "POLICE_VERIFICATION", date.today() + timedelta(days=30))
+    text = c.get(f"/api/hub/dc-summary?dc_id={dc_id}", headers=hdr).json()["text"]
+    print(text)
+    assert "Total CSPs: *2*" in text and "Need documents: *2*" in text
+    assert "Renew within 60 days: *1*" in text and code_a in text and code_b in text
+    assert c.get("/api/hub/dc-summary?dc_id=999999", headers=hdr).status_code == 404

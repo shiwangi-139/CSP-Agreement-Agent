@@ -850,6 +850,16 @@ def _dc_names(db: Session) -> list[dict]:
             if counts.get(u.id)]
 
 
+@router.get("/dc-summary", dependencies=[Depends(require_admin)])
+def dc_summary(dc_id: int, db: Session = Depends(get_db)):
+    """One DC's CSPs as a short text to copy into WhatsApp."""
+    from .. import reports
+    dc = db.get(InternalUser, dc_id)
+    if dc is None or dc.role != "DC":
+        raise HTTPException(404, "No such DC")
+    return {"text": reports.dc_summary_text(db, dc)}
+
+
 @router.get("/dc-report.xlsx", dependencies=[Depends(require_admin)])
 def dc_report_xlsx(dc_id: int, db: Session = Depends(get_db)):
     """One DC's CSPs in plain words, to share with that DC."""

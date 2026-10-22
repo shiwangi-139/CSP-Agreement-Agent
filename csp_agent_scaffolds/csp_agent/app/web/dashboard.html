@@ -678,7 +678,10 @@
           <div class="meta" style="margin-top:14px"><b>Excel for one DC</b></div>
           <p class="small muted">That DC's CSPs in plain words: what is on file and what to upload, needs first, coloured green / yellow / red. Download it and share it with the DC yourself.</p>
           <div class="toolbar"><select id="dcxl">${m.dcs.map((u) => `<option value="${u.id}">${esc(u.name)} (${u.csps} CSPs)</option>`).join("")}</select>
-          <button class="btn" data-dcxlsx="1" ${m.dcs.length ? "" : "disabled"}>Download DC Excel</button></div></div>`;
+          <button class="btn" data-dcxlsx="1" ${m.dcs.length ? "" : "disabled"}>Download DC Excel</button>
+          <button class="btn" data-dctext="1" ${m.dcs.length ? "" : "disabled"}>Text summary</button></div>
+          <div id="dcsum" style="display:none;margin-top:8px"><textarea id="dcsumtext" readonly rows="16" style="width:100%;font:13px/1.45 ui-monospace,monospace"></textarea>
+          <div class="toolbar"><button class="btn primary" data-dccopy="1">Copy</button><span class="small muted">Paste it into WhatsApp for the DC.</span></div></div></div>`;
       }
       const OUT = {accepted: ["VALID", "all accepted"], checking: ["REVIEW", "being checked"], partly: ["REVIEW", "partly accepted"], rejected: ["EXPIRED", "nothing accepted"]};
       const slabTxt = (n, sub) => n ? `Label ${sub || n}` : "—";
@@ -843,7 +846,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-dcxlsx],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-dcxlsx],[data-dctext],[data-dccopy],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -879,6 +882,15 @@
         if (!r.ok) return alert("Download failed: " + r.status);
         const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
         a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "dc.xlsx"; a.click(); return;
+      }
+      if (ds.dctext) {
+        const d = await api(`/api/hub/dc-summary?dc_id=${$("#dcxl").value}`);
+        $("#dcsumtext").value = d.text; $("#dcsum").style.display = "block"; return;
+      }
+      if (ds.dccopy) {
+        const ta = $("#dcsumtext"); ta.select();
+        try { await navigator.clipboard.writeText(ta.value); } catch (_) { document.execCommand("copy"); }
+        return toast("Summary copied");
       }
       if (ds.mlink === "new") { if (!confirm("Make a new DC master link? Any older master link stops working.")) return; state.mlUrl = (await post("/api/hub/master-link")).url; return render(); }
       if (ds.mlink === "revoke") { if (!confirm("Switch off the DC master link? DCs can no longer use it.")) return; await post("/api/hub/master-link/revoke"); state.mlUrl = ""; return render(); }

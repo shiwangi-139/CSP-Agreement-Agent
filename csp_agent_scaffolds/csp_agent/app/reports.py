@@ -167,15 +167,13 @@ def _dc_doc_text(t: str, s, today: date) -> tuple[str, Optional[PatternFill]]:
     return "MISSING – upload it", RED
 
 
-def dc_report(db: Session, dc: InternalUser, today: Optional[date] = None) -> io.BytesIO:
-    """One DC's working CSPs (Labels 1-4), one row each, in plain words: what
-    is on file and what to upload. CSPs with something to do come first."""
+def _dc_rows(db: Session, dc: InternalUser, today: date) -> list[tuple]:
+    """(documents to upload, CSP, RM, [(text, fill)] per document, [labels to
+    upload], ComplianceState) for each of the DC's working CSPs, needs first."""
     from .compliance import working_clause
-    today = today or date.today()
     staff = {u.id: u for u in db.query(InternalUser).all()}
-    csps = db.query(CSP).filter(working_clause(), CSP.dc_id == dc.id).order_by(CSP.current_code).all()
     rows = []
-    for c in csps:
+    for c in db.query(CSP).filter(working_clause(), CSP.dc_id == dc.id).order_by(CSP.current_code):
         st = evaluate(db, c, today)
         cells, todo = [], []
         for t in REQUIRED_TYPES:
@@ -184,9 +182,68 @@ def dc_report(db: Session, dc: InternalUser, today: Optional[date] = None) -> io
             cells.append((text, fill))
             if fill is RED or (fill is AMBER and not s.in_review):
                 todo.append(DOC_LABELS[t][0])
-        rm = staff.get(c.rm_id)
-        rows.append((len(todo), c, rm, cells, todo))
+        rows.append((len(todo), c, staff.get(c.rm_id), cells, todo, st))
     rows.sort(key=lambda r: (-r[0], r[1].current_code))
+    return rows
+
+
+DC_SHORT = {"AGREEMENT": "Agreement", "POLICE_VERIFICATION": "Police Verification", "IIBF_CERTIFICATE": "IIBF"}
+DC_SHORT_HI = {"AGREEMENT": "एग्रीमेंट", "POLICE_VERIFICATION": "पुलिस वेरिफिकेशन", "IIBF_CERTIFICATE": "IIBF सर्टिफिकेट"}
+
+
+def dc_summary_text(db: Session, dc: InternalUser, today: Optional[date] = None) -> str:
+    """One DC's CSPs as a short text (to paste into WhatsApp): numbers first,
+    then which CSP needs which document. Hindi and English."""
+    today = today or date.today()
+    rows = _dc_rows(db, dc, today)
+    fmt = lambda d: d.strftime("%d-%m-%Y")
+    total, need = len(rows), [r for r in rows if r[0]]
+    by_n = {n: sum(1 for r in rows if r[0] == n) for n in (1, 2, 3)}
+    out = [f"*CSP डॉक्यूमेंट रिपोर्ट / CSP document report*", f"DC: {dc.name}", f"तारीख / Date: {fmt(today)}", "",
+           f"कुल CSP / Total CSPs: *{total}*",
+           f"✅ सारे 3 डॉक्यूमेंट ठीक / All 3 documents OK: *{total - len(need)}*",
+           f"❗ डॉक्यूमेंट चाहिए / Need documents: *{len(need)}*"]
+    out += [f"   • {n} डॉक्यूमेंट / {n} document{'s' if n > 1 else ''}: {by_n[n]}" for n in (3, 2, 1) if by_n[n]]
+    out += ["", "*कौन सा डॉक्यूमेंट कितने CSP को चाहिए / Documents to upload:*"]
+    soon, checking = [], 0
+    for t in REQUIRED_TYPES:
+        miss = exp = bad = 0
+        for r in rows:
+            s = r[5].docs[t]
+            if s.in_review:
+                checking += 1
+            elif s.status == "VALID" and s.days_left is not None and s.days_left <= EXPIRING_WITHIN_DAYS:
+                soon.append((s.expiry_date, r[1], t))
+            elif s.status == "EXPIRED":
+                exp += 1
+            elif s.status == "UNREADABLE":
+                bad += 1
+            elif s.status != "VALID":
+                miss += 1
+        parts = [f"नहीं है / missing {miss}"] + ([f"खत्म / expired {exp}"] if exp else []) \
+            + ([f"साफ़ नहीं / not readable {bad}"] if bad else [])
+        out.append(f"• {DC_SHORT_HI[t]} / {DC_SHORT[t]}: *{miss + exp + bad}* ({', '.join(parts)})")
+    out.append(f"• 60 दिन में रिन्यू / Renew within 60 days: *{len(soon)}*")
+    out.append(f"• Eko जाँच कर रहा है / Being checked by Eko: *{checking}*")
+    if need:
+        out += ["", "*CSP सूची (ज़्यादा ज़रूरी पहले) / CSP list (most needed first):*"]
+        for i, r in enumerate(need, 1):
+            c = r[1]
+            names = [DC_SHORT[t] for t in REQUIRED_TYPES if DOC_LABELS[t][0] in r[4]]
+            out.append(f"{i}. {c.current_code} {c.name} – {r[0]} डॉक्यूमेंट / doc{'s' if r[0] > 1 else ''}: {', '.join(names)}")
+    if soon:
+        out += ["", "*जल्दी रिन्यू करें / Renew soon:*"]
+        for exp_date, c, t in sorted(soon, key=lambda x: x[0]):
+            out.append(f"• {c.current_code} {c.name}: {DC_SHORT[t]} – {fmt(exp_date)} ({(exp_date - today).days} दिन / days)")
+    out += ["", "अपलोड के लिए DC लिंक में KO कोड डालें। / Enter the KO code in the DC link to upload."]
+    return "\n".join(out)
+
+
+def dc_report(db: Session, dc: InternalUser, today: Optional[date] = None) -> io.BytesIO:
+    """One DC's working CSPs (Labels 1-4), one row each, in plain words: what
+    is on file and what to upload. CSPs with something to do come first."""
+    today = today or date.today()
+    rows = _dc_rows(db, dc, today)
 
     wb = Workbook()
     ws = wb.active
@@ -206,7 +263,7 @@ def dc_report(db: Session, dc: InternalUser, today: Optional[date] = None) -> io
     for cell in ws[hr]:
         cell.font, cell.fill = Font(bold=True, color="FFFFFF"), HEADER
         cell.alignment = Alignment(vertical="center", wrap_text=True)
-    for n, c, rm, cells, todo in rows:
+    for n, c, rm, cells, todo, _ in rows:
         ws.append([c.current_code, c.name, c.phone, c.state, ", ".join(todo) if todo else "Nothing – all OK"]
                   + [t for t, _ in cells] + [rm.name if rm else ""])
         r = ws.max_row
