@@ -228,5 +228,5 @@ def test_dc_progress_compares_the_previous_day_with_now(client, monkeypatch):
     d = c.get("/api/hub/dc-progress", headers=hdr).json()
     assert d["base_day"] is not None
     row = next(r for r in d["rows"] if r["dc"] == "DC Progress Person")
-    assert row == {"dc": "DC Progress Person", "csps": 1, "complete_before": 0, "complete_now": 0,
+    assert row == {"dc": "DC Progress Person", "csps": 1, "left_now": 1, "complete_before": 0, "complete_now": 0,
                    "valid_before": 0, "valid_now": 1, "improved": 1, "worse": 0, "need_now": 1}

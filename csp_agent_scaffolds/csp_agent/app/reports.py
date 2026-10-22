@@ -250,7 +250,7 @@ def dc_progress(db: Session, today: Optional[date] = None) -> dict:
     old = {cid: docs or {} for cid, docs in
            db.query(LabelSnapshot.csp_id, LabelSnapshot.docs).filter(LabelSnapshot.day == base)} if base else {}
     names = {u.id: u.name for u in db.query(InternalUser)}
-    keys = ("csps", "complete_before", "complete_now", "valid_before", "valid_now", "improved", "worse", "need_now")
+    keys = ("csps", "left_now", "complete_before", "complete_now", "valid_before", "valid_now", "improved", "worse", "need_now")
     by_dc: dict = {}
     for c in db.query(CSP).filter(working_clause()):
         st = evaluate(db, c, today)
@@ -259,6 +259,7 @@ def dc_progress(db: Session, today: Optional[date] = None) -> dict:
         was_valid = sum(1 for v in before.values() if v == "VALID") if before is not None else now_valid
         r = by_dc.setdefault(names.get(c.dc_id) or "No DC", dict.fromkeys(keys, 0))
         r["csps"] += 1
+        r["left_now"] += st.category in (2, 3, 4)          # documents still to upload (Labels 2-4)
         r["valid_before"] += was_valid
         r["valid_now"] += now_valid
         r["complete_before"] += was_valid == 3
