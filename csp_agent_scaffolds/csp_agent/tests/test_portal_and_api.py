@@ -733,3 +733,21 @@ def test_reviewer_types_the_expiry_date_written_on_the_document(client, monkeypa
     assert d.expiry_date == date(2027, 2, 20) and d.status == DocumentStatus.MANUAL_VERIFIED
     assert s.get(ManualReviewQueue, qid).status == ReviewStatus.CORRECTED
     s.close()
+
+
+def test_portal_agreement_past_the_one_year_rule_is_turned_away_as_expired(client, monkeypatch):
+    """No validity written: 1 year (Eko's rule), so an older agreement is
+    expired and the CSP is asked for the renewed one."""
+    from app.api import portal
+    c, Session = client
+    cid, _, token = _csp(Session)
+    issue = date.today() - timedelta(days=500)
+    monkeypatch.setattr(portal, "extract_document_fields_deterministic", lambda *a, **k: {
+        "readability": "READABLE", "document_type": "AGREEMENT", "compliance_status": "EXPIRED",
+        "start_date": issue.isoformat(), "expiry_date": (issue + timedelta(days=365)).isoformat(),
+        "validity_rule_used": "AGREEMENT_DEFAULT_1_YEAR", "date_source": "AGREEMENT_HEADING_DATE",
+        "validity_check": "Validity check: ..."})
+    r = c.post("/api/portal/upload", data=_form(token, agreement_issue_date=issue.isoformat()),
+               files={"agreement_file": ("a.pdf", _pvr_pdf(issue), "application/pdf")})
+    res = r.json()["results"][0]
+    assert not res["ok"] and res["message"]["en"] == portal.MSG["expired"][1]

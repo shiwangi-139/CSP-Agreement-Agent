@@ -414,22 +414,18 @@ def extract_document_fields_deterministic(
     status = exp["status"]
     if doc_type == "AGREEMENT" and r.get("validity_conflict"):
         type_review = " ".join(x for x in (type_review, r["validity_conflict"]) if x)
-    if doc_type == "AGREEMENT" and status == "EXPIRED" and (validity_source or "").startswith("AGREEMENT_DEFAULT"):
-        # "Expired" only from the 1-year default (no validity found in the
-        # text): never turned away automatically. The wording may simply be
-        # one the rules don't know yet; a person reads the agreement.
-        status = "NEEDS_REVIEW"
-        type_review = " ".join(x for x in (type_review, (
-            f"No validity period or end date was found in the agreement, so the default of "
-            f"{AGREEMENT_DEFAULT_YEARS} year would make it expired on {expiry:%d-%m-%Y}. Check the agreement for "
-            "its term (e.g. 'for a period of 36 months … ending on …') and enter the right expiry, or reject it.")) if x)
-
+    # No validity or end date written: AGREEMENT_DEFAULT_YEARS is Eko's rule
+    # (since 2026-10-22), so past it the agreement is expired and the CSP
+    # renews it. A person still checks the term for now (validity_check).
     validity_check = None
-    if doc_type == "AGREEMENT" and status == "VALID" and (validity_source or "").startswith("AGREEMENT_DEFAULT") \
+    if doc_type == "AGREEMENT" and status in ("VALID", "EXPIRED") \
+            and (validity_source or "").startswith("AGREEMENT_DEFAULT") \
             and not three_year and not r.get("explicit_expiry"):
-        validity_check = (f"Validity check: no term or end date was read, so a default of {AGREEMENT_DEFAULT_YEARS} "
-                          f"year was used (expiry {expiry:%d-%m-%Y}). Accepted meanwhile. Read the term on the "
-                          "document and set it under 'Validity stated' (e.g. 3 years), then Accept.")
+        validity_check = (f"Validity check: no term or end date was read, so the {AGREEMENT_DEFAULT_YEARS}-year rule "
+                          f"was used (expiry {expiry:%d-%m-%Y}"
+                          + ("; accepted meanwhile" if status == "VALID" else "; the CSP is asked to renew it")
+                          + "). If the document states a longer term, set it under 'Validity stated' "
+                          "(e.g. 3 years), then Accept.")
 
     from_model = date_source.startswith("MODEL_VISION")
     field_conf = {

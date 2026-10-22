@@ -460,9 +460,9 @@ def _surely_expired(ex: dict, typed: Optional[date]) -> bool:
     the rules (not the model) read the issue date, the CSP typed the same
     date, and the validity was printed or stated (not a default)."""
     rule = (ex.get("validity_rule_used") or "").upper()
-    # A police certificate that states no validity gets 1 year by Eko's
-    # policy: that is a rule, not a guess. An agreement's default is a guess.
-    guessed_validity = "DEFAULT" in rule and not rule.startswith("PVR_DEFAULT")
+    # A police certificate or agreement that states no validity gets 1 year by
+    # Eko's policy: that is a rule, not a guess.
+    guessed_validity = "DEFAULT" in rule and not rule.startswith(("PVR_DEFAULT", "AGREEMENT_DEFAULT"))
     return (not ex.get("type_review")
             and not (ex.get("date_source") or "").startswith("MODEL_VISION")
             and not guessed_validity

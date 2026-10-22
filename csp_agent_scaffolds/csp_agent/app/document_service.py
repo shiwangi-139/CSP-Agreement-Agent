@@ -156,9 +156,10 @@ def store_extracted_document(
     if owner_review or type_review:
         db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
                                  reason=" ".join(r for r in (owner_review, type_review) if r)[:500]))
-    elif extraction.get("validity_check") and status == DocumentStatus.VALID:
-        # Accepted (it counts), but its validity is only a guess: a person
-        # reads the term and sets it with "Validity stated" in the queue.
+    elif extraction.get("validity_check") and status in (DocumentStatus.VALID, DocumentStatus.EXPIRED):
+        # Validity by the 1-year rule (no term read): it counts as it is
+        # (valid, or expired and to be renewed); a person reads the term and
+        # sets it with "Validity stated" in the queue.
         db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
                                  reason=extraction["validity_check"][:500]))
     else:

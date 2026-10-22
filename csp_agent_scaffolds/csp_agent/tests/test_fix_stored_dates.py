@@ -90,3 +90,28 @@ def test_a_valid_agreement_kept_only_by_a_guess_gets_a_check_but_stays_accepted(
     doc = db.get(Document, doc.id)
     assert doc.status == DocumentStatus.VALID and doc.is_current
     assert db.query(ManualReviewQueue).filter_by(document_id=doc.id).one().reason.startswith("Validity check")
+
+
+def test_an_agreement_held_only_by_the_old_default_rule_becomes_expired_with_a_check(db_session, tmp_path, monkeypatch, capsys):
+    from app.compliance import evaluate
+    from app.models import ReviewStatus
+    db = db_session
+    lines = ["CUSTOMER SERVICE POINT AGREEMENT", 'On this day of, 13/02/2025 ("Effective Date"), CSP Name X']
+    c, doc = _doc(db, tmp_path, lines, status=DocumentStatus.NEEDS_REVIEW, issue_date=date(2025, 2, 13),
+                  expiry_date=date(2026, 2, 13), validity_rule_used="AGREEMENT_DEFAULT_1_YEAR")
+    db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=(
+        "No validity period or end date was found in the agreement, so the default of 1 year would make it "
+        "expired on 13-02-2026. Check the agreement for its term.")))
+    db.commit()
+    _run(db, monkeypatch, "--csp", c.current_code)                       # dry run: listed, nothing changed
+    assert "[1-year rule]" in capsys.readouterr().out
+    db.refresh(doc)
+    assert doc.status == DocumentStatus.NEEDS_REVIEW
+    _run(db, monkeypatch, "--csp", c.current_code, "--apply")
+    db.expire_all()
+    doc = db.get(Document, doc.id)
+    assert doc.status == DocumentStatus.EXPIRED
+    q = db.query(ManualReviewQueue).filter_by(document_id=doc.id).one()
+    assert q.status == ReviewStatus.PENDING and q.reason.startswith("Validity check")
+    s = evaluate(db, db.get(CSP, c.id)).docs["AGREEMENT"]
+    assert s.status == "EXPIRED" and not s.in_review                    # the CSP is asked to renew it

@@ -16,6 +16,12 @@ What happens to each current document (no AI model, one file at a time):
                 term read): stays accepted, and a person sets its real term in
                 the Review queue ("Validity stated").
   kept          dates a person entered or confirmed are never changed.
+  1-year rule   an agreement held in the Review queue only because the old
+                rules treated the 1-year default as a guess ("No validity
+                period or end date was found ...") is now expired by the
+                1-year rule (2026-10-22): it stops being "being checked", the
+                CSP is asked to renew it, and its queue item becomes a
+                "Validity check" (a person can still set a longer term).
 Nothing else changes, and no CSP is messaged unless --message is given.
 
     python -m scripts.fix_stored_dates                     # dry run: what would change
@@ -37,6 +43,7 @@ from app.models import CSP, Document, DocumentStatus, ManualReviewQueue, ReviewS
 from scripts.check_all_documents import read_isolated
 
 TYPES = ("AGREEMENT", "POLICE_VERIFICATION")
+OLD_DEFAULT_HOLD = "No validity period or end date was found in the agreement"
 
 
 def decide(doc: Document, ex: dict) -> tuple[str, str]:
@@ -117,6 +124,27 @@ def main():
                 db.flush()
             if i % 25 == 0:
                 print(f"... {i}/{len(rows)}", flush=True)
+        # Agreements held only by the old "default = guess" rule.
+        held = (db.query(ManualReviewQueue, Document, CSP).join(Document, Document.id == ManualReviewQueue.document_id)
+                .join(CSP, CSP.id == Document.csp_id)
+                .filter(ManualReviewQueue.status == ReviewStatus.PENDING, Document.document_type == "AGREEMENT",
+                        Document.status == DocumentStatus.NEEDS_REVIEW,
+                        ManualReviewQueue.reason.like(f"{OLD_DEFAULT_HOLD}%")))
+        if a.csp:
+            held = held.filter(CSP.current_code == a.csp.strip().upper())
+        for q, doc, csp in held.order_by(CSP.current_code).all():
+            if doc.expiry_date is None or doc.expiry_date >= date.today() or doc.date_source == "MANUAL_REVIEW":
+                continue
+            counts["1-year rule"] = counts.get("1-year rule", 0) + 1
+            print(f"{csp.current_code} {csp.name[:22]:22} AGREEM {doc.issue_date} -> {doc.expiry_date}   [1-year rule] "
+                  "expired, CSP asked to renew", flush=True)
+            if a.apply:
+                doc.status = DocumentStatus.EXPIRED
+                q.reason = (f"Validity check: no term or end date was read, so the 1-year rule was used (expiry "
+                            f"{doc.expiry_date:%d-%m-%Y}; the CSP is asked to renew it). If the document states a "
+                            "longer term, set it under 'Validity stated' (e.g. 3 years), then Accept.")
+                touched.add(csp.id)
+                db.flush()
         if a.apply:
             from app.renewal_engine import on_documents_received
             for cid in touched:

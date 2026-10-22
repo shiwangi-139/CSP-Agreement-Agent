@@ -350,8 +350,9 @@ def test_printed_end_date_that_disagrees_with_the_stated_period_is_flagged():
     assert r["explicit_expiry"] == date(2026, 5, 25) and "check which is right" in r["validity_conflict"]
 
 
-def test_expired_only_by_the_one_year_default_goes_to_review_not_rejected(tmp_path):
-    """No validity found ('valid until terminated' only): never turned away as expired."""
+def test_agreement_without_a_stated_validity_expires_after_one_year_and_is_checked(tmp_path):
+    """No validity found ('valid until terminated' only): Eko's 1-year rule
+    (2026-10-22) makes it expired, to be renewed; a person still checks the term."""
     import pymupdf
     from app.ai.extraction.deterministic_extractor import extract_document_fields_deterministic
     d = pymupdf.open()
@@ -364,7 +365,8 @@ def test_expired_only_by_the_one_year_default_goes_to_review_not_rejected(tmp_pa
         page.insert_text((30, 60 + 20 * i), line, fontsize=8)
     r = extract_document_fields_deterministic(d.tobytes(), "agreement.pdf", allow_llm_fallback=False,
                                               expected_type="AGREEMENT")
-    assert r["compliance_status"] == "NEEDS_REVIEW" and "No validity period" in r["type_review"]
+    assert r["compliance_status"] == "EXPIRED" and r["expiry_date"] == "2025-07-12" and not r.get("type_review")
+    assert r["validity_check"].startswith("Validity check") and "renew" in r["validity_check"]
 
 
 # ------------------- cases from real uploads (18 Oct 2026), text as OCR read it
