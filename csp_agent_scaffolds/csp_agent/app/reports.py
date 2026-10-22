@@ -239,6 +239,38 @@ def dc_summary_text(db: Session, dc: InternalUser, today: Optional[date] = None)
     return "\n".join(out)
 
 
+def dc_progress(db: Session, today: Optional[date] = None) -> dict:
+    """Per DC: their working CSPs' documents on the previous day (the latest
+    daily Label snapshot before today, app/monitoring.py) and now."""
+    from sqlalchemy import func
+    from .compliance import working_clause
+    from .models import LabelSnapshot
+    today = today or date.today()
+    base = db.query(func.max(LabelSnapshot.day)).filter(LabelSnapshot.day < today).scalar()
+    old = {cid: docs or {} for cid, docs in
+           db.query(LabelSnapshot.csp_id, LabelSnapshot.docs).filter(LabelSnapshot.day == base)} if base else {}
+    names = {u.id: u.name for u in db.query(InternalUser)}
+    keys = ("csps", "complete_before", "complete_now", "valid_before", "valid_now", "improved", "worse", "need_now")
+    by_dc: dict = {}
+    for c in db.query(CSP).filter(working_clause()):
+        st = evaluate(db, c, today)
+        now_valid = sum(1 for s in st.docs.values() if s.status == "VALID" and not s.in_review)
+        before = old.get(c.id)
+        was_valid = sum(1 for v in before.values() if v == "VALID") if before is not None else now_valid
+        r = by_dc.setdefault(names.get(c.dc_id) or "No DC", dict.fromkeys(keys, 0))
+        r["csps"] += 1
+        r["valid_before"] += was_valid
+        r["valid_now"] += now_valid
+        r["complete_before"] += was_valid == 3
+        r["complete_now"] += now_valid == 3
+        r["improved"] += now_valid > was_valid
+        r["worse"] += now_valid < was_valid
+        r["need_now"] += now_valid < 3
+    rows = [{"dc": k, **v} for k, v in sorted(by_dc.items(), key=lambda kv: (kv[0] == "No DC", kv[0].lower()))]
+    total = {k: sum(r[k] for r in rows) for k in keys}
+    return {"base_day": base.isoformat() if base else None, "today": today.isoformat(), "rows": rows, "total": total}
+
+
 def dc_report(db: Session, dc: InternalUser, today: Optional[date] = None) -> io.BytesIO:
     """One DC's working CSPs (Labels 1-4), one row each, in plain words: what
     is on file and what to upload. CSPs with something to do come first."""

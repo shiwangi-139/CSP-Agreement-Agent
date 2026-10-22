@@ -850,6 +850,13 @@ def _dc_names(db: Session) -> list[dict]:
             if counts.get(u.id)]
 
 
+@router.get("/dc-progress", dependencies=[Depends(require_admin)])
+def dc_progress(db: Session = Depends(get_db)):
+    """Per DC: documents valid and CSPs complete on the previous day and now."""
+    from .. import reports
+    return reports.dc_progress(db)
+
+
 @router.get("/dc-summary", dependencies=[Depends(require_admin)])
 def dc_summary(dc_id: int, db: Session = Depends(get_db)):
     """One DC's CSPs as a short text to copy into WhatsApp."""

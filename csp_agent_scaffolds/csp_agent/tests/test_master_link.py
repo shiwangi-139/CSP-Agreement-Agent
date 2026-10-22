@@ -206,3 +206,27 @@ def test_dc_text_summary_counts_and_lists(client, monkeypatch):
     assert "Total CSPs: *2*" in text and "Need documents: *2*" in text
     assert "Renew within 60 days: *1*" in text and code_a in text and code_b in text
     assert c.get("/api/hub/dc-summary?dc_id=999999", headers=hdr).status_code == 404
+
+
+def test_dc_progress_compares_the_previous_day_with_now(client, monkeypatch):
+    from app.models import InternalUser, LabelSnapshot
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    cid, _, _ = _csp(Session)
+    s = Session()
+    dc = InternalUser(name="DC Progress Person", role="DC")
+    s.add(dc)
+    s.flush()
+    s.get(CSP, cid).dc_id = dc.id
+    s.query(LabelSnapshot).filter(LabelSnapshot.csp_id == cid).delete()
+    s.add(LabelSnapshot(day=date.today() - timedelta(days=1), csp_id=cid, category=4,
+                        docs={"AGREEMENT": "MISSING", "POLICE_VERIFICATION": "MISSING", "IIBF_CERTIFICATE": "MISSING"}))
+    s.commit()
+    s.close()
+    _valid_doc(Session, cid, "POLICE_VERIFICATION", date.today() + timedelta(days=200))   # uploaded today
+    d = c.get("/api/hub/dc-progress", headers=hdr).json()
+    assert d["base_day"] is not None
+    row = next(r for r in d["rows"] if r["dc"] == "DC Progress Person")
+    assert row == {"dc": "DC Progress Person", "csps": 1, "complete_before": 0, "complete_now": 0,
+                   "valid_before": 0, "valid_now": 1, "improved": 1, "worse": 0, "need_now": 1}
