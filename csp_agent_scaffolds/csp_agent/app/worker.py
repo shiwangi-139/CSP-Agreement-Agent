@@ -20,7 +20,10 @@ Schedule (Asia/Kolkata):
   Ollama memory guard (stops this project's Ollama)             every minute
   Campaign: RM / DC lists of pending CSPs (app/escalation.py)    daily 11:00 (weekly after it)
   Campaign: CSPs' short evening nudge                            daily 17:00
-Missed runs (server off) are run once when it comes back (coalesce + 6 h grace).
+Missed runs while the worker was running late are run once (coalesce + 6 h
+grace). Daily runs missed while it was stopped (09:00 run, 11:00 lists,
+17:00 nudge) are run once when it starts again (job_catch_up). It is kept
+running by scripts/keep_alive.sh (cron) and scripts/run_forever.sh.
 """
 import logging
 import signal
@@ -190,6 +193,45 @@ def job_snapshot_if_missing():
         job_snapshot()
 
 
+# Daily jobs to make up at start if today's run was missed: id -> (job, hour, minute).
+CATCH_UP = {"engine": ("job_engine", 9, 0), "staff_lists": ("job_staff_lists", 11, 0), "nudges": ("job_nudges", 17, 0)}
+
+
+def missed_today(db, now_local: datetime) -> list[str]:
+    """Daily jobs whose time today has passed with no saved run since then."""
+    from zoneinfo import ZoneInfo
+    from .models import MonitorRun
+    tz = ZoneInfo(APP_TIMEZONE)
+    out = []
+    for name, (_, hour, minute) in CATCH_UP.items():
+        due = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        if now_local < due:
+            continue
+        due_utc = due.astimezone(timezone.utc).replace(tzinfo=None)
+        ran = db.query(MonitorRun.id).filter(MonitorRun.kind == f"job:{name}", MonitorRun.started_at >= due_utc,
+                                             MonitorRun.status.in_(["OK", "SKIPPED"])).first()
+        if ran is None:
+            out.append(name)
+    return out
+
+
+def job_catch_up():
+    """At start: run today's daily jobs the worker missed while it was down
+    (each is safe to run twice: drafts are made once a day)."""
+    from zoneinfo import ZoneInfo
+    db = SessionLocal()
+    try:
+        names = missed_today(db, datetime.now(ZoneInfo(APP_TIMEZONE)))
+    finally:
+        db.close()
+    for name in names:
+        logger.warning("catch_up job=%s (missed while the worker was stopped)", name)
+        try:
+            globals()[CATCH_UP[name][0]]()
+        except Exception:
+            logger.exception("catch_up_failed job=%s", name)
+
+
 def job_model_guard():
     """Every minute, no lock or log unless it acts: cheap /proc reads."""
     from . import model_assist
@@ -244,6 +286,7 @@ def build_scheduler():
     sched.add_job(job_model_assist, CronTrigger(minute=15), id="model_assist")
     sched.add_job(job_snapshot, CronTrigger(hour=9, minute=30), id="snapshot")
     sched.add_job(job_snapshot_if_missing, id="snapshot_at_start", next_run_time=datetime.now())
+    sched.add_job(job_catch_up, id="catch_up_at_start", next_run_time=datetime.now())
     sched.add_job(job_model_guard, IntervalTrigger(minutes=1), id="model_guard", next_run_time=datetime.now())
     sched.add_job(job_staff_lists, CronTrigger(hour=11, minute=0), id="staff_lists")
     sched.add_job(job_nudges, CronTrigger(hour=17, minute=0), id="nudges")

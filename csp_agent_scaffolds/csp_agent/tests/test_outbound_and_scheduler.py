@@ -33,6 +33,23 @@ def test_worker_schedule():
     ids = {j.id for j in build_scheduler().get_jobs()}
     from app.config import FEATURE_MESSAGING_ANALYTICS
     core = {"gmail", "sheet", "engine", "outbox", "vault", "reports", "model_assist", "model_guard", "snapshot", "snapshot_at_start",
-            "staff_lists", "nudges"}
+            "staff_lists", "nudges", "catch_up_at_start"}
     assert ids == (core | {"delivery"} if FEATURE_MESSAGING_ANALYTICS else core)    # delivery: parked feature
     assert "worker" in get_scheduler_status()["runs_in"]
+
+
+def test_worker_catches_up_daily_runs_missed_while_it_was_stopped(db_session):
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    from app.models import MonitorRun
+    from app.worker import missed_today
+    db = db_session
+    db.query(MonitorRun).filter(MonitorRun.kind.in_(["job:engine", "job:staff_lists", "job:nudges"])).delete()
+    ist = ZoneInfo("Asia/Kolkata")
+    now = datetime(2026, 10, 23, 13, 9, tzinfo=ist)
+    assert missed_today(db, now) == ["engine", "staff_lists"]          # 17:00 not due yet
+    assert missed_today(db, now.replace(hour=8)) == []
+    ran = datetime(2026, 10, 23, 9, 0, tzinfo=ist).astimezone(timezone.utc).replace(tzinfo=None) + timedelta(minutes=1)
+    db.add(MonitorRun(kind="job:engine", started_at=ran, status="OK"))
+    db.flush()
+    assert missed_today(db, now) == ["staff_lists"]
