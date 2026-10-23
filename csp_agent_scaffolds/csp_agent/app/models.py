@@ -477,6 +477,7 @@ class MasterLink(Base):
     __tablename__ = "master_links"
     id = Column(Integer, primary_key=True)
     token_hash = Column(String, unique=True, nullable=False)
+    token = Column(String)          # kept so admins always see the one link (dashboard only)
     created_by = Column(String)
     created_at = Column(DateTime, nullable=False)
     expires_at = Column(DateTime, nullable=False)

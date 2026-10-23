@@ -896,6 +896,17 @@ def master_link_create(me: Principal = Depends(require_user), db: Session = Depe
     return {"url": url, **master_link.status(db)}
 
 
+@router.post("/master-link/restore", dependencies=[Depends(require_admin)])
+def master_link_restore(body: dict = Body(...), me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """Bring back the link already shared (pasted by the admin) as the one live link."""
+    from .. import master_link
+    url = master_link.restore(db, str(body.get("url") or ""), me.name)
+    if url is None:
+        raise HTTPException(404, "This is not a master link made on this dashboard.")
+    db.commit()
+    return {"url": url, **master_link.status(db)}
+
+
 @router.post("/master-link/revoke", dependencies=[Depends(require_admin)])
 def master_link_revoke(db: Session = Depends(get_db)):
     from .. import master_link

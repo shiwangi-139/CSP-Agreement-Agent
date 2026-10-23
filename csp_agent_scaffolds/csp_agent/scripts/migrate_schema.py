@@ -46,6 +46,7 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_documents_is_current ON documents (is_current);",
     "CREATE INDEX IF NOT EXISTS ix_documents_expiry_date ON documents (expiry_date);",
     "CREATE INDEX IF NOT EXISTS ix_documents_issue_date ON documents (issue_date);",
+    "ALTER TABLE master_links ADD COLUMN IF NOT EXISTS token VARCHAR;",
 ]
 
 

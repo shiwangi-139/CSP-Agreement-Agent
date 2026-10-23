@@ -670,10 +670,14 @@
       if (state.summary.me.role === "ADMIN") {
         const m = await api("/api/hub/master-link");
         ml = `<div class="card" style="margin-bottom:12px"><div class="meta"><b>DC master link</b>
-          ${m.active ? badge("VALID", "active") + ` <span class="small muted">made by ${esc(m.created_by || "")} ${when(m.created_at)} · works till ${when(m.expires_at)}</span>` : badge("EXPIRED", "none active")}</div>
-          <p class="small muted">One link for all DCs: they pick a KO code and upload for any CSP in Labels 1–4. Documents valid for more than 60 days are locked. Their uploads appear in the Review queue as "DC upload".</p>
-          ${state.mlUrl ? `<div class="toolbar"><input type="text" readonly value="${esc(state.mlUrl)}" style="flex:1" class="mono" onclick="this.select()"><span class="small muted">Copy it now: it is shown only once.</span></div>` : ""}
-          <div class="toolbar"><button class="btn primary" data-mlink="new">${m.active ? "Make a new link (the old one stops)" : "Make the link"}</button>
+          ${m.active ? badge("VALID", "working") + ` <span class="small muted">made by ${esc(m.created_by || "")} ${when(m.created_at)} · never expires</span>` : badge("EXPIRED", "not working")}</div>
+          <p class="small muted">One link for all DCs: they type a KO code and upload for any CSP in Labels 1–4. It keeps working until you make a new one. Their uploads appear in the Review queue as "DC upload".</p>
+          ${m.url ? `<div class="toolbar"><input type="text" id="mlurl" readonly value="${esc(m.url)}" style="flex:1" class="mono" onclick="this.select()">
+            <button class="btn primary" data-mlink="copy">Copy</button></div>` : `
+          <div class="toolbar"><input type="text" id="mlrestore" placeholder="Paste here the master link you shared in the group" style="flex:1" class="mono">
+            <button class="btn primary" data-mlink="restore">Bring back the link you shared</button></div>
+          <p class="small muted">${m.active ? "This link was made before it could be shown here: paste it once and it is shown from now on." : "The shared link stopped. Paste it to make it work again (the same link, nothing new to share)."}</p>`}
+          <div class="toolbar"><button class="btn" data-mlink="new">${m.active ? "Make a new link" : "Make a new link instead"}</button>
           ${m.active ? `<button class="btn" data-mlink="revoke">Switch it off</button>` : ""}</div>
           <div class="meta" style="margin-top:14px"><b>Excel for one DC</b></div>
           <p class="small muted">That DC's CSPs in plain words: what is on file and what to upload, needs first, coloured green / yellow / red. Download it and share it with the DC yourself.</p>
@@ -929,8 +933,10 @@
         try { await navigator.clipboard.writeText(ta.value); } catch (_) { document.execCommand("copy"); }
         return toast("Summary copied");
       }
-      if (ds.mlink === "new") { if (!confirm("Make a new DC master link? Any older master link stops working.")) return; state.mlUrl = (await post("/api/hub/master-link")).url; return render(); }
-      if (ds.mlink === "revoke") { if (!confirm("Switch off the DC master link? DCs can no longer use it.")) return; await post("/api/hub/master-link/revoke"); state.mlUrl = ""; return render(); }
+      if (ds.mlink === "copy") { const v = $("#mlurl").value; try { await navigator.clipboard.writeText(v); } catch (_) { $("#mlurl").select(); document.execCommand("copy"); } return toast("Link copied"); }
+      if (ds.mlink === "restore") { const r = await post("/api/hub/master-link/restore", {url: $("#mlrestore").value}); toast("The shared link works again"); return render(); }
+      if (ds.mlink === "new") { if (!confirm("Make a NEW master link?\n\nThe link you already shared in the group will STOP working, and you will have to share the new one.")) return; await post("/api/hub/master-link"); return render(); }
+      if (ds.mlink === "revoke") { if (!confirm("Switch off the DC master link? DCs can no longer use it.")) return; await post("/api/hub/master-link/revoke"); return render(); }
       if (ds.approve) { const m = await post(`/api/hub/messages/${ds.approve}/approve`); toast(`Approved → ${m.status.replaceAll("_", " ").toLowerCase()}`); return refreshAfterAction(); }
       if (ds.sendnow) { if (!confirm("Send this WhatsApp message to the CSP now?")) return; const m = await post(`/api/hub/messages/${ds.sendnow}/send-now`); toast(`→ ${m.status.replaceAll("_", " ").toLowerCase()}${m.error ? ": " + m.error : ""}`); return refreshAfterAction(); }
       if (ds.findset) { e.preventDefault(); state.find = JSON.parse(ds.findset); state.page = 1; state.view = "find"; return render(); }

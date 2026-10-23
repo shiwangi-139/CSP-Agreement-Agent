@@ -16,8 +16,11 @@ CSP is refused, and so is the same document as the one on file (same issue
 date). Every document stored through the link is also listed in the Review
 queue ("DC upload ...") for the daily report.
 
-Only the SHA-256 of the token is stored; creating a new link switches the old
-one off; a link expires after MASTER_LINK_DAYS.
+There is one link. It never expires: it stops working only when an admin
+makes a new one (or switches it off) on the dashboard, and code updates or
+restarts never change it. It is shown to admins on the dashboard at any
+time; a link shared before it was kept there can be brought back with
+restore() (dashboard: "Bring back the link you shared").
 """
 import hashlib
 import secrets
@@ -31,7 +34,7 @@ from .config import PUBLIC_BASE_URL
 from .models import CSP, MasterLink
 from .validation import normalize_csp_code
 
-MASTER_LINK_DAYS = 30
+NO_EXPIRY = datetime(2100, 1, 1)
 RENEW_WITHIN_DAYS = 60
 CHANNEL = "DC_MASTER_LINK"
 REVIEW_PREFIX = "DC upload"
@@ -54,8 +57,27 @@ def create(db: Session, by: str) -> str:
     for r in db.query(MasterLink).filter(MasterLink.revoked_at.is_(None)):
         r.revoked_at = _now()
     token = secrets.token_urlsafe(24)
-    db.add(MasterLink(token_hash=_hash(token), created_by=by, created_at=_now(),
-                      expires_at=_now() + timedelta(days=MASTER_LINK_DAYS)))
+    db.add(MasterLink(token_hash=_hash(token), token=token, created_by=by, created_at=_now(), expires_at=NO_EXPIRY))
+    db.flush()
+    return link_url(token)
+
+
+def _token_from(url_or_token: str) -> str:
+    v = (url_or_token or "").strip()
+    return v.split("dc=", 1)[1].split("&", 1)[0] if "dc=" in v else v
+
+
+def restore(db: Session, url_or_token: str, by: str) -> Optional[str]:
+    """Make this link (one made earlier here) the one live link again, with
+    no expiry; every other link stops. None if it was never made here."""
+    token = _token_from(url_or_token)
+    row = db.query(MasterLink).filter(MasterLink.token_hash == _hash(token)).first() if token else None
+    if row is None:
+        return None
+    for r in db.query(MasterLink).filter(MasterLink.id != row.id, MasterLink.revoked_at.is_(None)):
+        r.revoked_at = _now()
+    row.revoked_at, row.expires_at, row.token = None, NO_EXPIRY, token
+    row.created_by = row.created_by or by
     db.flush()
     return link_url(token)
 
@@ -71,18 +93,18 @@ def resolve(db: Session, token: str) -> Optional[MasterLink]:
     if not token or len(token) > 100:
         return None
     r = db.query(MasterLink).filter(MasterLink.token_hash == _hash(token)).first()
-    if r is None or r.revoked_at is not None or r.expires_at < _now():
+    if r is None or r.revoked_at is not None:        # no expiry: only a new link (or "switch off") ends it
         return None
     return r
 
 
 def status(db: Session) -> dict:
-    r = (db.query(MasterLink).filter(MasterLink.revoked_at.is_(None), MasterLink.expires_at > _now())
+    r = (db.query(MasterLink).filter(MasterLink.revoked_at.is_(None))
          .order_by(MasterLink.created_at.desc()).first())
     if r is None:
         return {"active": False}
     return {"active": True, "created_by": r.created_by, "created_at": r.created_at.isoformat() + "Z",
-            "expires_at": r.expires_at.isoformat() + "Z"}
+            "url": link_url(r.token) if r.token else None}
 
 
 def eligible(db: Session):

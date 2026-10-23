@@ -1,6 +1,6 @@
 """The DC master link: one link for every working CSP; locked documents,
 duplicates and the Review queue listing."""
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from app import auth
 from app.api import portal
@@ -230,3 +230,26 @@ def test_dc_progress_compares_the_previous_day_with_now(client, monkeypatch):
     row = next(r for r in d["rows"] if r["dc"] == "DC Progress Person")
     assert row == {"dc": "DC Progress Person", "csps": 1, "left_now": 1, "complete_before": 0, "complete_now": 0,
                    "valid_before": 0, "valid_now": 1, "improved": 1, "worse": 0, "need_now": 1}
+
+
+def test_one_link_always_shown_never_expires_and_the_shared_one_can_be_brought_back(client, monkeypatch):
+    from app.models import MasterLink
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    _, code, _ = _csp(Session)
+    shared = c.post("/api/hub/master-link", headers=hdr).json()["url"]
+    assert c.get("/api/hub/master-link", headers=hdr).json()["url"] == shared        # shown any time
+    token = shared.split("dc=")[1]
+    s = Session()
+    s.query(MasterLink).filter(MasterLink.revoked_at.is_(None)).update({"expires_at": datetime(2020, 1, 1)})
+    s.commit()
+    s.close()
+    ctx = lambda t: c.post("/upload", data={"action": "dc_context", "dc": t, "code": code}).status_code
+    assert ctx(token) == 200                                                          # no expiry
+    newer = c.post("/api/hub/master-link", headers=hdr).json()["url"]                 # by mistake
+    assert ctx(token) == 403
+    back = c.post("/api/hub/master-link/restore", headers=hdr, json={"url": shared})
+    assert back.status_code == 200 and back.json()["url"] == shared
+    assert ctx(token) == 200 and ctx(newer.split("dc=")[1]) == 403                     # still one link
+    assert c.post("/api/hub/master-link/restore", headers=hdr, json={"url": "https://x/upload?dc=made-up"}).status_code == 404
