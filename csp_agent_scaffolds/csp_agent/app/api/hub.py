@@ -436,8 +436,14 @@ def document_file(doc_id: int, download: bool = False, me: Principal = Depends(r
         raise HTTPException(403, "file outside storage")
     media = d.mime_type if d.mime_type in ("application/pdf", "image/jpeg", "image/png") else "application/octet-stream"
     disp = "attachment" if download else "inline"
+    name = path.name
+    if not download and media != "application/octet-stream":
+        # Viewing: a light copy of a big scan (app/view_copy.py); download = the original.
+        from ..view_copy import view_file
+        path, copy_media = view_file(d.id, path)
+        media = copy_media or media
     return FileResponse(path, media_type=media, headers={
-        "Content-Disposition": f'{disp}; filename="{path.name}"', "X-Content-Type-Options": "nosniff"})
+        "Content-Disposition": f'{disp}; filename="{name}"', "X-Content-Type-Options": "nosniff"})
 
 
 # --------------------------------------------------------- communication hub

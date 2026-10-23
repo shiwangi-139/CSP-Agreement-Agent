@@ -800,3 +800,39 @@ def test_pvr_application_receipt_is_recorded_as_applied_not_as_a_pvr(client, mon
     r = c.post("/api/portal/upload", data=_form(token, iibf_issue_date=applied.isoformat()),
                files={"iibf_file": ("receipt2.pdf", _pvr_pdf(applied, "X"), "application/pdf")})
     assert not r.json()["results"][0]["ok"]
+
+
+def test_a_big_scan_is_viewed_as_a_light_copy_and_downloaded_as_the_original(client, monkeypatch, tmp_path):
+    import io
+    import numpy as np
+    import pymupdf
+    from PIL import Image
+    from app import view_copy
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    monkeypatch.setattr(view_copy, "DIR", tmp_path / "view_copies")
+    hdr = {"X-API-Key": "k"}
+    c, Session = client
+    cid, code, _ = _csp(Session)
+    d = pymupdf.open()
+    for _ in range(3):
+        arr = (np.random.default_rng(2).random((3300, 2550, 3)) * 60 + 180).astype("uint8")
+        buf = io.BytesIO()
+        Image.fromarray(arr).save(buf, "JPEG", quality=95)
+        p = d.new_page(width=612, height=792)
+        p.insert_image(p.rect, stream=buf.getvalue())
+    f = vault.ROOT / f"{code}_big.pdf"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    d.save(f)
+    s = Session()
+    doc = Document(csp_id=cid, document_type="AGREEMENT", status=DocumentStatus.VALID, readability="READABLE",
+                   sha256=uuid.uuid4().hex, storage_path=vault.rel(f), mime_type="application/pdf")
+    s.add(doc)
+    s.commit()
+    doc_id = doc.id
+    s.close()
+    view = c.get(f"/api/hub/documents/{doc_id}/file", headers=hdr)
+    orig = c.get(f"/api/hub/documents/{doc_id}/file?download=1", headers=hdr)
+    assert view.status_code == orig.status_code == 200
+    assert len(orig.content) == f.stat().st_size and len(view.content) < len(orig.content) / 5
+    assert view.content[:4] == b"%PDF" and pymupdf.open(stream=view.content).page_count == 3
+    f.unlink()

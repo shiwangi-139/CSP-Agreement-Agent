@@ -750,7 +750,7 @@
           · issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : r.document.validity_rule === "PVR_PCC_LIFETIME" ? ` · <b>no expiry</b> (Police Clearance Certificate)` : ""}</div>
         <p>${esc(r.reason)}</p>
         ${aiHint(r.document.model_suggestion)}
-        <div class="toolbar"><a href="#" data-file="${r.document.id}">View document</a>
+        <div class="toolbar"><a href="#" data-file="${r.document.id}">View document</a> · <a href="#" data-fileorig="${r.document.id}" class="small">download original</a>
           <label>Correct issue date <input type="date" id="rv${r.id}" value="${esc(r.document.issue_date || "")}"></label>
           <label>Expiry date <input type="date" id="re${r.id}" value="${esc(r.document.expiry_date || "")}" title="The last day written on the document (overrides 'Validity stated')"></label>
           <label>Type <select id="rt${r.id}">${["AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"].map((t) =>
@@ -823,7 +823,7 @@
         ${d.documents.map((x) => `<tr><td>${esc(DOC[x.type] || x.type)}${x.is_current ? " <span class='b VALID'>current</span>" : ""}</td>
           <td>${badge(x.readability === "UNREADABLE" ? "UNREADABLE" : x.status)}</td><td class="mono">${fmt(x.issue_date)}</td><td class="mono">${fmt(x.expiry_date)}</td>
           <td class="small">${esc((x.date_source || x.reason || "").replaceAll("_", " ").toLowerCase())}</td><td class="small">${esc(x.channel === "CSP_UPLOAD_PORTAL" ? "portal" : "gmail")} ${fmt(x.source_date || x.uploaded_at)}</td>
-          <td><a href="#" data-file="${x.id}">view</a></td></tr>`).join("") || `<tr><td colspan="7" class="empty">None.</td></tr>`}</tbody></table></div></div>
+          <td><a href="#" data-file="${x.id}">view</a> · <a href="#" data-fileorig="${x.id}" class="small">original</a></td></tr>`).join("") || `<tr><td colspan="7" class="empty">None.</td></tr>`}</tbody></table></div></div>
       <div class="card" style="margin-top:14px"><h2>Follow-up cycles</h2>${d.cycles.map((y) => `<div class="small">${badge(y.closed_at ? "DONE" : "PENDING", y.closed_at ? "closed" : "open")}
         <b>${esc(y.kind)}</b> ${esc(y.document_type)} · CSP ${y.csp} · RM ${y.rm}/2 · DC ${y.dc}/1 · opened ${fmt(y.opened_at)}${y.close_reason ? " · " + esc(y.close_reason.replaceAll("_", " ").toLowerCase()) : ""}</div>`).join("") || `<div class="muted small">No follow-ups yet.</div>`}</div>
       <div class="card" style="margin-top:14px"><h2>Messages (${d.messages.length})</h2>${d.messages.map(msgCard).join("") || `<div class="muted small">None.</div>`}</div>`;
@@ -834,6 +834,14 @@
 
   function openFile(id, download) { return openPath(`api/hub/documents/${id}/file${download ? "?download=1" : ""}`); }
   async function openPath(path) {
+    // Documents open straight in the browser's own viewer (the login cookie
+    // goes with it), which shows the first page while the rest still loads.
+    if (path.startsWith("api/hub/documents/")) {
+      if (path.includes("download=1")) {                 // the original file, saved as is
+        const a = document.createElement("a"); a.href = path; a.download = ""; document.body.appendChild(a); a.click(); a.remove();
+      } else if (!window.open(path, "_blank")) toast("Allow pop-ups for this site to view documents.");
+      return;
+    }
     // Open the tab now, while the click still counts: a tab opened after the
     // download finishes is blocked as a pop-up.
     const tab = window.open("", "_blank");
@@ -848,7 +856,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -865,6 +873,7 @@
       if (ds.mkind !== undefined) { state.msgKind = ds.mkind; return render(); }
       if (ds.doctype !== undefined) { state.docType = ds.doctype; return render(); }
       if (ds.file) { e.preventDefault(); return openFile(ds.file); }
+      if (ds.fileorig) { e.preventDefault(); return openFile(ds.fileorig, true); }
       if (ds.xlsx) {
         e.preventDefault();
         const r = await fetch(`api/hub/reports/${ds.xlsx}.xlsx`, {credentials: "same-origin", headers: H});
