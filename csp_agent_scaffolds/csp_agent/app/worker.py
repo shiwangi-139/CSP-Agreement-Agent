@@ -18,6 +18,8 @@ Schedule (Asia/Kolkata):
   Daily Label snapshot (Monitoring page history)   daily 09:30 (and at start if missed)
   Review helper (local Ollama, capped, see app/model_assist.py)  hourly at :15
   Ollama memory guard (stops this project's Ollama)             every minute
+  Campaign: RM / DC lists of pending CSPs (app/escalation.py)    daily 11:00 (weekly after it)
+  Campaign: CSPs' short evening nudge                            daily 17:00
 Missed runs (server off) are run once when it comes back (coalesce + 6 h grace).
 """
 import logging
@@ -199,6 +201,30 @@ def job_model_guard():
         logger.exception("model_guard_failed")
 
 
+def job_staff_lists():
+    from . import escalation
+
+    def go():
+        db = SessionLocal()
+        try:
+            return {**escalation.draft_staff_lists(db, "RM"), **escalation.draft_staff_lists(db, "DC")}
+        finally:
+            db.close()
+    return _run("staff_lists", go)
+
+
+def job_nudges():
+    from . import escalation
+
+    def go():
+        db = SessionLocal()
+        try:
+            return escalation.draft_nudges(db)
+        finally:
+            db.close()
+    return _run("nudges", go)
+
+
 def build_scheduler():
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -219,6 +245,8 @@ def build_scheduler():
     sched.add_job(job_snapshot, CronTrigger(hour=9, minute=30), id="snapshot")
     sched.add_job(job_snapshot_if_missing, id="snapshot_at_start", next_run_time=datetime.now())
     sched.add_job(job_model_guard, IntervalTrigger(minutes=1), id="model_guard", next_run_time=datetime.now())
+    sched.add_job(job_staff_lists, CronTrigger(hour=11, minute=0), id="staff_lists")
+    sched.add_job(job_nudges, CronTrigger(hour=17, minute=0), id="nudges")
     return sched
 
 

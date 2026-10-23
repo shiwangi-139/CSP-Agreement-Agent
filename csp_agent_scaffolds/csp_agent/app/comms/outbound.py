@@ -198,6 +198,8 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
     """Send one APPROVED message. Re-checks the recipient guard first."""
     if msg.status != OutboundStatus.APPROVED:
         return msg
+    if msg.template_name == "STAFF_PENDING_LIST":
+        return _send_staff_list(db, msg)
     csp = db.get(CSP, msg.csp_id) if msg.csp_id else None
     if csp is not None and is_inactive(csp):
         msg.status, msg.error_log = OutboundStatus.BLOCKED, INACTIVE_REASON
@@ -257,6 +259,45 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
                 _fail(msg, out.error, out.retryable)
     except Exception as e:
         _fail(msg, f"{type(e).__name__}: {e}", retryable=True)
+    return msg
+
+
+def _send_staff_list(db: Session, msg: OutboundMessage) -> OutboundMessage:
+    """An RM / DC list of pending CSPs (app/escalation.py): no CSP; only to
+    the phone of that RM / DC on record."""
+    payload = msg.payload_json or {}
+    user = db.get(InternalUser, payload.get("staff_id")) if payload.get("staff_id") else None
+    if user is None or not _phone10(user.phone) or _phone10(user.phone) != _phone10(msg.destination):
+        msg.status = OutboundStatus.BLOCKED
+        msg.error_log = "Recipient guard: not the phone of this RM / DC on record."
+        return msg
+    msg.attempts = (msg.attempts or 0) + 1
+    if WHATSAPP_MODE != "wabs":
+        msg.status, msg.error_log = OutboundStatus.READY_NOT_SENT, "WhatsApp agent not connected yet (stub mode)."
+        return msg
+    try:
+        from .wabs import send_clean
+        v = payload.get("layout_values") or {}
+        r = send_clean("staff_list", [{"phone": f"91{_phone10(user.phone)}", "name": user.name,
+                                       "count": str(v.get("count", "")), "codes": v.get("codes", "")}],
+                       f"csp-agent-STAFF_PENDING_LIST-{msg.id}")
+    except Exception as e:
+        _fail(msg, f"Bulk Sender error: {e}", retryable=True)
+        return msg
+    action = r.get("action") if isinstance(r, dict) else None
+    if action == "sent":
+        msg.status, msg.sent_at, msg.provider_message_id, msg.error_log = \
+            OutboundStatus.SENT, _now(), str(r.get("job_id") or ""), None
+        msg.delivery_status = "SENT"
+    elif action in ("created", "pending"):
+        msg.error_log = "Waiting for Meta to approve the WhatsApp template."
+        if msg.reviewed_at and _now() - msg.reviewed_at > timedelta(hours=META_WAIT_HOURS):
+            msg.status = OutboundStatus.FAILED
+            msg.error_log = f"Meta did not approve the WhatsApp template within {META_WAIT_HOURS} hours."
+        else:
+            msg.next_retry_at = _now() + timedelta(minutes=30)
+    else:
+        _fail(msg, f"Bulk Sender: {r}"[:1000], retryable=False)
     return msg
 
 
@@ -339,7 +380,8 @@ def auto_approve(db: Session, now: Optional[datetime] = None) -> dict:
         block_inactive(db)
         q = (db.query(OutboundMessage)
              .filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW,
-                     OutboundMessage.channel == channel, OutboundMessage.recipient_role == "CSP")
+                     OutboundMessage.channel == channel,
+                     (OutboundMessage.recipient_role == "CSP") | (OutboundMessage.template_name == "STAFF_PENDING_LIST"))
              .order_by(OutboundMessage.created_at, OutboundMessage.id).limit(500))
         for m in q.all():
             try:

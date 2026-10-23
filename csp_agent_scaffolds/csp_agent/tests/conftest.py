@@ -61,3 +61,13 @@ def _isolated_vault(tmp_path, monkeypatch):
 def _no_vault_marker(monkeypatch):
     # Tests use temporary vault folders, which never hold the .csp_vault marker.
     monkeypatch.setattr("app.vault.STORAGE_REQUIRE_MARKER", False)
+
+
+@pytest.fixture(autouse=True)
+def _campaign_off(monkeypatch):
+    """The document campaign (app/policy.py) is dated; tests switch it on
+    themselves where they test it."""
+    from datetime import date
+    from app import policy
+    for name in ("CAMPAIGN_FROM", "ESCALATE_FROM", "ESCALATE_DC_FROM", "CAMPAIGN_UNTIL"):
+        monkeypatch.setattr(policy, name, date(2000, 1, 1))

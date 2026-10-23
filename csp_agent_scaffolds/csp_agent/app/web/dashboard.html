@@ -818,7 +818,7 @@
         <div class="toolbar" style="margin-top:10px"><a class="btn" href="#" data-zip="${c.id}">Download all 3 (zip)</a>
           <button class="btn" data-link="${c.id}">Create upload link</button></div></div>
       <div class="docgrid" style="margin-top:14px">${Object.entries(d.current).map(([t, s]) => `<div class="doc"><div class="t">${esc(DOC[t])}</div>${docCell(s)}
-        <div class="small mono muted">issued ${fmt(s.issue_date)}</div>${s.document_id ? `<a href="#" data-file="${s.document_id}" class="small">view</a>` : ""}</div>`).join("")}</div>
+        <div class="small mono muted">issued ${fmt(s.issue_date)}</div>${s.applied_on ? `<div class="small"><b>Applied for a new one on ${fmt(s.applied_on)}</b> (waiting)</div>` : ""}${s.document_id ? `<a href="#" data-file="${s.document_id}" class="small">view</a>` : ""}</div>`).join("")}</div>
       <div class="card" style="margin-top:14px"><h2>All files received (${d.documents.length})</h2><div class="tablewrap"><table><thead><tr><th>Type</th><th>Status</th><th>Issued</th><th>Expires</th><th>How</th><th>Received</th><th></th></tr></thead><tbody>
         ${d.documents.map((x) => `<tr><td>${esc(DOC[x.type] || x.type)}${x.is_current ? " <span class='b VALID'>current</span>" : ""}</td>
           <td>${badge(x.readability === "UNREADABLE" ? "UNREADABLE" : x.status)}</td><td class="mono">${fmt(x.issue_date)}</td><td class="mono">${fmt(x.expiry_date)}</td>

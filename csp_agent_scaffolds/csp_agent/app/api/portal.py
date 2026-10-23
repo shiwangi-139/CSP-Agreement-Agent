@@ -97,6 +97,9 @@ MSG = {
     "dc_in_review": ("यह डॉक्यूमेंट अभी जाँच में है।", "This document is being checked by our team."),
     "dup_other": ("यह फ़ाइल किसी दूसरे CSP के रिकॉर्ड में पहले से है। इसी CSP का अपना डॉक्यूमेंट अपलोड करें।",
                   "This file is already on record for another CSP. Upload this CSP's own document."),
+    "pvr_applied": ("पुलिस वेरिफिकेशन का आवेदन रिकॉर्ड हो गया। नया सर्टिफिकेट मिलते ही इसी लिंक से अपलोड करें।",
+                    "Your police verification application is recorded. Upload the new certificate on this same "
+                    "link as soon as you get it."),
     "dc_other_csp": ("यह डॉक्यूमेंट किसी दूसरे CSP का है। सही KO कोड डालकर उसी CSP के लिए अपलोड करें।",
                      "This document belongs to another CSP. Enter that CSP's KO code and upload it there."),
     "dup_same": ("यह वही डॉक्यूमेंट है जो पहले से हमारे पास है। रिन्यू किया हुआ नया डॉक्यूमेंट अपलोड करें।",
@@ -159,18 +162,28 @@ def _last_problems(db: Session, csp_id: int) -> dict:
     return out
 
 
+def _own_link_locks(state) -> dict:
+    """The CSP's own link: a document valid for more than 60 more days can't
+    be uploaded again (the master link also locks one being checked)."""
+    return {t: lock for t, lock in master_link.locks(state).items() if lock and lock["key"] == "dc_valid"}
+
+
 def _context(db: Session, csp: CSP, requested: list[str]) -> dict:
     state = evaluate(db, csp)
     rm, dc = _staff(db, csp.rm_id), _staff(db, csp.dc_id)
     problems = _last_problems(db, csp.id)
+    locks = _own_link_locks(state)
     docs = []
     for key, t in SECTIONS.items():
         s = state.docs[t]
         en, hi = DOC_LABELS[t]
+        lock = locks.get(t)
         docs.append({"section": key, "type": t, "label_en": en, "label_hi": hi, "status": s.shown_status,
                      "issue_date": s.issue_date.isoformat() if s.issue_date else None,
                      "expiry_date": s.expiry_date.isoformat() if s.expiry_date else None,
-                     "requested": t in requested or (s.status != "VALID" and not s.in_review),
+                     "locked": bool(lock), "lock_message": master_link.lock_message(lock) if lock else None,
+                     "applied_on": s.applied_on.isoformat() if s.applied_on else None,
+                     "requested": not lock and (t in requested or (s.status != "VALID" and not s.in_review)),
                      "last_problem": problems.get(key) if s.status != "VALID" and not s.in_review else None,
                      "max_validity_years": MAX_VALIDITY_YEARS[t]})
     return {"csp": {"code": csp.current_code, "name": csp.name, "email": csp.email or "",
@@ -501,8 +514,9 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         csp = db.get(CSP, row.csp_id)
     channel = master_link.CHANNEL if via_dc else "CSP_UPLOAD_PORTAL"
     today = date.today()
-    # Valid for more than 60 days, or being checked: the DC may not upload it again.
-    dc_locks = master_link.locks(evaluate(db, csp)) if via_dc else {}
+    # Valid for more than 60 days (and, on the master link, being checked):
+    # not uploaded again.
+    dc_locks = master_link.locks(evaluate(db, csp)) if via_dc else _own_link_locks(evaluate(db, csp))
 
     for field in ("name", "mobile"):
         if not via_dc and not str(form.get(field) or "").strip():
@@ -602,6 +616,20 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
 
         # The wording says it is an application receipt (or a KYC form), not
         # the certificate: turned away whatever section it was uploaded in.
+        if ex.get("document_type") == "PVR_APPLICATION_ONLY" and doc_type == "POLICE_VERIFICATION":
+            # Applied for a new certificate (it can take a month): recorded as
+            # "PVR applied" (not a valid PVR; reminders go on), and the link
+            # keeps working so the certificate can be uploaded when it comes.
+            from ..models import PvrApplication
+            try:
+                kept = vault.keep_rejected_upload(data, csp.current_code, "pvr_application", mime)
+            except OSError:
+                kept = None
+            db.add(PvrApplication(csp_id=csp.id, applied_on=_parse_date(ex.get("start_date")) or typed or today,
+                                  file_path=kept, channel=channel))
+            res.update(ok=True, reason="pvr_applied", message=_msg("pvr_applied"), kept_file=kept,
+                       read_as="PVR_APPLICATION_ONLY")
+            continue
         if ex.get("document_type") in ("PVR_APPLICATION_ONLY", "NOT_A_PVR", "IIBF_RECEIPT_ONLY"):
             turn_away({"PVR_APPLICATION_ONLY": "application_only", "IIBF_RECEIPT_ONLY": "iibf_receipt"}
                       .get(ex["document_type"], "wrong_doc"), data, mime)

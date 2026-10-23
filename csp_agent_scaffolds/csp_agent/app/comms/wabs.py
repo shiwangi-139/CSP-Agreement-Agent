@@ -99,6 +99,19 @@ CLEAN.update({
         "valid, and your form is submitted. Nothing more is needed for now; we will remind you before any document "
         "is due to expire. Thank you for being on time!\n\nमदद / Help: {{4}}\n— Eko"),
 })
+# The document campaign (app/escalation.py): the CSP's short evening nudge
+# (the link is in the morning message), and the RM / DC list of pending CSPs.
+CLEAN.update({
+    "nudge": (
+        "नमस्ते {{1}} (KO {{2}}) 🙏\n\nरिमाइंडर: आपके ये डॉक्यूमेंट अभी बाकी हैं: {{3}}।\n"
+        "अपलोड का लिंक ऊपर वाले मैसेज में है।\n\n"
+        "Reminder: these documents are still pending: {{4}}. The upload link is in the message above.\n— Eko"),
+    "staff_list": (
+        "नमस्ते {{1}} 🙏\n\nआपके {{2}} CSP के डॉक्यूमेंट अभी बाकी हैं (A = एग्रीमेंट, P = पुलिस वेरिफिकेशन, I = IIBF):\n"
+        "{{3}}\n\nकृपया इन CSP को कॉल करके जल्दी अपलोड करवाएँ। हर CSP के WhatsApp पर उसका अपलोड लिंक भेजा जा चुका है।\n\n"
+        "Hello {{4}}, {{5}} of your CSPs still have documents to upload (list above). Please call them and get the "
+        "documents uploaded; each CSP has their upload link on WhatsApp.\n— Eko"),
+})
 _RENEWAL = {"1": "name", "2": "code", "3": "doc_hi", "4": "date", "5": "name", "6": "doc_en", "7": "date",
             "8": "link", "9": "rm"}
 _DOCS = {"1": "name", "2": "code", "3": "doc_hi", "4": "name", "5": "doc_en", "6": "link", "7": "rm"}
@@ -110,7 +123,9 @@ CLEAN_MAP = {"onboard": {"1": "name", "2": "code", "3": "name", "4": "link", "5"
              "expired": _DOCS, "missing": _DOCS, "unreadable": _DOCS,
              "receipt": {"1": "name", "2": "code", "3": "ok_hi", "4": "check_hi", "5": "bad_hi", "6": "name",
                          "7": "ok_en", "8": "check_en", "9": "bad_en", "10": "link", "11": "rm"},
-             "all_done": {"1": "name", "2": "code", "3": "name", "4": "rm"}}
+             "all_done": {"1": "name", "2": "code", "3": "name", "4": "rm"},
+             "nudge": {"1": "name", "2": "code", "3": "doc_hi", "4": "doc_en"},
+             "staff_list": {"1": "name", "2": "count", "3": "codes", "4": "name", "5": "count"}}
 # Message type (OutboundMessage.template_name) -> layout above. RM / DC
 # escalations go to staff and have no WhatsApp layout (yet).
 KIND_FOR_TEMPLATE = {"ONBOARD_ALL": "onboard", "LINK_REQUEST": "link",
@@ -118,7 +133,8 @@ KIND_FOR_TEMPLATE = {"ONBOARD_ALL": "onboard", "LINK_REQUEST": "link",
                      "RENEWAL_FINAL": "renewal_final", "UPLOAD_EXPIRED": "expired",
                      "UPLOAD_MISSING": "missing", "UNREADABLE_REUPLOAD": "unreadable",
                      "UPLOAD_RECEIPT": "receipt", "UPLOAD_PARTIAL_REJECTED": "receipt",
-                     "UPLOAD_SUCCESS_ALL": "all_done"}
+                     "UPLOAD_SUCCESS_ALL": "all_done", "UPLOAD_NUDGE": "nudge",
+                     "STAFF_PENDING_LIST": "staff_list"}
 
 
 def layout_values(template_key: str, csp, state, document_type: str) -> dict:
@@ -137,6 +153,11 @@ def layout_values(template_key: str, csp, state, document_type: str) -> dict:
             raise ValueError(f"no expiry date on record for {asked[0]}")
         return {"doc_en": DOC_LABELS[asked[0]][0], "doc_hi": DOC_LABELS[asked[0]][1],
                 "date": s.expiry_date.strftime("%d-%m-%Y"), "days": str(max(s.days_left or 0, 0))}
+    if kind == "nudge":
+        if not state.needs_upload:
+            raise ValueError("nothing left to upload")
+        return {"doc_en": ", ".join(DOC_LABELS[t][0] for t in state.needs_upload),
+                "doc_hi": ", ".join(DOC_LABELS[t][1] for t in state.needs_upload)}
     if kind in ("expired", "missing", "unreadable"):
         now = state.expired if kind == "expired" else state.needs_upload
         types = [t for t in asked if t in now] or asked or list(now)

@@ -751,3 +751,52 @@ def test_portal_agreement_past_the_one_year_rule_is_turned_away_as_expired(clien
                files={"agreement_file": ("a.pdf", _pvr_pdf(issue), "application/pdf")})
     res = r.json()["results"][0]
     assert not res["ok"] and res["message"]["en"] == portal.MSG["expired"][1]
+
+
+def test_own_link_locks_a_document_valid_for_more_than_60_days(client):
+    from app.api import portal
+    c, Session = client
+    cid, _, token = _csp(Session)
+    s = Session()
+    s.add(Document(csp_id=cid, document_type="POLICE_VERIFICATION", status=DocumentStatus.VALID, is_current=True,
+                   readability="READABLE", issue_date=date.today() - timedelta(days=100),
+                   expiry_date=date.today() + timedelta(days=200), sha256=uuid.uuid4().hex))
+    s.commit()
+    s.close()
+    page = c.get(f"/upload?token={token}").text
+    assert '"locked": true' in page and "valid till" in page
+    issue = date.today() - timedelta(days=10)
+    res = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=issue.isoformat()),
+                 files={"pvr_file": ("pvr.pdf", _pvr_pdf(issue), "application/pdf")}).json()["results"][0]
+    assert not res["ok"] and "valid till" in res["message"]["en"]
+
+
+def test_link_stays_valid_until_the_documents_are_uploaded():
+    from app.portal_tokens import LINK_DAYS
+    assert LINK_DAYS >= 365
+
+
+def test_pvr_application_receipt_is_recorded_as_applied_not_as_a_pvr(client, monkeypatch):
+    from app.api import portal
+    from app.compliance import evaluate
+    from app.models import PvrApplication
+    c, Session = client
+    cid, _, token = _csp(Session)
+    applied = date.today() - timedelta(days=3)
+    monkeypatch.setattr(portal, "extract_document_fields_deterministic", lambda *a, **k: {
+        "readability": "READABLE", "document_type": "PVR_APPLICATION_ONLY", "start_date": applied.isoformat()})
+    r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=applied.isoformat()),
+               files={"pvr_file": ("receipt.pdf", _pvr_pdf(applied), "application/pdf")})
+    res = r.json()["results"][0]
+    assert res["ok"] and res["message"]["en"] == portal.MSG["pvr_applied"][1]
+    s = Session()
+    assert s.query(PvrApplication).filter_by(csp_id=cid).one().applied_on == applied
+    assert s.query(Document).filter_by(csp_id=cid).count() == 0            # not a police certificate
+    st = evaluate(s, s.get(CSP, cid)).docs["POLICE_VERIFICATION"]
+    assert st.status == "MISSING" and st.applied_on == applied            # still needed, label unchanged
+    s.close()
+    assert f'"applied_on": "{applied.isoformat()}"' in c.get(f"/upload?token={token}").text
+    # The same receipt in the IIBF box is still turned away.
+    r = c.post("/api/portal/upload", data=_form(token, iibf_issue_date=applied.isoformat()),
+               files={"iibf_file": ("receipt2.pdf", _pvr_pdf(applied, "X"), "application/pdf")})
+    assert not r.json()["results"][0]["ok"]

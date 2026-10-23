@@ -337,7 +337,8 @@ def csp_detail(csp_id: int, me: Principal = Depends(require_user), db: Session =
                 "gaps": c.contact_gaps or {}, "next_action_at": _iso(c.next_action_at)},
         "category": st.category, "category_name": CATEGORY_NAMES[st.category], "reason": st.reason,
         "current": {t: {"status": s.status, "document_id": s.document.id if s.document else None,
-                        "issue_date": _iso(s.issue_date), "expiry_date": _iso(s.expiry_date), "days_left": s.days_left}
+                        "issue_date": _iso(s.issue_date), "expiry_date": _iso(s.expiry_date), "days_left": s.days_left,
+                        "applied_on": _iso(s.applied_on)}
                     for t, s in st.docs.items()},
         "documents": [_doc_json(d) for d in docs],
         "messages": [_msg_json(m, c) for m in msgs],
@@ -653,6 +654,7 @@ REASON_TEXT = {
     "dc_valid": "already valid (master link: not needed yet)", "dc_in_review": "already being checked",
     "dup_other": "file already on record for another CSP", "dup_same": "same document as the one on file",
     "dc_other_csp": "document of another CSP (master link, wrong KO code)",
+    "pvr_applied": "PVR application recorded (applied, waiting for the certificate)",
     "too_small": "photo too small", "too_dark": "photo too dark", "washed_out": "photo washed out",
     "blurry": "photo blurry", "no_date": "no issue date", "future": "date in the future",
     "too_big": "file too large", "file_type": "not a PDF/JPG/PNG",

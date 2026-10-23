@@ -125,6 +125,9 @@ class DocState:
     # The current copy waits for a person (Review queue): no "renew / upload
     # again" reminder for it until they decide.
     in_review: bool = False
+    # Police certificate only: the CSP applied for a new one on this date
+    # (PvrApplication), newer than the copy on record. Doesn't count.
+    applied_on: Optional[date] = None
 
     @property
     def shown_status(self) -> str:
@@ -214,6 +217,13 @@ def evaluate(db: Session, csp: CSP, today: Optional[date] = None) -> ComplianceS
         reason = "All three documents valid."
     else:
         reason = "; ".join(parts)
+    from .models import PvrApplication
+    app = (db.query(PvrApplication).filter(PvrApplication.csp_id == csp.id)
+           .order_by(PvrApplication.created_at.desc()).first())
+    pvr = docs["POLICE_VERIFICATION"]
+    if app is not None and (pvr.document is None or pvr.document.uploaded_at is None
+                            or app.created_at > pvr.document.uploaded_at):
+        pvr.applied_on = app.applied_on
     return ComplianceState(cat, reason, docs)
 
 

@@ -198,6 +198,23 @@ def _upload_partial_rejected(c):
             f"⚠️ Please note: To prevent terminal deactivation, please strictly re-upload a clear scanned copy immediately using the link below.")
 
 
+def _upload_nudge(c):
+    return (f"Reminder: documents still pending | KO {c['csp_code']}",
+            f"नमस्ते {c['csp_name']} (KO {c['csp_code']}) 🙏\nरिमाइंडर: आपके ये डॉक्यूमेंट अभी बाकी हैं: "
+            f"{c.get('doc_hi', '')}। अपलोड का लिंक ऊपर वाले मैसेज में है।",
+            f"Reminder: these documents are still pending: {c.get('doc_en', '')}. "
+            "The upload link is in the message above.")
+
+
+def staff_list_text(name: str, count: int, codes: str) -> str:
+    """The RM / DC list (app/escalation.py), as it reads on WhatsApp."""
+    return (f"नमस्ते {name} 🙏\n\nआपके {count} CSP के डॉक्यूमेंट अभी बाकी हैं "
+            f"(A = एग्रीमेंट, P = पुलिस वेरिफिकेशन, I = IIBF):\n{codes}\n\n"
+            "कृपया इन CSP को कॉल करके जल्दी अपलोड करवाएँ। हर CSP के WhatsApp पर उसका अपलोड लिंक भेजा जा चुका है।\n\n"
+            f"Hello {name}, {count} of your CSPs still have documents to upload (list above). Please call them and "
+            "get the documents uploaded; each CSP has their upload link on WhatsApp.\n— Eko")
+
+
 TEMPLATES = {
     "RENEWAL_NOTICE": _renewal_notice,
     "RENEWAL_FOLLOWUP": _renewal_followup,
@@ -212,6 +229,7 @@ TEMPLATES = {
     "UPLOAD_PARTIAL_REJECTED": _upload_partial_rejected,
     "ESCALATION_RM": _escalation("RM"),
     "ESCALATION_DC": _escalation("DC"),
+    "UPLOAD_NUDGE": _upload_nudge,
 }
 CSP_FACING = {"RENEWAL_NOTICE", "RENEWAL_FOLLOWUP", "RENEWAL_FINAL", "UPLOAD_MISSING",
               "UPLOAD_EXPIRED", "ONBOARD_ALL", "UNREADABLE_REUPLOAD", "LINK_REQUEST",

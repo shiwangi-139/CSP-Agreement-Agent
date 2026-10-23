@@ -19,7 +19,50 @@ edit here can't spam staff.
 
 MAX_RM_MESSAGES = 2
 MAX_DC_MESSAGES = 1
-MAX_CSP_UPLOAD_MESSAGES = 10
+# The upload cycle never stops while documents are missing (weekly after its
+# table; was capped at 10 messages until 2026-10-23).
+MAX_CSP_UPLOAD_MESSAGES = None
+
+# The document campaign (agreed 2026-10-23), see app/escalation.py:
+#   CAMPAIGN_FROM .. CAMPAIGN_UNTIL   every CSP with documents to upload gets
+#                                     the upload message every morning;
+#   from ESCALATE_FROM                also a short evening nudge, and each RM a
+#                                     daily list of their CSPs still pending;
+#   from ESCALATE_DC_FROM             each DC a daily list as well;
+#   after CAMPAIGN_UNTIL              CSPs weekly (upload cycle), RM / DC lists
+#                                     weekly on STAFF_WEEKLY_DAY.
+# Each can be moved in .env (YYYY-MM-DD).
+import os as _os
+from datetime import date as _date
+
+
+def _day(name: str, default: str) -> _date:
+    try:
+        return _date.fromisoformat((_os.getenv(name) or default).strip())
+    except ValueError:
+        return _date.fromisoformat(default)
+
+
+CAMPAIGN_FROM = _day("CAMPAIGN_FROM", "2026-10-23")
+ESCALATE_FROM = _day("ESCALATE_FROM", "2026-10-30")
+ESCALATE_DC_FROM = _day("ESCALATE_DC_FROM", "2026-11-03")
+CAMPAIGN_UNTIL = _day("CAMPAIGN_UNTIL", "2026-11-13")
+STAFF_WEEKLY_DAY = 0                     # Monday
+# DCs who get no lists (not active).
+STAFF_LIST_SKIP = {n.strip().lower() for n in (_os.getenv("STAFF_LIST_SKIP") or "Narottam").split(",") if n.strip()}
+
+
+def in_campaign(today) -> bool:
+    return CAMPAIGN_FROM <= today <= CAMPAIGN_UNTIL
+
+
+def staff_list_due(role: str, today) -> bool:
+    """Is today a day for the RM / DC list? Daily during the escalation,
+    weekly after the campaign."""
+    start = ESCALATE_FROM if role == "RM" else ESCALATE_DC_FROM
+    if today < start:
+        return False
+    return today <= CAMPAIGN_UNTIL or today.weekday() == STAFF_WEEKLY_DAY
 
 # ------------------------------------------------------------ renewal ladders
 AGREEMENT_LADDER = [
@@ -69,11 +112,11 @@ UPLOAD_CYCLE = [
     {"stage": "U-1", "gap": 0, "to": "CSP"},                               # first message
     {"stage": "U-2", "gap": 4, "to": "CSP"},                               # 4 days later
     {"stage": "U-3", "gap": 7, "to": "CSP"},
-    {"stage": "U-RM1", "gap": 7, "to": "RM", "template": "ESCALATION_RM"},  # RM calls the CSP
-    {"stage": "U-4", "gap": 7, "to": "CSP"},
-    {"stage": "U-RM2", "gap": 7, "to": "RM", "template": "ESCALATION_RM"},
-    {"stage": "U-DC", "gap": 7, "to": "DC", "template": "ESCALATION_DC"},
 ]
+# RMs and DCs are no longer messaged per CSP from this cycle: they get one
+# daily / weekly list of all their pending CSPs (app/escalation.py). Those
+# per-CSP escalations had no WhatsApp layout, waited unsent, and so blocked
+# every later reminder of the cycle (messages stopped around 2026-10-20).
 # After the table ends the CSP keeps getting a weekly reminder until upload,
 # capped at MAX_CSP_UPLOAD_MESSAGES CSP messages sent in total.
 UPLOAD_WEEKLY_EVERY_DAYS = 7
@@ -105,7 +148,7 @@ def in_daily_push(today) -> bool:
     """True on the days of the daily push (DAILY_PUSH_FROM..DAILY_PUSH_UNTIL
     in .env): the upload cycle then sends the CSP one message a day."""
     from .config import DAILY_PUSH_FROM, DAILY_PUSH_UNTIL
-    return bool(DAILY_PUSH_FROM and DAILY_PUSH_UNTIL and DAILY_PUSH_FROM <= today <= DAILY_PUSH_UNTIL)
+    return in_campaign(today) or bool(DAILY_PUSH_FROM and DAILY_PUSH_UNTIL and DAILY_PUSH_FROM <= today <= DAILY_PUSH_UNTIL)
 
 
 def upload_step(index: int) -> dict:

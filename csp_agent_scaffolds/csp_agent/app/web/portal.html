@@ -196,15 +196,19 @@
       <h2>${esc(d.label_hi)} <span class="en">/ ${esc(d.label_en)}</span></h2>
       <span class="badge ${esc(d.status)}">${esc(st[0])} / ${esc(st[1])}</span>
       ${current}
+      ${d.applied_on ? `<div class="hint" style="margin-top:6px">📝 आपने ${fmt(d.applied_on)} को नए सर्टिफिकेट के लिए आवेदन किया है। सर्टिफिकेट मिलते ही यहाँ अपलोड करें।
+        <span class="en">You applied for a new certificate on ${fmt(d.applied_on)}. Upload it here as soon as you get it.</span></div>` : ""}
       ${d.last_problem ? `<div class="err" style="margin-top:6px">❌ पिछली बार (${esc(d.last_problem.at)}) यह डॉक्यूमेंट स्वीकार नहीं हुआ: ${esc(d.last_problem.hi)}। कृपया सही डॉक्यूमेंट फिर से अपलोड करें।
         <span class="en">Last time (${esc(d.last_problem.at)}) this document was not accepted: ${esc(d.last_problem.en)}. Please upload the correct one again.</span></div>` : ""}
+      ${d.locked ? `<div class="hint" style="background:var(--mist);border-radius:.6rem;padding:10px 12px;margin-top:8px">🔒 ${esc(d.lock_message.hi)}
+        <span class="en" style="display:block">${esc(d.lock_message.en)}</span></div>` : `
       ${d.requested ? "" : `<details><summary>नया डॉक्यूमेंट अपलोड करें <span class="en">/ Upload a newer copy</span></summary>`}
       <label for="${d.section}_file">फ़ाइल चुनें <span class="en">/ Choose file (PDF, max ${ctx.max_upload_mb} MB)</span></label>
       <input type="file" id="${d.section}_file" name="${d.section}_file" accept="application/pdf,image/jpeg,image/png">
       <label for="${d.section}_issue_date">डॉक्यूमेंट बनने की तारीख <span class="en">/ Issue date</span></label>
       <input type="date" id="${d.section}_issue_date" name="${d.section}_issue_date" max="${ctx.today}">
-      <div class="err" id="${d.section}_err"></div><div class="ok" id="${d.section}_ok"></div>
-      ${d.requested ? "" : "</details>"}`;
+      ${d.requested ? "" : "</details>"}`}
+      <div class="err" id="${d.section}_err"></div><div class="ok" id="${d.section}_ok"></div>`;
     docsEl.appendChild(sec);
   }
 
@@ -214,7 +218,7 @@
 
   function checkDates() {
     let ok = true;
-    for (const d of ctx.docs) {
+    for (const d of ctx.docs.filter((x) => !x.locked)) {
       const file = $(d.section + "_file").files[0];
       const v = $(d.section + "_issue_date").value;
       const err = $(d.section + "_err");
@@ -280,7 +284,7 @@
       $("formerr").textContent = "नाम और सही 10 अंकों का मोबाइल नंबर भरें / Enter your name and a valid 10-digit mobile number.";
       return;
     }
-    if (!ctx.docs.some((d) => $(d.section + "_file").files[0])) {
+    if (!ctx.docs.some((d) => !d.locked && $(d.section + "_file").files[0])) {
       $("formerr").textContent = "कम से कम एक डॉक्यूमेंट चुनें / Choose at least one document.";
       return;
     }

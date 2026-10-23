@@ -7,9 +7,10 @@ while its row exists, is unexpired and not revoked.
 
 Each CSP has ONE live link. A new message reuses it (adding any newly
 requested documents), so a link a CSP already received never dies because
-another reminder was drafted. It stays valid PORTAL_TOKEN_DAYS after the
-latest message carrying it was sent, and is revoked automatically once every
-document it asked for has been accepted.
+another reminder was drafted. It stays valid until every document it asked
+for has been accepted (then it is revoked automatically), at most
+LINK_DAYS (a year) after the latest message carrying it was sent. A link
+that already expired stays dead: the next message carries a new one.
 """
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -29,13 +30,18 @@ def _url(jti: str) -> str:
     return f"{PUBLIC_BASE_URL}/upload?token={jti}"
 
 
+# Until the documents are uploaded (since 2026-10-23; was PORTAL_TOKEN_DAYS = 7):
+# a CSP waiting weeks for a new police certificate can still use it.
+LINK_DAYS = max(PORTAL_TOKEN_DAYS, 365)
+
+
 def _live(db: Session, csp_id: int) -> Optional[PortalToken]:
     return (db.query(PortalToken)
             .filter(PortalToken.csp_id == csp_id, PortalToken.revoked_at.is_(None), PortalToken.expires_at > _now())
             .order_by(PortalToken.created_at.desc()).first())
 
 
-def issue_upload_link(db: Session, csp: CSP, requested_types: list[str], days: int = PORTAL_TOKEN_DAYS) -> str:
+def issue_upload_link(db: Session, csp: CSP, requested_types: list[str], days: int = LINK_DAYS) -> str:
     """The CSP's live link (created if there is none), now also asking for
     `requested_types` and valid at least `days` more days."""
     now = _now()
@@ -57,7 +63,7 @@ def current_upload_link(db: Session, csp: CSP) -> Optional[str]:
     return _url(row.jti) if row else None
 
 
-def extend_for_sent_message(db: Session, link: Optional[str], days: int = PORTAL_TOKEN_DAYS) -> None:
+def extend_for_sent_message(db: Session, link: Optional[str], days: int = LINK_DAYS) -> None:
     """A message carrying `link` was just sent: keep the link valid `days`
     from now, so the CSP always has the full window to use it."""
     if not link or "token=" not in link:

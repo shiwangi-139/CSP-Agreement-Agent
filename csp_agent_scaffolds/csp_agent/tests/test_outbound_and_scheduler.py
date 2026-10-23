@@ -12,8 +12,11 @@ def test_every_policy_template_exists():
 
 
 def test_policy_tables_respect_caps():
-    for ladder in LADDERS.values():
+    for key, ladder in LADDERS.items():
         roles = [s["to"] for s in ladder]
+        if key == "UPLOAD":                  # RM / DC get a daily list instead (app/escalation.py)
+            assert set(roles) == {"CSP"}
+            continue
         assert roles.count("RM") <= MAX_RM_MESSAGES and roles.count("DC") <= MAX_DC_MESSAGES
         assert roles.index("RM") >= 2
         assert roles.index("DC") > max(i for i, r in enumerate(roles) if r == "RM")
@@ -29,6 +32,7 @@ def test_renewal_template_renders_with_dates():
 def test_worker_schedule():
     ids = {j.id for j in build_scheduler().get_jobs()}
     from app.config import FEATURE_MESSAGING_ANALYTICS
-    core = {"gmail", "sheet", "engine", "outbox", "vault", "reports", "model_assist", "model_guard", "snapshot", "snapshot_at_start"}
+    core = {"gmail", "sheet", "engine", "outbox", "vault", "reports", "model_assist", "model_guard", "snapshot", "snapshot_at_start",
+            "staff_lists", "nudges"}
     assert ids == (core | {"delivery"} if FEATURE_MESSAGING_ANALYTICS else core)    # delivery: parked feature
     assert "worker" in get_scheduler_status()["runs_in"]

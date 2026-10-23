@@ -481,3 +481,17 @@ class MasterLink(Base):
     created_at = Column(DateTime, nullable=False)
     expires_at = Column(DateTime, nullable=False)
     revoked_at = Column(DateTime)
+
+
+class PvrApplication(Base):
+    """A CSP has applied for a new police certificate (it can take a month):
+    the application receipt uploaded in the PVR box. It is NOT a valid PVR,
+    the Label stays and reminders go on; the record and the reports show
+    "PVR applied on <date>" until the certificate is uploaded."""
+    __tablename__ = "pvr_applications"
+    id = Column(Integer, primary_key=True)
+    csp_id = Column(Integer, ForeignKey("csp.id"), nullable=False, index=True)
+    applied_on = Column(Date, nullable=False)
+    file_path = Column(String)
+    channel = Column(String)
+    created_at = Column(DateTime, default=func.now(), nullable=False)    # database clock, like Document.uploaded_at

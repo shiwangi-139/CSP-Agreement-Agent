@@ -65,8 +65,11 @@ def help_line(db: Session = None, csp: CSP = None) -> str:
 def summarize(results: list[dict]) -> dict:
     """Recorded / being checked / not recorded, in Hindi and English, from
     the upload page's per-section results."""
-    ok_t, check_t, bad = [], [], []
+    ok_t, check_t, bad, applied = [], [], [], False
     for r in results:
+        if r.get("reason") == "pvr_applied":
+            applied = True
+            continue
         t = SECTION_TYPE.get(r.get("section"), r.get("type"))
         if t not in DOC_LABELS:
             continue
@@ -79,7 +82,11 @@ def summarize(results: list[dict]) -> dict:
             bad.append((t, reason))
 
     def names(types, i):
-        return ", ".join(DOC_LABELS[t][i] for t in dict.fromkeys(types)) or (NONE_EN if i == 0 else NONE_HI)
+        out = [DOC_LABELS[t][i] for t in dict.fromkeys(types)]
+        if applied and types is ok_t:
+            out.append("पुलिस वेरिफिकेशन का आवेदन (सर्टिफिकेट आने पर अपलोड करें)" if i == 1
+                       else "police verification application (upload the certificate when it comes)")
+        return ", ".join(out) or (NONE_EN if i == 0 else NONE_HI)
 
     def bads(i):
         if not bad:

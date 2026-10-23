@@ -182,13 +182,28 @@ def test_upload_cycle_cadence_and_caps(db_session):
     wa = [m for m in _msgs(db, csp) if m.cycle_id and m.channel == "WHATSAPP"
           and db.get(OutreachCycle, m.cycle_id).kind == "UPLOAD"]
     steps = [(m.stage, m.recipient_role, (m.sent_at.date() - TODAY).days) for m in wa]
-    assert steps[:7] == [("U-1", "CSP", 0), ("U-2", "CSP", 4), ("U-3", "CSP", 11), ("U-RM1", "RM", 18),
-                         ("U-4", "CSP", 25), ("U-RM2", "RM", 32), ("U-DC", "DC", 39)]
-    assert steps[7][0] == "U-W1" and steps[7][2] == 46                # then weekly
-    roles = [r for _, r, _ in steps]
-    assert roles.count("RM") == 2 and roles.count("DC") == 1
-    assert roles.count("CSP") == 10                                   # capped
-    assert all(m.template_name in ("UPLOAD_MISSING", "ESCALATION_RM", "ESCALATION_DC") for m in wa)
+    assert steps[:4] == [("U-1", "CSP", 0), ("U-2", "CSP", 4), ("U-3", "CSP", 11), ("U-W1", "CSP", 18)]
+    assert [d for _, _, d in steps[3:]] == list(range(18, 150, 7))     # then weekly, never stopped
+    assert {r for _, r, _ in steps} == {"CSP"}                          # RM / DC get a list instead
+    assert all(m.template_name == "UPLOAD_MISSING" for m in wa)
+
+
+def test_a_waiting_rm_escalation_no_longer_blocks_the_csps_reminders(db_session):
+    """Messages stopped around 2026-10-20: an RM escalation (no WhatsApp
+    layout) waited unsent and held up the cycle."""
+    db = db_session
+    csp = _csp(db)
+    _doc(db, csp, "AGREEMENT", date(2026, 1, 1), date(2029, 1, 1))
+    renewal_engine.run_for_csp(db, csp, TODAY)
+    cycle = db.query(OutreachCycle).filter_by(csp_id=csp.id, kind="UPLOAD").first()
+    for m in _msgs(db, csp):
+        m.status, m.sent_at = OutboundStatus.SENT, datetime(2026, 9, 25, 10)
+    [rm] = outbound.draft(db, csp=csp, role="RM", template_key="ESCALATION_RM",
+                          ctx={"csp_name": csp.name, "csp_code": csp.current_code, "docs": []},
+                          key_base=f"C{cycle.id}:U-RM1", cycle_id=cycle.id, stage="U-RM1", channels=("WHATSAPP",))
+    renewal_engine.run_for_csp(db, csp, TODAY + timedelta(days=4))
+    assert rm.status == OutboundStatus.REJECTED and rm.error_log.startswith("Superseded")
+    assert "U-2" in {m.stage for m in _msgs(db, csp)}
 
 
 def test_next_reminder_waits_until_the_previous_one_is_sent(db_session):
@@ -422,8 +437,8 @@ def test_daily_push_sends_one_message_a_day_then_back_to_the_ladder(db_session, 
     wa = [m for m in _msgs(db, csp) if m.channel == "WHATSAPP"]
     steps = [(m.stage, m.recipient_role, (m.sent_at.date() - start).days) for m in wa]
     assert steps[:7] == [(f"U-PUSH-202610{d}", "CSP", d - 14) for d in range(14, 21)]   # once a day, CSP only
-    # Then the usual ladder from its second step: 4 days, 7 days, then the RM.
-    assert steps[7:] == [("U-2", "CSP", 10), ("U-3", "CSP", 17), ("U-RM1", "RM", 24)]
+    # Then the usual ladder from its second step: 4 days, 7 days, then weekly.
+    assert steps[7:] == [("U-2", "CSP", 10), ("U-3", "CSP", 17), ("U-W1", "CSP", 24)]
     assert all(m.template_name == "UPLOAD_MISSING" for m in wa if m.recipient_role == "CSP")
 
 

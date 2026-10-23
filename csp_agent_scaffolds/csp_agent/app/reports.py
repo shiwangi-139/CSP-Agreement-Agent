@@ -160,11 +160,13 @@ def _dc_doc_text(t: str, s, today: date) -> tuple[str, Optional[PatternFill]]:
         if s.days_left is not None and s.days_left <= EXPIRING_WITHIN_DAYS:
             return f"Renew now – expires {fmt(s.expiry_date)} ({s.days_left} days left)", AMBER
         return f"OK till {fmt(s.expiry_date)}", GREEN
+    applied = f" (applied for a new one on {fmt(s.applied_on)}, waiting)" if s.applied_on else ""
     if s.status == "EXPIRED":
-        return f"EXPIRED on {fmt(s.expiry_date)} – upload the renewed one" if s.expiry_date else "EXPIRED – upload the renewed one", RED
+        return (f"EXPIRED on {fmt(s.expiry_date)} – upload the renewed one" if s.expiry_date
+                else "EXPIRED – upload the renewed one") + applied, RED
     if s.status == "UNREADABLE":
         return "Not readable – upload a clear scan", RED
-    return "MISSING – upload it", RED
+    return "MISSING – upload it" + applied, RED
 
 
 def _dc_rows(db: Session, dc: InternalUser, today: date) -> list[tuple]:
@@ -225,6 +227,9 @@ def dc_summary_text(db: Session, dc: InternalUser, today: Optional[date] = None)
         out.append(f"• {DC_SHORT_HI[t]} / {DC_SHORT[t]}: *{miss + exp + bad}* ({', '.join(parts)})")
     out.append(f"• 60 दिन में रिन्यू / Renew within 60 days: *{len(soon)}*")
     out.append(f"• Eko जाँच कर रहा है / Being checked by Eko: *{checking}*")
+    applied = sum(1 for r in rows if r[5].docs["POLICE_VERIFICATION"].applied_on)
+    if applied:
+        out.append(f"• पुलिस वेरिफिकेशन का आवेदन किया, इंतज़ार / PVR applied, waiting: *{applied}*")
     if need:
         out += ["", "*CSP सूची (ज़्यादा ज़रूरी पहले) / CSP list (most needed first):*"]
         for i, r in enumerate(need, 1):

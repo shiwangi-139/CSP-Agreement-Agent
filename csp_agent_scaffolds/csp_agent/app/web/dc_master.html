@@ -189,6 +189,8 @@
         <h2>${esc(d.label_hi)} <span class="en">/ ${esc(d.label_en)}</span></h2>
         <span class="badge ${esc(d.status)}">${esc(st[0])} / ${esc(st[1])}</span>
         ${current}
+        ${d.applied_on ? `<div class="hint" style="margin-top:6px">📝 आपने ${fmt(d.applied_on)} को नए सर्टिफिकेट के लिए आवेदन किया है। सर्टिफिकेट मिलते ही यहाँ अपलोड करें।
+        <span class="en">You applied for a new certificate on ${fmt(d.applied_on)}. Upload it here as soon as you get it.</span></div>` : ""}
         ${d.last_problem ? `<div class="err" style="margin-top:6px">❌ पिछली बार (${esc(d.last_problem.at)}) स्वीकार नहीं हुआ: ${esc(d.last_problem.hi)}
           <span class="en">Last upload (${esc(d.last_problem.at)}) was not accepted: ${esc(d.last_problem.en)}</span></div>` : ""}
         ${d.locked ? `<div class="lock">🔒 ${esc(d.lock_message.hi)}<div class="en">${esc(d.lock_message.en)}</div></div>` : `

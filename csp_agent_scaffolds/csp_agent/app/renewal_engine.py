@@ -232,6 +232,12 @@ def _run_upload_cycle(db: Session, csp: CSP, state: ComplianceState, today: date
         db.flush()
 
     stages = _stages(db, cycle)
+    staff = [st for st in stages if st["state"] == "PENDING" and st["role"] in ("RM", "DC")]
+    if staff:
+        # Old per-CSP RM / DC escalations (no WhatsApp layout): they waited
+        # unsent and held up the CSP's reminders. RM / DC now get a list.
+        _supersede(staff, None, "RM / DC now get one daily list of their pending CSPs")
+        stages = _stages(db, cycle)
     sent_pos = [i for i, st in enumerate(stages) if st["state"] == "SENT"]
     if sent_pos:
         # Unsent reminders drafted before one that already went out are stale.
@@ -254,7 +260,7 @@ def _run_upload_cycle(db: Session, csp: CSP, state: ComplianceState, today: date
     ladder = [st for st in stages if not st["stage"].startswith(PUSH_STAGE)]
     push = policy.in_daily_push(today)
     ladder_sent = sum(1 for st in ladder if st["state"] == "SENT" and st["role"] == "CSP")
-    if ladder_sent >= policy.MAX_CSP_UPLOAD_MESSAGES and not push:
+    if policy.MAX_CSP_UPLOAD_MESSAGES is not None and ladder_sent >= policy.MAX_CSP_UPLOAD_MESSAGES and not push:
         return None
 
     # Every finished step (sent, or rejected on the dashboard) moves the
