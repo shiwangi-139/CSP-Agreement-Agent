@@ -280,10 +280,8 @@
   $("f").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("formerr").textContent = "";
-    if (!$("name").value.trim() || !/^[6-9][0-9]{9}$/.test($("mobile").value.trim())) {
-      $("formerr").textContent = "नाम और सही 10 अंकों का मोबाइल नंबर भरें / Enter your name and a valid 10-digit mobile number.";
-      return;
-    }
+    // Name and mobile come from our record and are locked (the server ignores
+    // them): a CSP with no mobile on record must still be able to upload.
     if (!ctx.docs.some((d) => !d.locked && $(d.section + "_file").files[0])) {
       $("formerr").textContent = "कम से कम एक डॉक्यूमेंट चुनें / Choose at least one document.";
       return;

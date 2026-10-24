@@ -347,6 +347,21 @@ def _send_link(csp_id: int, phone10: str) -> None:
             m.destination = phone10
             m.status, m.reviewed_by, m.reviewed_at = OutboundStatus.APPROVED, "CSP asked on the upload page", outbound._now()
             outbound.send(db, m)
+        if m.status == OutboundStatus.FAILED and state.needs_upload:
+            # The "your link" layout can't go out (e.g. Meta refused it): send
+            # the CSP's usual upload message instead, which carries the same link.
+            from ..renewal_engine import _ctx, _upload_template
+            [alt] = outbound.draft(db, csp=csp, role="CSP", template_key=_upload_template(state),
+                                   ctx=_ctx(db, csp, state, link), key_base=f"LINKALT:{csp.id}:{uuid.uuid4().hex[:12]}",
+                                   channels=("WHATSAPP",), document_type=",".join(state.needs_upload),
+                                   stage="LINK_REQUEST")
+            if alt.status != OutboundStatus.BLOCKED:
+                alt.destination = phone10
+                alt.status, alt.reviewed_by, alt.reviewed_at = (OutboundStatus.APPROVED,
+                                                                "CSP asked on the upload page", outbound._now())
+                outbound.send(db, alt)
+            logger.info("link_request_fallback csp_id=%s template=%s status=%s", csp_id, alt.template_name,
+                        alt.status.value)
         db.commit()
         logger.info("link_request_sent csp_id=%s status=%s", csp_id, m.status.value)
     except Exception:
@@ -521,10 +536,8 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
     # not uploaded again.
     dc_locks = master_link.locks(evaluate(db, csp)) if via_dc else _own_link_locks(evaluate(db, csp))
 
-    for field in ("name", "mobile"):
-        if not via_dc and not str(form.get(field) or "").strip():
-            raise HTTPException(422, detail={"hi": "नाम और मोबाइल नंबर ज़रूरी हैं।",
-                                              "en": "Name and mobile number are required."})
+    # (Name and mobile on the CSP's form are locked, from our record: not
+    # required, so a CSP with no mobile on record can still upload.)
 
     results = []
     for section, doc_type in SECTIONS.items():
