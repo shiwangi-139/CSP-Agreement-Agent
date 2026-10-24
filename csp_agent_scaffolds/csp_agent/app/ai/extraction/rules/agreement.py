@@ -152,13 +152,19 @@ BETWEEN_LABEL_AND_DATE = re.compile(r"^[\s:\-–—_.,(]{0,12}$")
 HINDI_UPTO = re.compile(r"\s*तक\s*(?:मान्य|वैध)")
 
 
-def find_end_date(text: str, issue: date) -> Optional[date]:
+def find_end_date(text: str, issue: Optional[date], today: Optional[date] = None) -> Optional[date]:
     """A printed last day ("valid upto 25/10/2027", "END AND CLOSE DATE
     01-06-2028", "Expiry Date: ...", "31/03/2027 तक मान्य", '("Effective
     Date") 27/08/2028') between 30 days
-    and 6 years after the issue date (the scan may break the line before it)."""
+    and 6 years after the issue date (the scan may break the line before it).
+    With no issue date read (only the term page is clear), a last day within
+    6 years of today: the date the CSP typed is then the issue date."""
     flat = re.sub(r"\s+", " ", normalize(text))
-    ok = lambda d: 30 <= (d - issue).days <= 6 * 366
+    if issue is None:
+        today = today or date.today()
+        ok = lambda d: abs((d - today).days) <= 6 * 366
+    else:
+        ok = lambda d: 30 <= (d - issue).days <= 6 * 366
     for m in END_DATE.finditer(flat):
         window = flat[m.end():m.end() + 40]
         found = find_dates(window)
@@ -261,7 +267,13 @@ def extract_agreement(text: str, today: Optional[date] = None) -> dict:
         if labelled:
             out["issue_date"], out["date_source"] = labelled[0].value, "AGREEMENT_EFFECTIVE_DATE_LABEL"
 
-    end = find_end_date(text, out["issue_date"]) if out["issue_date"] else None
+    end = find_end_date(text, out["issue_date"], today)
+    if end and out["issue_date"] is None:
+        # Only the last day is clear ("valid upto 03/12/2027" on the term page):
+        # kept, with the issue date the CSP typed (a person confirms it).
+        out["explicit_expiry"] = end
+        out["validity_source"] = "AGREEMENT_RANGE_FROM_TO"
+        return out
     if end:
         out["explicit_expiry"] = end
         out["validity_source"] = "AGREEMENT_RANGE_FROM_TO"

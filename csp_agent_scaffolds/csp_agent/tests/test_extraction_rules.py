@@ -587,3 +587,27 @@ def test_handwritten_effective_date_then_last_day(line):
 def test_letter_o_is_fixed_only_inside_a_date():
     from app.ai.extraction.rules.dates import normalize
     assert normalize("Room 10 Bazzar Po. KUIN, 7-1o-2025") == "Room 10 Bazzar Po. KUIN, 7-10-2025"
+
+
+@pytest.mark.parametrize("text,issue,end", [
+    ('On this day of 01/11/2025 to 31/12/2028 "Effective Date" PRASHANT KUMAR MEHTA an indian\n', date(2025, 11, 1), date(2028, 12, 31)),
+    ('On this day of 24-6-2025 ("Effective Date"), CSP Name DINESH KUMAR\nNote: This agreement is Valid from 24-6-2025 to 23-6-2028\n',
+     date(2025, 6, 24), date(2028, 6, 23)),
+    ('On this day of 24-6-202S ("Effective Date"), CSP Name DINESH KUMAR\nThis agreement is Valid from 24-6-202S to 23-6-2o28\n',
+     date(2025, 6, 24), date(2028, 6, 23)),
+    ('On this day of, 04/12/2024 ("Effective Date"), X\nA. Term: This Agreement shall commence on the Effective Date '
+     'and shall be valid upto 03/12/2027\nor until terminated\n', date(2024, 12, 4), date(2027, 12, 3)),
+    ('4. TERM AND TERMINATION\nA. Term: This Agreement shall commence on the Effective Date and shall be valid upto '
+     '03/12/2027\nor until terminated in accordance with Clause I(4)B\n', None, date(2027, 12, 3)),
+])
+def test_agreement_ranges_and_terms_seen_on_real_documents(text, issue, end):
+    """Prashant Kumar Mehta ('day of X to Y'), Dinesh Kumar 1A852416 (handwritten 'Valid from .. to ..',
+    5 read as S), and a term page 'valid upto 03/12/2027' whose issue date isn't readable."""
+    from app.ai.extraction.rules.agreement import extract_agreement
+    r = extract_agreement("CUSTOMER SERVICE POINT AGREEMENT\n" + text, date(2026, 10, 24))
+    assert r["issue_date"] == issue and r["explicit_expiry"] == end
+
+
+def test_digit_lookalikes_are_fixed_only_inside_a_date():
+    from app.ai.extraction.rules.dates import normalize
+    assert normalize("SUNNY SINGH, Sec. 44, 24-6-202S") == "SUNNY SINGH, Sec. 44, 24-6-2025"

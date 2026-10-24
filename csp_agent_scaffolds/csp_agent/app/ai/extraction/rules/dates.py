@@ -74,7 +74,8 @@ _CAMERA_DATE_TIME = re.compile(r"^\s*[A-Za-z]{3,9}\.?\s+\d{1,2},\s*\d{4}" + _CAM
 _NUMERIC_DATE_TIME = re.compile(r"^\s*(?:\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})" + _CAMERA_TIME)
 
 
-_O_DATE = re.compile(r"(?<![\w])[\doO]{1,2}\s?[-/.]\s?[\doO]{1,2}\s?[-/.]\s?(?:[12][\doO]{3}|[\doO]{2})(?![\w])")
+_DIGIT_LOOKALIKES = str.maketrans({"o": "0", "O": "0", "S": "5", "s": "5", "l": "1", "I": "1", "|": "1"})
+_O_DATE = re.compile(r"(?<![\w])[\doOlI|]{1,2}\s?[-/.]\s?[\doOlI|]{1,2}\s?[-/.]\s?(?:[12][\doOSsl]{3}|[\doO]{2})(?![\w])")
 
 
 def strip_camera_stamps(text: str) -> str:
@@ -98,9 +99,10 @@ def normalize(text: str) -> str:
     letter that could be one of several digits (e.g. "B7") is left alone: we
     never guess a date."""
     text = strip_camera_stamps((text or "").translate(DEVANAGARI_DIGITS))
-    # Handwritten 0 read as the letter o inside a day-month-year: "7-1o-2025",
-    # "o7/1O/2o24" -> 0 (only in that shape, so words are never touched).
-    text = _O_DATE.sub(lambda m: re.sub(r"[oO]", "0", m.group(0)), text)
+    # Handwritten digits read as letters inside a day-month-year: 0 as o
+    # ("7-1o-2025"), 5 as S ("24-6-202S"), 1 as l / I ("l5-0I-2025"). Only in
+    # that shape, so words are never touched.
+    text = _O_DATE.sub(lambda m: m.group(0).translate(_DIGIT_LOOKALIKES), text)
     for pat, rep in _OCR_FIXES:
         text = pat.sub(rep, text)
     # Recover dates with garbled OCR separators (e.g. 07i0512026 -> 07/05/2026)
