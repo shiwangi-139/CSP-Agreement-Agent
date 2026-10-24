@@ -253,3 +253,31 @@ def test_one_link_always_shown_never_expires_and_the_shared_one_can_be_brought_b
     assert back.status_code == 200 and back.json()["url"] == shared
     assert ctx(token) == 200 and ctx(newer.split("dc=")[1]) == 403                     # still one link
     assert c.post("/api/hub/master-link/restore", headers=hdr, json={"url": "https://x/upload?dc=made-up"}).status_code == 404
+
+
+def test_dc_live_sheet_gives_one_dcs_table_only_with_the_key(client, monkeypatch):
+    from app.models import InternalUser
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    cid, code, _ = _csp(Session)
+    s = Session()
+    dc = InternalUser(name="DC Sheet Person", role="DC")
+    s.add(dc)
+    s.flush()
+    s.get(CSP, cid).dc_id = dc.id
+    s.commit()
+    s.close()
+    _valid_doc(Session, cid, "POLICE_VERIFICATION", date.today() + timedelta(days=200))
+    assert c.get("/api/hub/dc-sheet-key", headers=hdr).json()["key"] is None
+    key = c.post("/api/hub/dc-sheet-key", headers=hdr).json()["key"]
+    ask = lambda k, n="dc sheet person": c.post("/upload", data={"action": "dc_sheet", "key": k, "dc_name": n})
+    assert ask("wrong").status_code == 403 and ask("").status_code == 403
+    assert ask(key, "Nobody").status_code == 404
+    d = ask(key).json()
+    assert d["ok"] and "DC Sheet Person" in d["title"] and d["header"][0] == "KO code"
+    row = next(r for r in d["rows"] if r[0] == code)
+    fills = d["fills"][d["rows"].index(row)]
+    assert row[4] == "CSP Agreement, IIBF Certificate" and fills[4] == "red" and fills[6] == "green"
+    newer = c.post("/api/hub/dc-sheet-key", headers=hdr).json()["key"]                  # the old key stops
+    assert ask(key).status_code == 403 and ask(newer).status_code == 200

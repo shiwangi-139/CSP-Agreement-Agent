@@ -277,6 +277,29 @@ def dc_progress(db: Session, today: Optional[date] = None) -> dict:
     return {"base_day": base.isoformat() if base else None, "today": today.isoformat(), "rows": rows, "total": total}
 
 
+def dc_table(db: Session, dc: InternalUser, today: Optional[date] = None) -> dict:
+    """The DC Excel's content as plain data, for the DCs' live Google Sheets
+    (app/dc_sheets.py): title lines, header, one row per CSP and each cell's
+    colour ("green" / "yellow" / "red" / None)."""
+    today = today or date.today()
+    rows = _dc_rows(db, dc, today)
+    need = sum(1 for r in rows if r[0])
+    colour = {id(GREEN): "green", id(AMBER): "yellow", id(RED): "red"}
+    out, fills = [], []
+    for n, c, rm, cells, todo, _ in rows:
+        out.append([c.current_code, c.name, c.phone or "", c.state or "",
+                    ", ".join(todo) if todo else "Nothing – all OK"] + [t for t, _ in cells] + [rm.name if rm else ""])
+        fills.append([None, None, None, None, "red" if todo else "green"]
+                     + [colour.get(id(f)) if f is not None else None for _, f in cells] + [None])
+    return {"title": f"CSP documents – DC {dc.name}",
+            "summary": f"{len(rows)} CSPs · {need} need a document · {len(rows) - need} have everything",
+            "legend": "Colours: green = OK · yellow = renew soon / being checked · red = upload needed. "
+                      "CSPs that need something are at the top.",
+            "header": ["KO code", "CSP name", "Phone", "State", "What to upload", "Agreement", "Police Verification",
+                       "IIBF Certificate", "RM"],
+            "rows": out, "fills": fills}
+
+
 def dc_report(db: Session, dc: InternalUser, today: Optional[date] = None) -> io.BytesIO:
     """One DC's working CSPs (Labels 1-4), one row each, in plain words: what
     is on file and what to upload. CSPs with something to do come first."""

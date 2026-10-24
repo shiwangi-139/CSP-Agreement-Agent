@@ -897,6 +897,23 @@ def master_link_create(me: Principal = Depends(require_user), db: Session = Depe
     return {"url": url, **master_link.status(db)}
 
 
+@router.get("/dc-sheet-key", dependencies=[Depends(require_admin)])
+def dc_sheet_key(db: Session = Depends(get_db)):
+    """The key for the DCs' live Google Sheets script (app/dc_sheets.py)."""
+    from .. import dc_sheets
+    row = dc_sheets.current(db)
+    return {"key": row.token if row else None, "created_at": _iso(row.created_at) if row else None,
+            "server": "https://indev.eko.in/csp-agreement-agent/upload"}
+
+
+@router.post("/dc-sheet-key", dependencies=[Depends(require_admin)])
+def dc_sheet_key_new(me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from .. import dc_sheets
+    dc_sheets.create(db, me.name)
+    db.commit()
+    return dc_sheet_key(db)
+
+
 @router.post("/master-link/restore", dependencies=[Depends(require_admin)])
 def master_link_restore(body: dict = Body(...), me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     """Bring back the link already shared (pasted by the admin) as the one live link."""

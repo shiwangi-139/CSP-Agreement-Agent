@@ -496,3 +496,15 @@ class PvrApplication(Base):
     file_path = Column(String)
     channel = Column(String)
     created_at = Column(DateTime, default=func.now(), nullable=False)    # database clock, like Document.uploaded_at
+
+
+class DcSheetKey(Base):
+    """The key the Google Sheets script (scripts/google_sheets/dc_live_sheets.gs)
+    sends to fetch each DC's table (app/dc_sheets.py). One live key; a new one
+    stops the old one. Shown to admins on the dashboard."""
+    __tablename__ = "dc_sheet_keys"
+    id = Column(Integer, primary_key=True)
+    token = Column(String, nullable=False)
+    created_by = Column(String)
+    created_at = Column(DateTime, nullable=False)
+    revoked_at = Column(DateTime)

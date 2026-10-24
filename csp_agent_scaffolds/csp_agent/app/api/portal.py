@@ -408,8 +408,18 @@ def _ask_question(db: Session, token: str, category: str, text: str, phone: str)
 @router.post("/upload", response_class=HTMLResponse)
 def request_link(request: Request, background: BackgroundTasks, code: str = Form(""), mobile: str = Form(""),
                  action: str = Form(""), token: str = Form(""), category: str = Form(""), text: str = Form(""),
-                 dc: str = Form(""), db: Session = Depends(get_db)):
+                 dc: str = Form(""), key: str = Form(""), dc_name: str = Form(""), db: Session = Depends(get_db)):
     ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
+    if action == "dc_sheet":
+        # The DCs' live Google Sheets (app/dc_sheets.py): one DC's table, only with the sheet key.
+        from .. import dc_sheets, reports
+        if not dc_sheets.valid(db, key):
+            return JSONResponse({"ok": False, "error": "wrong or old sheet key"}, status_code=403)
+        user = dc_sheets.find_dc(db, dc_name)
+        if user is None:
+            return JSONResponse({"ok": False, "error": f"no DC named {dc_name[:60]!r}"}, status_code=404)
+        return JSONResponse({"ok": True, "updated": local_now().strftime("%d-%m-%Y %H:%M"),
+                             **reports.dc_table(db, user)})
     if action == "dc_context":
         # The DC master link: only the upload routes are public, so it uses this one.
         if master_link.resolve(db, dc) is None:

@@ -669,6 +669,7 @@
       let ml = "";
       if (state.summary.me.role === "ADMIN") {
         const m = await api("/api/hub/master-link");
+        m.sheetKey = (await api("/api/hub/dc-sheet-key")).key;
         ml = `<div class="card" style="margin-bottom:12px"><div class="meta"><b>DC master link</b>
           ${m.active ? badge("VALID", "working") + ` <span class="small muted">made by ${esc(m.created_by || "")} ${when(m.created_at)} · never expires</span>` : badge("EXPIRED", "not working")}</div>
           <p class="small muted">One link for all DCs: they type a KO code and upload for any CSP in Labels 1–4. It keeps working until you make a new one. Their uploads appear in the Review queue as "DC upload".</p>
@@ -686,6 +687,11 @@
           <button class="btn" data-dctext="1" ${m.dcs.length ? "" : "disabled"}>Text summary</button>
           <button class="btn" data-dcprogress="1">Daily progress (all DCs)</button></div>
           <div id="dcprog" style="display:none;margin-top:8px"></div>
+          <div class="meta" style="margin-top:14px"><b>DCs' live Google Sheets</b></div>
+          <p class="small muted">The script in your Google Sheet uses this key to fetch each DC's table every 2 hours. Put it in the script once (KEY = "…").</p>
+          <div class="toolbar">${m.sheetKey ? `<input type="text" id="sheetkey" readonly value="${esc(m.sheetKey)}" style="flex:1" class="mono" onclick="this.select()">
+            <button class="btn" data-sheetkey="copy">Copy key</button>` : ""}
+            <button class="btn" data-sheetkey="new">${m.sheetKey ? "New key (the script then needs it)" : "Make the key"}</button></div>
           <div id="dcsum" style="display:none;margin-top:8px"><textarea id="dcsumtext" readonly rows="16" style="width:100%;font:13px/1.45 ui-monospace,monospace"></textarea>
           <div class="toolbar"><button class="btn primary" data-dccopy="1">Copy</button><span class="small muted">Paste it into WhatsApp for the DC.</span></div></div></div>`;
       }
@@ -860,7 +866,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -933,6 +939,8 @@
         try { await navigator.clipboard.writeText(ta.value); } catch (_) { document.execCommand("copy"); }
         return toast("Summary copied");
       }
+      if (ds.sheetkey === "copy") { const v = $("#sheetkey").value; try { await navigator.clipboard.writeText(v); } catch (_) { $("#sheetkey").select(); document.execCommand("copy"); } return toast("Key copied"); }
+      if (ds.sheetkey === "new") { if ($("#sheetkey") && !confirm("Make a new key? The Google Sheets script stops updating until you put the new key in it.")) return; await post("/api/hub/dc-sheet-key"); return render(); }
       if (ds.mlink === "copy") { const v = $("#mlurl").value; try { await navigator.clipboard.writeText(v); } catch (_) { $("#mlurl").select(); document.execCommand("copy"); } return toast("Link copied"); }
       if (ds.mlink === "restore") { const r = await post("/api/hub/master-link/restore", {url: $("#mlrestore").value}); toast("The shared link works again"); return render(); }
       if (ds.mlink === "new") { if (!confirm("Make a NEW master link?\n\nThe link you already shared in the group will STOP working, and you will have to share the new one.")) return; await post("/api/hub/master-link"); return render(); }
