@@ -73,8 +73,10 @@ MSG = {
     "bad_link": ("यह लिंक अब नहीं चल रहा है। नए लिंक के लिए अपने RM से बात करें।",
                  "This link is invalid or has expired. Please contact your RM for a new link."),
     "file_type": ("सिर्फ़ PDF, JPG या PNG फ़ाइल अपलोड करें।", "Please upload a PDF, JPG or PNG file only."),
-    "too_many_pages": ("एक डॉक्यूमेंट में ज़्यादा से ज़्यादा 15 पेज हो सकते हैं।",
-                       "A document can have at most 15 pages."),
+    "too_many_pages": ("एक डॉक्यूमेंट में ज़्यादा से ज़्यादा 25 पेज हो सकते हैं।",
+                       "A document can have at most 25 pages."),
+    "agreement_short": ("यह एग्रीमेंट अधूरा है। कृपया सभी पेज एक साथ अपलोड करें।",
+                        "This agreement is incomplete. Please upload all pages together."),
     "pdf_or_photos": ("या तो एक PDF चुनें, या पेजों की फोटो। दोनों एक साथ नहीं।",
                       "Choose either one PDF or photos of the pages, not both."),
     "too_big": ("फ़ाइल बहुत बड़ी है।", "The file is too large."),
@@ -667,6 +669,18 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         if ex.get("document_type") not in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"):
             ex["document_type"] = doc_type
             ex["type_review"] = (ex.get("type_review") or "") + f" Document wording in {doc_type} section needs human verification."
+
+        if ex.get("document_type") == "AGREEMENT":
+            # About 13 pages: one or two pages is not the agreement (app/agreement_pages.py).
+            from .. import agreement_pages
+            n_pages = len(files) if len(files) > 1 else (ex.get("page_count") or 0)
+            v = agreement_pages.verdict(n_pages)
+            if v == "refuse":
+                turn_away("agreement_short", data, mime)
+                res["message"] = agreement_pages.message(n_pages)
+                continue
+            if v == "review":
+                ex["type_review"] = " ".join(x for x in (ex.get("type_review"), agreement_pages.review_note(n_pages)) if x)
 
         if ex.get("compliance_status") == "EXPIRED":
             if _surely_expired(ex, typed):

@@ -409,6 +409,12 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
                 entry["csp_code"] = owner.current_code
                 entry["matched_by"] = owner_how
             touched[owner.id] = owner
+            if ex.get("document_type") == "AGREEMENT" and ex.get("readability") == "READABLE":
+                # 1-9 pages: not the whole agreement, a person checks (it doesn't count meanwhile).
+                from . import agreement_pages
+                if agreement_pages.verdict(ex.get("page_count")):
+                    ex = {**ex, "type_review": " ".join(
+                        x for x in (ex.get("type_review"), agreement_pages.review_note(ex["page_count"])) if x)}
             with db.begin_nested():
                 out = store_extracted_document(
                     db, owner, data, att["filename"], detect_mime(data), ex, channel="GMAIL_INBOUND",

@@ -35,6 +35,7 @@ SHORT_REASON = {
     "dc_in_review": ("यह अभी जाँच में है", "already being checked"),
     "dup_other": ("यह किसी दूसरे CSP का डॉक्यूमेंट है", "this file belongs to another CSP"),
     "dc_other_csp": ("यह किसी दूसरे CSP का डॉक्यूमेंट है", "this document belongs to another CSP"),
+    "agreement_short": ("एग्रीमेंट अधूरा है, सारे पेज भेजें", "agreement incomplete, send all pages"),
     "dup_same": ("यह वही पुराना डॉक्यूमेंट है", "the same document we already have"),
     "expired": ("इसकी तारीख निकल चुकी है", "it has expired"),
     "unreadable": ("साफ़ पढ़ा नहीं जा सका", "could not be read clearly"),

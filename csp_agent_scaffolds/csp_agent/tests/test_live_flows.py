@@ -164,3 +164,46 @@ def test_get_link_form_and_the_fallback_when_the_link_message_is_refused(client,
     s.close()
     assert sent[0] == "LINK_REQUEST" and msgs["LINK_REQUEST"] == OutboundStatus.FAILED
     assert sent[1] == "ONBOARD_ALL" and msgs["ONBOARD_ALL"] == OutboundStatus.SENT   # same link, approved layout
+
+
+# ------------------------------------------------------ agreement pages
+def _agreement_pdf(n_pages, issue=ISSUE):
+    import pymupdf
+    d = pymupdf.open()
+    for i in range(n_pages):
+        p = d.new_page()
+        p.insert_text((40, 60), "CUSTOMER SERVICE POINT AGREEMENT" if i == 0 else f"Clause page {i + 1}", fontsize=10)
+        if i == 0:
+            p.insert_text((40, 80), f'On this day of, {issue:%d/%m/%Y} ("Effective Date"), CSP Name TEST', fontsize=9)
+            p.insert_text((40, 100), "valid for a period of three (3) years", fontsize=9)
+    return d.tobytes()
+
+
+def test_agreement_with_few_pages_is_refused_or_reviewed(client):
+    from app import agreement_pages
+    c, Session = client
+    cid, _, token = _csp(Session)
+    name, mobile, email, rm, dc = _with_dc(Session, cid)
+
+    def up(n):
+        return c.post("/api/portal/upload", data=_csp_form(token, name, mobile, email, rm, dc,
+                                                           agreement_issue_date=ISSUE.isoformat()),
+                      files={"agreement_file": (f"a{n}.pdf", _agreement_pdf(n), "application/pdf")}).json()["results"][0]
+    one = up(1)
+    assert not one["ok"] and one["message"] == agreement_pages.message(1)
+    s = Session()
+    assert s.query(Document).filter_by(csp_id=cid).count() == 0          # nothing filed
+    s.close()
+    seven = up(7)
+    assert seven["ok"] and "check" in seven["message"]["en"].lower()     # "our team will check it"
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    assert d.status.value == "NEEDS_REVIEW" and "Only 7 page" in d.extracted_fields["needs_confirmation"]
+    s.close()
+    thirteen = up(13)
+    assert thirteen["ok"] and "check" not in thirteen["message"]["en"].lower()
+
+
+def test_verdict_by_pages():
+    from app.agreement_pages import verdict
+    assert [verdict(n) for n in (1, 4, 5, 9, 10, 13, 0, None)] == ["refuse", "refuse", "review", "review", None, None, None, None]

@@ -13,7 +13,7 @@ import io
 MAX_SIDE_PX = 2000        # long side kept: plenty for OCR, a fraction of a phone photo's size
 JPEG_QUALITY = 80
 PDF_DPI = 150             # page size in the PDF (affects only how big it prints)
-MAX_PAGES = 15
+MAX_PAGES = 25                  # an agreement is about 13 pages
 
 
 def shrink_photo(data: bytes) -> bytes:
