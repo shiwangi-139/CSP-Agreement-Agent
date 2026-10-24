@@ -836,3 +836,15 @@ def test_a_big_scan_is_viewed_as_a_light_copy_and_downloaded_as_the_original(cli
     assert len(orig.content) == f.stat().st_size and len(view.content) < len(orig.content) / 5
     assert view.content[:4] == b"%PDF" and pymupdf.open(stream=view.content).page_count == 3
     f.unlink()
+
+
+def test_csp_form_with_its_dc_name_is_not_taken_for_the_master_link(client):
+    """The CSP's own form sends its DC's name in a "dc" field: the upload must
+    go through on the CSP's token, not be refused as a bad master link."""
+    c, Session = client
+    _, _, token = _csp(Session)
+    issue = date.today() - timedelta(days=20)
+    r = c.post("/api/portal/upload", data=_form(token, dc="Ajay", rm="RM X", pvr_issue_date=issue.isoformat()),
+               files={"pvr_file": ("pvr.pdf", _pvr_pdf(issue), "application/pdf")})
+    assert r.status_code == 200, r.text
+    assert r.json()["results"][0]["ok"]

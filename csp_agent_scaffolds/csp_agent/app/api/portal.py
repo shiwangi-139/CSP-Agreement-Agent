@@ -498,7 +498,10 @@ def _record_contact_changes(db: Session, csp: CSP, form: dict) -> int:
 @router.post("/api/portal/upload")
 async def portal_upload(request: Request, background: BackgroundTasks, db: Session = Depends(get_db)):
     form = await request.form()
-    via_dc = bool(form.get("dc"))
+    # The DC master link sends its link as "dc" and no token. A CSP's own form
+    # also has a "dc" field (the DC's name, shown read-only): it is NOT the
+    # master link (that mix-up refused every CSP with a DC from 21-10 to 24-10).
+    via_dc = bool(form.get("dc")) and not form.get("token")
     if via_dc:
         # The DC master link: any working CSP, chosen by KO code.
         if master_link.resolve(db, str(form.get("dc") or "")) is None:
