@@ -855,9 +855,23 @@ def _dc_names(db: Session) -> list[dict]:
     from ..compliance import working_clause
     counts = dict(db.query(CSP.dc_id, func.count(CSP.id)).filter(working_clause(), CSP.dc_id.isnot(None))
                   .group_by(CSP.dc_id).all())
-    return [{"id": u.id, "name": u.name, "csps": counts.get(u.id, 0)}
-            for u in db.query(InternalUser).filter(InternalUser.role == "DC").order_by(InternalUser.name)
-            if counts.get(u.id)]
+    out = [{"id": u.id, "name": u.name, "csps": counts.get(u.id, 0)}
+           for u in db.query(InternalUser).filter(InternalUser.role == "DC").order_by(InternalUser.name)
+           if counts.get(u.id)]
+    no_dc = db.query(func.count(CSP.id)).filter(working_clause(), CSP.dc_id.is_(None)).scalar()
+    if no_dc:
+        out.append({"id": 0, "name": "No DC", "csps": no_dc})          # dc_id=0: CSPs with no DC
+    return out
+
+
+def _dc_or_404(db: Session, dc_id: int):
+    from .. import reports
+    if dc_id == 0:
+        return reports.NO_DC
+    dc = db.get(InternalUser, dc_id)
+    if dc is None or dc.role != "DC":
+        raise HTTPException(404, "No such DC")
+    return dc
 
 
 @router.get("/dc-progress", dependencies=[Depends(require_admin)])
@@ -871,9 +885,7 @@ def dc_progress(db: Session = Depends(get_db)):
 def dc_summary(dc_id: int, db: Session = Depends(get_db)):
     """One DC's CSPs as a short text to copy into WhatsApp."""
     from .. import reports
-    dc = db.get(InternalUser, dc_id)
-    if dc is None or dc.role != "DC":
-        raise HTTPException(404, "No such DC")
+    dc = _dc_or_404(db, dc_id)
     return {"text": reports.dc_summary_text(db, dc)}
 
 
@@ -881,9 +893,7 @@ def dc_summary(dc_id: int, db: Session = Depends(get_db)):
 def dc_report_xlsx(dc_id: int, db: Session = Depends(get_db)):
     """One DC's CSPs in plain words, to share with that DC."""
     from .. import reports
-    dc = db.get(InternalUser, dc_id)
-    if dc is None or dc.role != "DC":
-        raise HTTPException(404, "No such DC")
+    dc = _dc_or_404(db, dc_id)
     name = f"CSPs_DC_{re.sub(r'[^A-Za-z0-9]+', '_', dc.name).strip('_')}_{date.today().isoformat()}.xlsx"
     return StreamingResponse(reports.dc_report(db, dc), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": f'attachment; filename="{name}"'})

@@ -281,3 +281,20 @@ def test_dc_live_sheet_gives_one_dcs_table_only_with_the_key(client, monkeypatch
     assert row[4] == "CSP Agreement, IIBF Certificate" and fills[4] == "red" and fills[6] == "green"
     newer = c.post("/api/hub/dc-sheet-key", headers=hdr).json()["key"]                  # the old key stops
     assert ask(key).status_code == 403 and ask(newer).status_code == 200
+
+
+def test_no_dc_has_its_excel_summary_and_live_sheet(client, monkeypatch):
+    import io
+    from openpyxl import load_workbook
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    _, code, _ = _csp(Session)                                   # _csp makes a CSP with no DC
+    assert any(u["id"] == 0 and u["name"] == "No DC" for u in c.get("/api/hub/master-link", headers=hdr).json()["dcs"])
+    x = c.get("/api/hub/dc-report.xlsx?dc_id=0", headers=hdr)
+    assert x.status_code == 200 and "No_DC" in x.headers["content-disposition"]
+    assert any(code in str(row) for row in load_workbook(io.BytesIO(x.content)).active.iter_rows(values_only=True))
+    assert code in c.get("/api/hub/dc-summary?dc_id=0", headers=hdr).json()["text"]
+    key = c.post("/api/hub/dc-sheet-key", headers=hdr).json()["key"]
+    d = c.post("/upload", data={"action": "dc_sheet", "key": key, "dc_name": "No DC"}).json()
+    assert d["ok"] and any(r[0] == code for r in d["rows"])

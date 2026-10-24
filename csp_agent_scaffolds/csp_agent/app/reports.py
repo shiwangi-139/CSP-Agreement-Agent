@@ -13,6 +13,7 @@ The worker writes all three every morning into <vault parent>/reports/ (the last
 REPORTS_KEEP_DAYS days are kept); the dashboard can also download them live.
 """
 import io
+from types import SimpleNamespace
 import logging
 import re
 from datetime import date, datetime, timedelta
@@ -169,13 +170,18 @@ def _dc_doc_text(t: str, s, today: date) -> tuple[str, Optional[PatternFill]]:
     return "MISSING – upload it" + applied, RED
 
 
+# The CSPs with no DC, reported like a DC (dashboard: "No DC"; live sheet name "No DC").
+NO_DC = SimpleNamespace(id=None, name="No DC")
+
+
 def _dc_rows(db: Session, dc: InternalUser, today: date) -> list[tuple]:
     """(documents to upload, CSP, RM, [(text, fill)] per document, [labels to
     upload], ComplianceState) for each of the DC's working CSPs, needs first."""
     from .compliance import working_clause
     staff = {u.id: u for u in db.query(InternalUser).all()}
     rows = []
-    for c in db.query(CSP).filter(working_clause(), CSP.dc_id == dc.id).order_by(CSP.current_code):
+    which = CSP.dc_id.is_(None) if dc.id is None else CSP.dc_id == dc.id      # NO_DC: CSPs with no DC
+    for c in db.query(CSP).filter(working_clause(), which).order_by(CSP.current_code):
         st = evaluate(db, c, today)
         cells, todo = [], []
         for t in REQUIRED_TYPES:

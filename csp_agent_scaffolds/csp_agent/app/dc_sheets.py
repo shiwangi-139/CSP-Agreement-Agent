@@ -44,5 +44,8 @@ def find_dc(db: Session, name: str) -> Optional[InternalUser]:
     want = (name or "").strip().lower()
     if not want:
         return None
+    if want in ("no dc", "no-dc", "nodc"):
+        from .reports import NO_DC
+        return NO_DC
     return next((u for u in db.query(InternalUser).filter(InternalUser.role == "DC")
                  if (u.name or "").strip().lower() == want), None)
