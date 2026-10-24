@@ -115,3 +115,28 @@ def test_an_agreement_held_only_by_the_old_default_rule_becomes_expired_with_a_c
     assert q.status == ReviewStatus.PENDING and q.reason.startswith("Validity check")
     s = evaluate(db, db.get(CSP, c.id)).docs["AGREEMENT"]
     assert s.status == "EXPIRED" and not s.in_review                    # the CSP is asked to renew it
+
+
+def test_agreements_accepted_without_a_written_validity_go_back_to_review(db_session, tmp_path, monkeypatch, capsys):
+    from datetime import datetime, timedelta
+    from app.compliance import evaluate
+    from app.models import ReviewStatus
+    import scripts.reopen_accepted_agreements as s
+    db = db_session
+    c, doc = _doc(db, tmp_path, ["x"], status=DocumentStatus.MANUAL_VERIFIED,
+                  issue_date=date(2026, 3, 1), expiry_date=date(2027, 3, 1), validity_rule_used="AGREEMENT_DEFAULT_1_YEAR")
+    db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.APPROVED, reason="Validity check: ...",
+                             resolved_at=datetime.utcnow() - timedelta(hours=3), correction_notes="by me"))
+    db.commit()
+    monkeypatch.setattr(s, "SessionLocal", sessionmaker(bind=db.get_bind()))
+    monkeypatch.setattr(sys, "argv", ["x", "--csp", c.current_code])
+    s.main()
+    assert "1 agreement(s) found. Dry run" in capsys.readouterr().out
+    db.expire_all()
+    assert db.get(Document, doc.id).status == DocumentStatus.MANUAL_VERIFIED
+    monkeypatch.setattr(sys, "argv", ["x", "--csp", c.current_code, "--apply"])
+    s.main()
+    db.expire_all()
+    assert db.get(Document, doc.id).status == DocumentStatus.NEEDS_REVIEW
+    assert db.query(ManualReviewQueue).filter_by(document_id=doc.id, status=ReviewStatus.PENDING).one().reason.startswith("Reopened")
+    assert evaluate(db, db.get(CSP, c.id)).docs["AGREEMENT"].in_review
