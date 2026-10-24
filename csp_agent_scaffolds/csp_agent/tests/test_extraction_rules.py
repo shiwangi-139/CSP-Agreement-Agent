@@ -571,3 +571,19 @@ def test_document_dates_with_times_are_kept():
     from app.ai.extraction.rules.dates import strip_camera_stamps
     for line in ("Certificate Issued Date : 13-Feb-2025 10:10 AM", "Date: 2026.01.28 18:29:17 +05'30'", "24/10/2026 17:13"):
         assert strip_camera_stamps(line) == line
+
+
+@pytest.mark.parametrize("line", ['On this day of, 7-10-2024 ("Effective Date"), 7-10-2025 Manoj Kumar',
+                                  'On tis day of, 7 - 10 - 2o24 ("Effective Date"), 7-1o-2025 Manoj Kumar',
+                                  'On this day of, o7-1O-2024 ("Effective Date"), 7-10-2025 Manoj Kumar'])
+def test_handwritten_effective_date_then_last_day(line):
+    """Manoj Kumar (Gorakhpur): 'On this day of, 7-10-2024 ("Effective Date"), 7-10-2025' in handwriting,
+    where OCR reads a 0 as the letter o."""
+    from app.ai.extraction.rules.agreement import extract_agreement
+    r = extract_agreement(f"CUSTOMER SERVICE POINT AGREEMENT\n{line}\n", date(2026, 10, 24))
+    assert r["issue_date"] == date(2024, 10, 7) and r["explicit_expiry"] == date(2025, 10, 7)
+
+
+def test_letter_o_is_fixed_only_inside_a_date():
+    from app.ai.extraction.rules.dates import normalize
+    assert normalize("Room 10 Bazzar Po. KUIN, 7-1o-2025") == "Room 10 Bazzar Po. KUIN, 7-10-2025"
