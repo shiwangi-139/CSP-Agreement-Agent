@@ -140,3 +140,21 @@ def test_agreements_accepted_without_a_written_validity_go_back_to_review(db_ses
     assert db.get(Document, doc.id).status == DocumentStatus.NEEDS_REVIEW
     assert db.query(ManualReviewQueue).filter_by(document_id=doc.id, status=ReviewStatus.PENDING).one().reason.startswith("Reopened")
     assert evaluate(db, db.get(CSP, c.id)).docs["AGREEMENT"].in_review
+
+
+def test_being_checked_documents_missing_from_the_queue_are_added(db_session, tmp_path, monkeypatch, capsys):
+    from app.models import ReviewStatus
+    import scripts.queue_waiting_documents as s
+    db = db_session
+    c, doc = _doc(db, tmp_path, ["x"], status=DocumentStatus.NEEDS_APPROVAL, issue_date=date(2025, 8, 19),
+                  expiry_date=date(2027, 8, 19), validity_rule_used="AGREEMENT_DEFAULT_2_YEAR")
+    monkeypatch.setattr(s, "SessionLocal", sessionmaker(bind=db.get_bind()))
+    monkeypatch.setattr(sys, "argv", ["x"])
+    s.main()
+    assert c.current_code in capsys.readouterr().out
+    assert db.query(ManualReviewQueue).filter_by(document_id=doc.id).count() == 0
+    monkeypatch.setattr(sys, "argv", ["x", "--apply"])
+    s.main()
+    assert db.query(ManualReviewQueue).filter_by(document_id=doc.id, status=ReviewStatus.PENDING).count() == 1
+    s.main()                                                               # second run adds nothing
+    assert db.query(ManualReviewQueue).filter_by(document_id=doc.id).count() == 1

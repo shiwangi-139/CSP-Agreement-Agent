@@ -544,3 +544,30 @@ def test_agreement_n_years_for_valid_does_not_misfire(line):
     r = extract_agreement(f'CUSTOMER SERVICE POINT AGREEMENT\n{line}\nOn this day of, 01/07/2026____("Effective Date"), X\n',
                           date(2026, 10, 24))
     assert not r["has_explicit_3year_clause"]
+
+
+BIHAR_PHOTO = ("अथवा सरकारी संस्थाओं से ऋण लेते समय ... से छः माह तक ही है।\nPlace : मधेपुरा / MADHEPURA\nDate : 06/08/2026\n"
+               "Digitally signed by Neshar Ahmad Shah\nDate:2O26.O8.O7 l2:OO:l7 +O5:3O\n"
+               "पुलिस अधीक्षक / Superintendent of Police\nमधेपुरा / MADHEPURA\n"
+               "Reference No: BCHC/2026/995024 To View: https://serviceonline.bihar.gov.in/officials/t/mMjoF\n"
+               "vivo Y200 5G\nOct 24, 2026, 17:13\n")
+
+
+def test_a_phone_camera_stamp_is_never_the_documents_date():
+    """Rubi Kumari 1A850634: the photo's 'vivo Y200 / Oct 24, 2026, 17:13' was taken as the signing date."""
+    r = extract_pvr(BIHAR_PHOTO, date(2026, 10, 24))
+    assert r["issue_date"] != date(2026, 10, 24)
+    assert r["issue_date"] in (date(2026, 8, 7), date(2026, 8, 6))
+
+
+@pytest.mark.parametrize("stamp", ["Shot on Redmi Note 12\n2026/10/24 17:13", "OPPO A78\n24/10/2026 5:13 PM",
+                                   "Oct 24, 2026, 17:13"])
+def test_camera_stamps_are_removed(stamp):
+    from app.ai.extraction.rules.dates import strip_camera_stamps
+    assert "2026" not in strip_camera_stamps(stamp)
+
+
+def test_document_dates_with_times_are_kept():
+    from app.ai.extraction.rules.dates import strip_camera_stamps
+    for line in ("Certificate Issued Date : 13-Feb-2025 10:10 AM", "Date: 2026.01.28 18:29:17 +05'30'", "24/10/2026 17:13"):
+        assert strip_camera_stamps(line) == line

@@ -156,6 +156,12 @@ def store_extracted_document(
     if owner_review or type_review:
         db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
                                  reason=" ".join(r for r in (owner_review, type_review) if r)[:500]))
+    elif status == DocumentStatus.NEEDS_APPROVAL:
+        # Dates read by the AI model: "being checked" until a person looks, so
+        # it must be in the Review queue (it wasn't before 2026-10-24).
+        db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=(
+            f"Dates read by the AI model ({extraction.get('start_date')} -> {extraction.get('expiry_date')}): "
+            "check them on the document and accept, or correct / reject.")[:500]))
     elif extraction.get("validity_check") and status in (DocumentStatus.VALID, DocumentStatus.EXPIRED):
         # Validity by the 1-year rule (no term read): it counts as it is
         # (valid, or expired and to be renewed); a person reads the term and

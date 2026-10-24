@@ -662,6 +662,7 @@ REASON_TEXT = {
     "dc_other_csp": "document of another CSP (master link, wrong KO code)",
     "pvr_applied": "PVR application recorded (applied, waiting for the certificate)",
     "agreement_short": "agreement incomplete (only 1-4 pages)",
+    "dup_rejected": "same file as one rejected before", "dup_unreadable": "same file as one unreadable before",
     "too_small": "photo too small", "too_dark": "photo too dark", "washed_out": "photo washed out",
     "blurry": "photo blurry", "no_date": "no issue date", "future": "date in the future",
     "too_big": "file too large", "file_type": "not a PDF/JPG/PNG",

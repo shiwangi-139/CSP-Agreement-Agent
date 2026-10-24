@@ -75,6 +75,12 @@ MSG = {
     "file_type": ("सिर्फ़ PDF, JPG या PNG फ़ाइल अपलोड करें।", "Please upload a PDF, JPG or PNG file only."),
     "too_many_pages": ("एक डॉक्यूमेंट में ज़्यादा से ज़्यादा 25 पेज हो सकते हैं।",
                        "A document can have at most 25 pages."),
+    "dup_rejected": ("यही फ़ाइल पहले भी भेजी गई थी और जाँच में सही नहीं पाई गई। कृपया सही / नया डॉक्यूमेंट अपलोड करें।",
+                     "This same file was sent before and was not accepted. Please upload the correct / new document."),
+    "dup_unreadable": ("यही फ़ाइल पहले भी भेजी गई थी और पढ़ी नहीं जा सकी। कृपया साफ़ स्कैन की हुई PDF अपलोड करें।",
+                       "This same file was sent before and could not be read. Please upload a clear scanned PDF."),
+    "dup_checking": ("यही फ़ाइल पहले से हमारे पास है और हमारी टीम इसे जाँच रही है।",
+                     "We already have this same file; our team is checking it."),
     "agreement_short": ("यह एग्रीमेंट अधूरा है। कृपया सभी पेज एक साथ अपलोड करें।",
                         "This agreement is incomplete. Please upload all pages together."),
     "pdf_or_photos": ("या तो एक PDF चुनें, या पेजों की फोटो। दोनों एक साथ नहीं।",
@@ -723,6 +729,12 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         if ex.get("type_review") and typed:
             ex["type_review"] += f" The CSP typed issue date {typed.strftime('%d-%m-%Y')}."
         read_date = _parse_date(ex.get("start_date"))
+        if read_date == today and typed and typed != today:
+            # A document issued today is rare; read as today while the date
+            # typed is another is most likely a date on the photo (camera stamp).
+            ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
+                f"Read as issued today ({today:%d-%m-%Y}), but the date typed is {typed:%d-%m-%Y}: the date read may "
+                "be the photo's date. Check the issue date on the document.")) if x)
         needs_review = False
         if read_date and typed != read_date:
             ex["typed_issue_date"] = typed.isoformat()
@@ -743,8 +755,19 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         out = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel=channel,
                                        sender_on_sheet=True)
         if out.decision == "DUPLICATE":
-            res.update(message=_msg("duplicate"), reason="duplicate", ok=True,
-                       document_id=out.document.id if out.document is not None else None)
+            # The same file was sent before: say what became of it (a file that
+            # was rejected or unreadable then doesn't count now either).
+            known = out.document
+            st = known.status if known is not None else None
+            if st == DocumentStatus.REJECTED:
+                turn_away("dup_rejected")
+            elif st == DocumentStatus.UNREADABLE:
+                turn_away("dup_unreadable")
+            elif st in (DocumentStatus.NEEDS_REVIEW, DocumentStatus.NEEDS_APPROVAL) and known.is_current is False:
+                res.update(message=_msg("dup_checking"), reason="received_check", ok=True)
+            else:
+                res.update(message=_msg("duplicate"), reason="duplicate", ok=True)
+            res["document_id"] = known.id if known is not None else None
             continue
         doc = out.document
         if ex.get("typed_issue_date"):

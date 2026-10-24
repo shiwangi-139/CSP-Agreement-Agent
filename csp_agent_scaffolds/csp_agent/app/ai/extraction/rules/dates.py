@@ -62,11 +62,39 @@ _OCR_FIXES = [
 ]
 
 
+# A phone camera's stamp on a photo of the document, e.g. "vivo Y200 5G" /
+# "Oct 24, 2026, 17:13" or "Shot on Redmi Note 12" / "2026/10/24 17:13": the
+# day the photo was taken, never the document's date (Rubi Kumari's Bihar PVR
+# was read as issued on the day of the photo).
+_CAMERA_BRAND = re.compile(
+    r"^[^\n]{0,12}\b(?:shot\s+on|vivo|oppo|redmi|realme|samsung|galaxy|xiaomi|poco|iqoo|oneplus|infinix|tecno|"
+    r"itel|motorola|nokia|honor|lava)\b[^\n]{0,40}$", re.I | re.M)
+_CAMERA_TIME = r"\s*,?\s+\d{1,2}:\d{2}(?::\d{2})?\s*(?:[AaPp]\.?[Mm]\.?)?\s*$"
+_CAMERA_DATE_TIME = re.compile(r"^\s*[A-Za-z]{3,9}\.?\s+\d{1,2},\s*\d{4}" + _CAMERA_TIME, re.M)    # "Oct 24, 2026, 17:13"
+_NUMERIC_DATE_TIME = re.compile(r"^\s*(?:\d{1,2}[./-]\d{1,2}[./-]\d{4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})" + _CAMERA_TIME)
+
+
+def strip_camera_stamps(text: str) -> str:
+    lines = (text or "").split("\n")
+    out, after_brand = [], False
+    for line in lines:
+        if _CAMERA_BRAND.match(line):
+            after_brand = True
+            continue
+        if _CAMERA_DATE_TIME.match(line) or (after_brand and _NUMERIC_DATE_TIME.match(line)):
+            after_brand = False
+            continue
+        after_brand = False
+        out.append(line)
+    return "\n".join(out)
+
+
 def normalize(text: str) -> str:
     """Devanagari digits -> ASCII plus a few unambiguous OCR slips
-    ("0ct" -> "Oct", "2O24" -> "2024"). A letter that could be one of
-    several digits (e.g. "B7") is left alone: we never guess a date."""
-    text = (text or "").translate(DEVANAGARI_DIGITS)
+    ("0ct" -> "Oct", "2O24" -> "2024"), without a phone camera's stamp. A
+    letter that could be one of several digits (e.g. "B7") is left alone: we
+    never guess a date."""
+    text = strip_camera_stamps((text or "").translate(DEVANAGARI_DIGITS))
     for pat, rep in _OCR_FIXES:
         text = pat.sub(rep, text)
     # Recover dates with garbled OCR separators (e.g. 07i0512026 -> 07/05/2026)

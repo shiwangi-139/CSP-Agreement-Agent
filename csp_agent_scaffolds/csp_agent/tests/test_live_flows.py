@@ -207,3 +207,41 @@ def test_agreement_with_few_pages_is_refused_or_reviewed(client):
 def test_verdict_by_pages():
     from app.agreement_pages import verdict
     assert [verdict(n) for n in (1, 4, 5, 9, 10, 13, 0, None)] == ["refuse", "refuse", "review", "review", None, None, None, None]
+
+
+def test_the_same_file_as_a_rejected_one_is_turned_away_with_the_reason(client):
+    from app.models import DocumentStatus
+    c, Session = client
+    cid, _, token = _csp(Session)
+    name, mobile, email, rm, dc = _with_dc(Session, cid)
+    data = _pvr_pdf(ISSUE)
+    send = lambda: c.post("/api/portal/upload", data=_csp_form(token, name, mobile, email, rm, dc,
+                                                                pvr_issue_date=ISSUE.isoformat()),
+                          files={"pvr_file": ("pvr.pdf", data, "application/pdf")}).json()["results"][0]
+    assert send()["ok"]
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    d.status = DocumentStatus.REJECTED
+    s.commit()
+    s.close()
+    again = send()
+    assert not again["ok"] and again["message"]["en"] == portal.MSG["dup_rejected"][1]
+
+
+def test_a_date_read_as_today_while_another_was_typed_goes_to_a_person(client, monkeypatch):
+    c, Session = client
+    cid, _, token = _csp(Session)
+    name, mobile, email, rm, dc = _with_dc(Session, cid)
+    today = date.today()
+    monkeypatch.setattr(portal, "extract_document_fields_deterministic", lambda *a, **k: {
+        "readability": "READABLE", "document_type": "POLICE_VERIFICATION", "compliance_status": "VALID",
+        "start_date": today.isoformat(), "expiry_date": (today + timedelta(days=180)).isoformat(),
+        "validity_rule_used": "PVR_STATED_6_MONTHS", "date_source": "PVR_DIGITAL_SIGNATURE_DATE"})
+    res = c.post("/api/portal/upload", data=_csp_form(token, name, mobile, email, rm, dc,
+                                                       pvr_issue_date=(today - timedelta(days=79)).isoformat()),
+                 files=_pvr()).json()["results"][0]
+    assert res["ok"] and res["message"]["en"] == portal.MSG["received_check"][1]
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    assert d.status.value == "NEEDS_REVIEW" and "photo's date" in d.extracted_fields["needs_confirmation"]
+    s.close()
