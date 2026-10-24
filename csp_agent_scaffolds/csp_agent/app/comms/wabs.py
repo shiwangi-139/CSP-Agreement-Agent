@@ -35,8 +35,11 @@ CLEAN = {
         "📎 अपलोड करें / Upload here:\n{{4}}\n\n"
         "मदद / Help: {{5}}\n"
         "कृपया साफ़ स्कैन की हुई PDF भेजें / Please send a clear scanned PDF.\n"
-        "— Eko"),
+        "धन्यवाद 🙏 / Thank you\n— Eko"),
 }
+# (The closing "धन्यवाद / Thank you" lines, added 2026-10-24, make four layouts
+# new templates at Meta: their old ones failed with "There is already Hindi
+# content for this template".)
 # The CSP asked for their link on the public page (sent only to the number on record).
 CLEAN["link"] = (
     "नमस्ते {{1}} (KO {{2}}) 🙏\n\n"
@@ -44,7 +47,7 @@ CLEAN["link"] = (
     "You asked for your document upload link. It is only for you, please don't share it.\n\n"
     "📎 अपलोड करें / Upload here:\n{{3}}\n\n"
     "अगर आपने लिंक नहीं माँगा था, तो इस मैसेज को अनदेखा करें। / If you didn't ask for it, please ignore this message.\n"
-    "— Eko")
+    "धन्यवाद 🙏 / Thank you\n— Eko")
 # The other CSP messages (same Hindi-first wording as app/comms/templates.py).
 # A layout Meta hasn't approved yet is submitted by the Bulk Sender on first
 # use; the message waits ("Waiting for Meta…") and goes out once approved.
@@ -89,7 +92,8 @@ CLEAN.update({
         "✅ रिकॉर्ड हो गए: {{3}}\n🔍 हमारी टीम जाँच रही है: {{4}}\n❌ रिकॉर्ड नहीं हुए: {{5}}\n"
         "जो रिकॉर्ड नहीं हुए, उन्हें ठीक करके इसी लिंक से फिर से अपलोड करें।\n\n"
         "Hello {{6}},\nRecorded: {{7}}\nBeing checked: {{8}}\nNot recorded: {{9}}\n"
-        "Please fix and upload the ones not recorded again." + _END.format(link="{{10}}", rm="{{11}}")),
+        "Please fix and upload the ones not recorded again." + _END.format(link="{{10}}", rm="{{11}}")
+        .replace("\n— Eko", "\nधन्यवाद 🙏 / Thank you\n— Eko")),
     "all_done": (
         "नमस्ते {{1}} (KO {{2}}) 🙏\n\nफ़ॉर्म भरने के लिए आपका बहुत-बहुत धन्यवाद! 🎉\n"
         "आपके तीनों डॉक्यूमेंट (सीएसपी एग्रीमेंट, पुलिस वेरिफिकेशन और आईआईबीएफ सर्टिफिकेट) जाँच में सही पाए गए हैं "
@@ -97,7 +101,7 @@ CLEAN.update({
         "हम आपको समय पर याद दिला देंगे।\nसमय पर डॉक्यूमेंट जमा करने के लिए आपका धन्यवाद! 🙏\n\n"
         "Hello {{3}}, thank you so much for filling the form! All three of your documents have been checked and are "
         "valid, and your form is submitted. Nothing more is needed for now; we will remind you before any document "
-        "is due to expire. Thank you for being on time!\n\nमदद / Help: {{4}}\n— Eko"),
+        "is due to expire. Thank you for being on time!\n\nमदद / Help: {{4}}\nधन्यवाद 🙏 / Thank you\n— Eko"),
 })
 # The document campaign (app/escalation.py): the CSP's short evening nudge
 # (the link is in the morning message), and the RM / DC list of pending CSPs.
