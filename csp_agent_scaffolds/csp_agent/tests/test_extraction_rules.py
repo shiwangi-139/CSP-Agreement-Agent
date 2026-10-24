@@ -527,3 +527,20 @@ def test_pvr_haryana_signature_date_even_when_ocr_garbles_it(stamp):
 def test_pvr_haryana_without_signature_keeps_the_dated_line():
     r = extract_pvr(HARYANA_CVC, date(2026, 10, 21))
     assert r["issue_date"] == date(2025, 8, 25)
+
+
+@pytest.mark.parametrize("line", ["3 Years For Valid", "3 Years Valid", "Three (3) years validity", "3 yeers for vaild"])
+def test_agreement_heading_n_years_for_valid(line):
+    """Sunny Singh: '3 Years For Valid' printed under the title (valid after the term)."""
+    from app.ai.extraction.rules.agreement import extract_agreement
+    r = extract_agreement(f'CUSTOMER SERVICE POINT AGREEMENT\n{line}\nOn this day of, 01/07/2026____("Effective Date"), '
+                          "SUNNY SINGH\n", date(2026, 10, 24))
+    assert r["has_explicit_3year_clause"] and r["validity_source"] == "AGREEMENT_EXPLICIT_3_YEAR"
+
+
+@pytest.mark.parametrize("line", ["valid for 3 months only", "30 Years For Valid"])
+def test_agreement_n_years_for_valid_does_not_misfire(line):
+    from app.ai.extraction.rules.agreement import extract_agreement
+    r = extract_agreement(f'CUSTOMER SERVICE POINT AGREEMENT\n{line}\nOn this day of, 01/07/2026____("Effective Date"), X\n',
+                          date(2026, 10, 24))
+    assert not r["has_explicit_3year_clause"]

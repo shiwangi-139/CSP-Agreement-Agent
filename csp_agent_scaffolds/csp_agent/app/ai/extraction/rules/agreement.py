@@ -59,6 +59,9 @@ THREE_YEAR = [
     # unambiguous without the word, as long as it isn't "three months".
     re.compile(r"(?:remain\s+)?valid\s+for\s+(?:a\s+)?period\s+of\s+(?:three|thr[e3]{2}|3)\b\s*(?:\(\s*3\s*\))?"
                r"(?!\s*(?:\(\s*3\s*\)\s*)?months?)", re.I),
+    # "valid" after the term, in a heading under the title: "3 Years For Valid",
+    # "3 Years Valid", "Three (3) years validity" (Sunny Singh, 01-07-2026).
+    re.compile(r"\b(?:three|thr[e3]{2}|3)\s*(?:\(\s*3\s*\)\s*)?y[ea]\w{0,3}'?s?\s*(?:for\s*)?va\w{0,2}d\w*", re.I),
 ]
 # A raised "th" in "30th December 2023" often comes out of OCR as a quote
 # mark: "30” December 2023", "29" December 2026".
