@@ -10,8 +10,11 @@ Sheets API with the spreadsheets.readonly scope.
 
 CALLING_SHEET_LINK (preferred when set): the live sheet's link, opened on
 the "Calling Sheet New" tab. Only that tab (its gid) is read: as CSV if the
-link is shared for viewing, otherwise through the service account. If the
-live sheet can't be read, the saved copy is used and the reason logged.
+link is shared for viewing, otherwise through the service account. A
+"Publish to the web" link (.../spreadsheets/d/e/2PACX-.../pub...) is read as
+the published CSV of that tab (its gid; with no gid, the first published
+tab). If the live sheet can't be read, the saved copy is used and the
+reason logged.
 
 Either way the result is the same: a list of dicts keyed by the header text
 of the tab's header row, so the sync logic doesn't care where rows came from.
@@ -119,7 +122,32 @@ def _read_link_csv(sheet_id: str, gid: str) -> list[list[Any]]:
     return [row for row in csv.reader(io.StringIO(body))]
 
 
+def published_csv_url(link: str) -> str:
+    """The CSV address of a "Publish to the web" link, or "" if it isn't one."""
+    m = re.search(r"/spreadsheets/d/e/([A-Za-z0-9_-]{20,})", link or "")
+    if not m:
+        return ""
+    gid = re.search(r"[#?&]gid=(\d+)", link)
+    return (f"https://docs.google.com/spreadsheets/d/e/{m.group(1)}/pub?output=csv"
+            + (f"&single=true&gid={gid.group(1)}" if gid else ""))
+
+
+def _read_published_csv(url: str) -> list[list[Any]]:
+    try:
+        with urllib.request.urlopen(url, timeout=60) as r:
+            kind = r.headers.get("Content-Type", "")
+            body = r.read().decode("utf-8-sig")
+    except Exception as e:
+        raise SheetSourceError(f"published sheet not reachable: {type(e).__name__}") from e
+    if "text/csv" not in kind:
+        raise SheetSourceError("the published link did not give a CSV (is the tab still published?)")
+    return [row for row in csv.reader(io.StringIO(body))]
+
+
 def _read_live() -> tuple[str, list[list[Any]]]:
+    pub = published_csv_url(CALLING_SHEET_LINK)
+    if pub:
+        return "published", _read_published_csv(pub)
     sid, gid = parse_sheet_link(CALLING_SHEET_LINK)
     sid = sid or CALLING_SHEET_SPREADSHEET_ID
     if not sid:
