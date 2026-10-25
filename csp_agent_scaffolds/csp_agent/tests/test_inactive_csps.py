@@ -94,3 +94,31 @@ def test_whatsapp_number_set_on_the_dashboard_wins_over_the_sheet(client, monkey
     assert s.get(OutboundMessage, old_id).status == OutboundStatus.REJECTED
     assert outbound.allowed_destinations(s, s.get(CSP, cid), "CSP", "WHATSAPP") == ["9975051660"]
     s.close()
+
+
+def test_admin_makes_an_inactive_csp_active_and_a_sheet_reload_keeps_it(client, monkeypatch):
+    from sqlalchemy import and_
+    from app.compliance import inactive_clause
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    s = Session()
+    csp = _csp(s)
+    s.commit()
+    cid = csp.id
+    s.close()
+    in_list = lambda: str(cid) in str([r["id"] for r in c.get("/api/hub/csps?category=5&size=500", headers=hdr).json()["rows"]])
+    assert in_list()
+    r = c.post(f"/api/hub/csp/{cid}/active", headers=hdr, json={"active": True}).json()
+    assert r["inactive"] is False and r["label"] in (1, 2, 3, 4)
+    assert not in_list()
+    s = Session()
+    x = s.get(CSP, cid)
+    x.terminal_status = "Inactive"                       # the hourly calling-sheet reload writes it again
+    s.commit()
+    assert not is_inactive(x) and s.query(CSP).filter(CSP.id == cid, inactive_clause()).count() == 0
+    s.close()
+    detail = c.get(f"/api/hub/csp/{cid}", headers=hdr).json()["csp"]
+    assert detail["active_override"] and detail["active_override_by"]
+    assert c.post(f"/api/hub/csp/{cid}/active", headers=hdr, json={"active": False}).json()["inactive"] is True
+    assert in_list()

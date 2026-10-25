@@ -93,15 +93,19 @@ INACTIVE_LABEL = 5          # shown as "Inactive"; Labels 1-4 are for working te
 
 
 def is_inactive(csp: CSP) -> bool:
-    """The calling sheet's Terminal Status says the terminal is not working."""
+    """The calling sheet's Terminal Status says the terminal is not working
+    (unless an admin made the CSP active by hand on the dashboard)."""
     from .config import INACTIVE_TERMINAL_STATUSES
+    if getattr(csp, "active_override", False):
+        return False
     return " ".join((csp.terminal_status or "").lower().split()) in INACTIVE_TERMINAL_STATUSES
 
 
 def inactive_clause():
     """SQL form of is_inactive(), for queries."""
     from .config import INACTIVE_TERMINAL_STATUSES
-    return func.lower(func.trim(func.coalesce(CSP.terminal_status, ""))).in_(INACTIVE_TERMINAL_STATUSES)
+    return (func.lower(func.trim(func.coalesce(CSP.terminal_status, ""))).in_(INACTIVE_TERMINAL_STATUSES)
+            & ~func.coalesce(CSP.active_override, False))
 
 
 def working_clause():

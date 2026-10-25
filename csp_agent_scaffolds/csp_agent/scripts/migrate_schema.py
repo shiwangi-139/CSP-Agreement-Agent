@@ -47,6 +47,9 @@ MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS ix_documents_expiry_date ON documents (expiry_date);",
     "CREATE INDEX IF NOT EXISTS ix_documents_issue_date ON documents (issue_date);",
     "ALTER TABLE master_links ADD COLUMN IF NOT EXISTS token VARCHAR;",
+    "ALTER TABLE csp ADD COLUMN IF NOT EXISTS active_override BOOLEAN DEFAULT FALSE;",
+    "ALTER TABLE csp ADD COLUMN IF NOT EXISTS active_override_by VARCHAR;",
+    "ALTER TABLE csp ADD COLUMN IF NOT EXISTS active_override_at TIMESTAMP;",
 ]
 
 

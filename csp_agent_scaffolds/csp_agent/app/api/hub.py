@@ -330,6 +330,8 @@ def csp_detail(csp_id: int, me: Principal = Depends(require_user), db: Session =
         "csp": {"id": c.id, "code": c.current_code, "name": c.name, "phone": c.phone, "alt_phone": c.alt_phone,
                 "preferred_phone": c.preferred_phone, "preferred_phone_set_by": c.preferred_phone_set_by,
                 "preferred_phone_set_at": _iso(c.preferred_phone_set_at),
+                "active_override": bool(c.active_override), "active_override_by": c.active_override_by,
+                "active_override_at": _iso(c.active_override_at),
                 "email": c.email, "state": c.state, "branch": c.branch, "circle": c.circle,
                 "terminal_status": c.terminal_status, "folder": str(csp_folder(c.current_code, c.name)),
                 "rm": {"name": rm.name, "phone": rm.phone, "email": rm.email} if rm else None,
@@ -349,6 +351,24 @@ def csp_detail(csp_id: int, me: Principal = Depends(require_user), db: Session =
         "emails": [{"id": i.id, "subject": i.subject, "sender": i.sender, "received_at": _iso(i.received_at),
                     "status": i.status, "decisions": i.attachment_decisions or []} for i in inbound],
     }
+
+
+@router.post("/csp/{csp_id}/active", dependencies=[Depends(require_admin)])
+def set_active(csp_id: int, active: bool = Body(True, embed=True), me: Principal = Depends(require_user),
+               db: Session = Depends(get_db)):
+    """Make a CSP active by hand although the calling sheet says Inactive
+    (active=false: back to what the sheet says). Its Label is worked out
+    again now; reminders follow at the next daily run."""
+    from ..compliance import is_inactive, refresh_category
+    c = _own_csp(db, csp_id, me)
+    if active:
+        c.active_override, c.active_override_by = True, me.name
+        c.active_override_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    else:
+        c.active_override, c.active_override_by, c.active_override_at = False, None, None
+    st = refresh_category(db, c)
+    db.commit()
+    return {"inactive": is_inactive(c), "category": c.category, "label": st.category}
 
 
 @router.post("/csp/{csp_id}/whatsapp-number")

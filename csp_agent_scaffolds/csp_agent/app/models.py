@@ -114,6 +114,11 @@ class CSP(Base):
     preferred_phone = Column(String)
     preferred_phone_set_by = Column(String)
     preferred_phone_set_at = Column(DateTime)
+    # Made active by hand on the dashboard although the calling sheet's
+    # Terminal Status says Inactive (kept across calling-sheet reloads).
+    active_override = Column(Boolean, default=False)
+    active_override_by = Column(String)
+    active_override_at = Column(DateTime)
 
     agreements = relationship("Agreement", back_populates="csp")
     documents = relationship("Document", back_populates="csp")

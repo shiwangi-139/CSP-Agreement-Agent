@@ -431,12 +431,13 @@
         ${state.cat < 4 ? `<label class="small"><input type="checkbox" id="expiredonly" ${state.expiredOnly ? "checked" : ""}> only with an expired document (${state.summary.categories_with_expired?.[state.cat] ?? 0})</label>` : ""}
         <span class="muted small">${d.total} CSPs · ${CAT[state.cat][1]}</span>
         <a class="btn" href="#" data-xlsx="csp">Download CSP report (.xlsx)</a></div>
-      <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>CSP</th><th>Agreement</th><th>PVR</th><th>IIBF</th><th>RM / DC</th><th>Next action</th></tr></thead><tbody>
+      ${state.cat === 5 && state.summary.me.role === "ADMIN" ? `<p class="small muted">If a CSP here is actually working, press <b>Make active</b>: they move to their Label and get reminders again, even though the calling sheet still says Inactive.</p>` : ""}
+      <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>CSP</th><th>Agreement</th><th>PVR</th><th>IIBF</th><th>RM / DC</th><th>Next action</th>${state.cat === 5 ? "<th></th>" : ""}</tr></thead><tbody>
         ${d.rows.map((r) => `<tr class="click" data-csp="${r.id}">
           <td><div class="mono">${esc(r.code)}</div><div>${esc(r.name)}</div><div class="small">${badge("c" + r.category, r.sub_slab_label)}</div><div class="small muted">${esc(r.reason)}</div></td>
           <td>${docCell(r.docs.AGREEMENT)}</td><td>${docCell(r.docs.POLICE_VERIFICATION)}</td><td>${docCell(r.docs.IIBF_CERTIFICATE)}</td>
           <td class="small">${esc(r.rm || "—")}<br><span class="muted">${esc(r.dc || "no DC")}</span></td>
-          <td class="small mono">${fmt(r.next_action_at)}</td></tr>`).join("")}
+          <td class="small mono">${fmt(r.next_action_at)}</td>${state.cat === 5 ? `<td>${state.summary.me.role === "ADMIN" ? `<button class="btn primary" data-makeactive="${r.id}">Make active</button>` : ""}</td>` : ""}</tr>`).join("")}
         </tbody></table>` : `<div class="empty">No CSPs with this label.</div>`}</div>
       ${pager(pages)}`;
     },
@@ -815,7 +816,8 @@
     const c = d.csp;
     const person = (p, label) => p ? `${esc(p.name)} · ${esc(p.phone || "no phone")} · ${esc(p.email || "no email")}` : `<span class="muted">no ${label} assigned</span>`;
     $("#drawer").innerHTML = `
-      <div class="topbar"><div><h1 style="font-size:1.25rem">${esc(c.name)}</h1><div class="mono muted">KO ${esc(c.code)} · ${esc(c.terminal_status || "")}</div></div>
+      <div class="topbar"><div><h1 style="font-size:1.25rem">${esc(c.name)}</h1><div class="mono muted">KO ${esc(c.code)} · ${esc(c.terminal_status || "")}</div>
+        ${c.active_override ? `<div class="small">Made <b>active</b> by ${esc(c.active_override_by || "")} ${fmt(c.active_override_at)} (the sheet says ${esc(c.terminal_status || "")}) · <a href="#" data-undoactive="${c.id}">undo</a></div>` : ""}</div>
         <button class="btn" id="closedrawer">Close</button></div>
       <div class="card"><div class="meta">${badge("c" + d.category, slab(d.category))} <span class="muted">${esc(d.reason)}</span></div>
         <dl class="kv" style="margin-top:10px"><dt>Mobile (sheet)</dt><dd>${esc(c.phone || "—")}${c.alt_phone ? " / " + esc(c.alt_phone) : ""}</dd>
@@ -866,7 +868,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -938,6 +940,15 @@
         const ta = $("#dcsumtext"); ta.select();
         try { await navigator.clipboard.writeText(ta.value); } catch (_) { document.execCommand("copy"); }
         return toast("Summary copied");
+      }
+      if (ds.makeactive) {
+        if (!confirm("Make this CSP active? They move to their Label and get reminders again, although the calling sheet says Inactive.")) return;
+        await post(`/api/hub/csp/${ds.makeactive}/active`, {active: true}); toast("Made active"); return refreshAfterAction();
+      }
+      if (ds.undoactive) {
+        e.preventDefault();
+        if (!confirm("Undo? The CSP follows the calling sheet again (Inactive: no messages).")) return;
+        await post(`/api/hub/csp/${ds.undoactive}/active`, {active: false}); toast("Back to the sheet's status"); closeDrawer(); return refreshAfterAction();
       }
       if (ds.sheetkey === "copy") { const v = $("#sheetkey").value; try { await navigator.clipboard.writeText(v); } catch (_) { $("#sheetkey").select(); document.execCommand("copy"); } return toast("Key copied"); }
       if (ds.sheetkey === "new") { if ($("#sheetkey") && !confirm("Make a new key? The Google Sheets script stops updating until you put the new key in it.")) return; await post("/api/hub/dc-sheet-key"); return render(); }
