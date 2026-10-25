@@ -141,7 +141,8 @@ END_DATE = re.compile(
     r"|valid(?:ity)?\s*(?:up\s*to|upto|till|until|thru|through)(?:\s*date)?"
     r"|expir(?:y|es|ing|ation)(?:\s*date)?(?:\s*on)?"
     # "commencing from 26/05/2025 an(d) ending on 25/05/2028", "ends on", "up to and including"
-    r"|(?:\ba?n?d?\s*)?ending\s*(?:on|date)?|\bends?\s*on|up\s*to\s*and\s*including"
+    # (a tick or stamp on the "n" of ending: OCR "e|ding", "e\ding", "eading" - Manoj Kumar Sah)
+    r"|(?:\ba?n?d?\s*)?\be[a-z|\\/.,']{0,2}ding\s*(?:on|date)?|\bends?\s*on|up\s*to\s*and\s*including"
     # 'On this day of, 29/08/2025 ("Effective Date") 27/08/2028': the last day
     # written right after the bracketed "Effective Date" (the start date is
     # before it, and a date only 30 days to 6 years later can be the end).
@@ -198,8 +199,17 @@ STATED_MONTHS = re.compile(
     r"(?:\(\s*\d{2}\s*\)\s*)?months?\b", re.I)
 
 
+# "...the terms of their relationship. for a period of 36 months commencing
+# from 16/01/2025": the sentence break hides "relationship" from the rule
+# above; "period of N months commencing" is clear on its own.
+PERIOD_COMMENCING = re.compile(
+    r"\bfor\s+a\s+period\s+of\s+(twelve|eighteen|twenty[- ]four|thirty[- ]six|forty[- ]eight|sixty|\d{2})\s*"
+    r"(?:\(\s*\d{2}\s*\)\s*)?months?\s+commenc", re.I)
+
+
 def stated_months(text: str) -> Optional[int]:
-    m = STATED_MONTHS.search(re.sub(r"\s+", " ", normalize(text)))
+    flat = re.sub(r"\s+", " ", normalize(text))
+    m = STATED_MONTHS.search(flat) or PERIOD_COMMENCING.search(flat)
     if not m:
         return None
     raw = m.group(1).lower()

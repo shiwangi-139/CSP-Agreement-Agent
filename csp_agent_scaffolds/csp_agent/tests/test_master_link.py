@@ -283,18 +283,25 @@ def test_dc_live_sheet_gives_one_dcs_table_only_with_the_key(client, monkeypatch
     assert ask(key).status_code == 403 and ask(newer).status_code == 200
 
 
-def test_no_dc_has_its_excel_summary_and_live_sheet(client, monkeypatch):
+def test_no_dc_is_split_by_rm_for_excel_summary_and_live_sheet(client, monkeypatch):
     import io
     from openpyxl import load_workbook
+    from app.models import InternalUser
     monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
     hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
     c, Session = client
-    _, code, _ = _csp(Session)                                   # _csp makes a CSP with no DC
-    assert any(u["id"] == 0 and u["name"] == "No DC" for u in c.get("/api/hub/master-link", headers=hdr).json()["dcs"])
-    x = c.get("/api/hub/dc-report.xlsx?dc_id=0", headers=hdr)
-    assert x.status_code == 200 and "No_DC" in x.headers["content-disposition"]
+    cid, code, _ = _csp(Session)                                 # no DC, its own RM
+    s = Session()
+    rm = s.get(InternalUser, s.get(CSP, cid).rm_id)
+    rm_id, rm_name = rm.id, rm.name
+    s.close()
+    opts = c.get("/api/hub/master-link", headers=hdr).json()["dcs"]
+    assert {"id": -rm_id, "name": f"No DC – RM {rm_name}", "csps": 1} in opts
+    x = c.get(f"/api/hub/dc-report.xlsx?dc_id={-rm_id}", headers=hdr)
+    assert x.status_code == 200 and "No_DC_RM" in x.headers["content-disposition"]
     assert any(code in str(row) for row in load_workbook(io.BytesIO(x.content)).active.iter_rows(values_only=True))
-    assert code in c.get("/api/hub/dc-summary?dc_id=0", headers=hdr).json()["text"]
+    assert code in c.get(f"/api/hub/dc-summary?dc_id={-rm_id}", headers=hdr).json()["text"]
     key = c.post("/api/hub/dc-sheet-key", headers=hdr).json()["key"]
-    d = c.post("/upload", data={"action": "dc_sheet", "key": key, "dc_name": "No DC"}).json()
-    assert d["ok"] and any(r[0] == code for r in d["rows"])
+    for name in (f"No DC - {rm_name}", f"No DC – RM {rm_name}"):
+        d = c.post("/upload", data={"action": "dc_sheet", "key": key, "dc_name": name}).json()
+        assert d["ok"] and [r[0] for r in d["rows"]] == [code]

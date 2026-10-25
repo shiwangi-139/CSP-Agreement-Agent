@@ -44,8 +44,16 @@ def find_dc(db: Session, name: str) -> Optional[InternalUser]:
     want = (name or "").strip().lower()
     if not want:
         return None
-    if want in ("no dc", "no-dc", "nodc"):
-        from .reports import NO_DC
-        return NO_DC
+    import re
+    m = re.match(r"no[\s-]?dc\b\W*(.*)$", want)
+    if m:                                  # "No DC - Amuda", "No DC – RM Amuda"; "No DC - no RM"
+        from .reports import NO_DC, no_dc_of_rm
+        rest = m.group(1).strip()
+        if not rest or rest in ("no rm", "none"):
+            return NO_DC
+        names = {rest, re.sub(r"^rm\b\W*", "", rest)}
+        rm = next((u for u in db.query(InternalUser).filter(InternalUser.role == "RM")
+                   if (u.name or "").strip().lower() in names), None)
+        return no_dc_of_rm(rm) if rm else None
     return next((u for u in db.query(InternalUser).filter(InternalUser.role == "DC")
                  if (u.name or "").strip().lower() == want), None)

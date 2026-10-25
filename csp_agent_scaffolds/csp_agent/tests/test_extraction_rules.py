@@ -611,3 +611,25 @@ def test_agreement_ranges_and_terms_seen_on_real_documents(text, issue, end):
 def test_digit_lookalikes_are_fixed_only_inside_a_date():
     from app.ai.extraction.rules.dates import normalize
     assert normalize("SUNNY SINGH, Sec. 44, 24-6-202S") == "SUNNY SINGH, Sec. 44, 24-6-2025"
+
+
+MANOJ_SAH = ('CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 16/01/2025 ("Effective Date"),MANOJ KUMAR SAH CSP Kiosk '
+             "Code (1A850757), an Indian national,\nA. Eko and CSP have recorded the terms of their relationship. for a "
+             "period of 36 months commencing from\n16/01/2025 an ending on 15/01/2028.\n")
+
+
+@pytest.mark.parametrize("ending", ["an ending", "an e|ding", "an e\\ding", "an eading", "an endlng"])
+def test_period_of_36_months_ending_on_with_a_mark_on_ending(ending):
+    """Manoj Kumar Sah 1A850757: a tick over 'ending' made OCR lose it, and 'relationship. for a period of 36
+    months' wasn't used either: he was turned away as expired by the 1-year rule."""
+    from app.ai.extraction.rules.agreement import extract_agreement
+    r = extract_agreement(MANOJ_SAH.replace("an ending", ending), date(2026, 10, 25))
+    assert r["issue_date"] == date(2025, 1, 16)
+    assert r["explicit_expiry"] in (date(2028, 1, 15), date(2028, 1, 16))    # printed last day, or 36 months
+
+
+def test_proceeding_is_not_an_end_date():
+    from app.ai.extraction.rules.agreement import extract_agreement
+    r = extract_agreement('CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 16/01/2025 ("Effective Date"), X\n'
+                          "any proceeding on 15/01/2027 under this clause\n", date(2026, 10, 25))
+    assert r["explicit_expiry"] is None

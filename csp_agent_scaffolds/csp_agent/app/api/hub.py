@@ -858,9 +858,13 @@ def _dc_names(db: Session) -> list[dict]:
     out = [{"id": u.id, "name": u.name, "csps": counts.get(u.id, 0)}
            for u in db.query(InternalUser).filter(InternalUser.role == "DC").order_by(InternalUser.name)
            if counts.get(u.id)]
-    no_dc = db.query(func.count(CSP.id)).filter(working_clause(), CSP.dc_id.is_(None)).scalar()
-    if no_dc:
-        out.append({"id": 0, "name": "No DC", "csps": no_dc})          # dc_id=0: CSPs with no DC
+    # CSPs with no DC, one group per RM (dc_id = -RM id; 0 = no RM either).
+    by_rm = dict(db.query(CSP.rm_id, func.count(CSP.id)).filter(working_clause(), CSP.dc_id.is_(None))
+                 .group_by(CSP.rm_id).all())
+    for rm in db.query(InternalUser).filter(InternalUser.id.in_([k for k in by_rm if k] or [-1])).order_by(InternalUser.name):
+        out.append({"id": -rm.id, "name": f"No DC – RM {rm.name}", "csps": by_rm[rm.id]})
+    if by_rm.get(None):
+        out.append({"id": 0, "name": "No DC – no RM", "csps": by_rm[None]})
     return out
 
 
@@ -868,6 +872,11 @@ def _dc_or_404(db: Session, dc_id: int):
     from .. import reports
     if dc_id == 0:
         return reports.NO_DC
+    if dc_id < 0:
+        rm = db.get(InternalUser, -dc_id)
+        if rm is None:
+            raise HTTPException(404, "No such RM")
+        return reports.no_dc_of_rm(rm)
     dc = db.get(InternalUser, dc_id)
     if dc is None or dc.role != "DC":
         raise HTTPException(404, "No such DC")

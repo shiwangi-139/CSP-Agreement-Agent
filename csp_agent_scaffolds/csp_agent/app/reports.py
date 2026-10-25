@@ -170,8 +170,13 @@ def _dc_doc_text(t: str, s, today: date) -> tuple[str, Optional[PatternFill]]:
     return "MISSING – upload it" + applied, RED
 
 
-# The CSPs with no DC, reported like a DC (dashboard: "No DC"; live sheet name "No DC").
-NO_DC = SimpleNamespace(id=None, name="No DC")
+# The CSPs with no DC, reported like a DC, one group per RM (dashboard: "No DC –
+# RM Amuda"; live sheet name "No DC - Amuda"). NO_DC: no DC and no RM either.
+NO_DC = SimpleNamespace(id=None, rm_id=None, name="No DC – no RM")
+
+
+def no_dc_of_rm(rm) -> SimpleNamespace:
+    return SimpleNamespace(id=None, rm_id=rm.id, name=f"No DC – RM {rm.name}")
 
 
 def _dc_rows(db: Session, dc: InternalUser, today: date) -> list[tuple]:
@@ -180,7 +185,10 @@ def _dc_rows(db: Session, dc: InternalUser, today: date) -> list[tuple]:
     from .compliance import working_clause
     staff = {u.id: u for u in db.query(InternalUser).all()}
     rows = []
-    which = CSP.dc_id.is_(None) if dc.id is None else CSP.dc_id == dc.id      # NO_DC: CSPs with no DC
+    if dc.id is None:                      # a "No DC" group: no DC, and this RM (or none)
+        which = CSP.dc_id.is_(None) & (CSP.rm_id == dc.rm_id if dc.rm_id else CSP.rm_id.is_(None))
+    else:
+        which = CSP.dc_id == dc.id
     for c in db.query(CSP).filter(working_clause(), which).order_by(CSP.current_code):
         st = evaluate(db, c, today)
         cells, todo = [], []
