@@ -411,6 +411,26 @@ def coach(db: Session) -> list[dict]:
         add("info", "Link opens are now being recorded",
             "From now on the Coach can tell who opened their link but didn't upload.", None)
 
+    # The nightly reading evaluation (scripts/eval_reading.py): wrong accepts
+    # count ten times a wrong refusal.
+    for set_name in ("holdout", "tuning"):
+        run = next((r for r in db.query(MonitorRun).filter(MonitorRun.kind == "reading_eval")
+                    .order_by(MonitorRun.started_at.desc()).limit(10) if (r.summary or {}).get("set") == set_name), None)
+        if run is None:
+            continue
+        allt = ((run.summary or {}).get("by_type") or {}).get("ALL") or {}
+        wa, wr, n = allt.get("WRONG ACCEPT", 0), allt.get("wrong reject", 0), allt.get("documents", 0)
+        prev = (run.summary or {}).get("previous_score")
+        trend = "" if prev is None else (f" (was {prev})" if prev != allt.get("score") else " (unchanged)")
+        fixed, broken = len((run.summary or {}).get("fixed") or []), len((run.summary or {}).get("broken") or [])
+        label = "hold-out set (never tuned on)" if set_name == "holdout" else "documents people decided"
+        add("critical" if wa else ("warn" if wr else "good"),
+            f"Reading score {allt.get('score', 0)}{trend} on {n} {label}",
+            f"{wa} would be accepted wrongly, {wr} refused wrongly; fixed since the last run {fixed}, newly broken {broken}. "
+            f"Re-checked {(run.started_at + off):%d-%m %H:%M}." + (" Wrong acceptances must be 0: see logs/reading_eval.csv." if wa else ""),
+            {"label": "Open Accuracy", "do": "view", "arg": "accuracy"})
+        break
+
     # The goal and its pace.
     g = goal(db)
     if g["pace_per_day"] is not None:

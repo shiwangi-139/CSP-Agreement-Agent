@@ -119,6 +119,7 @@ JOBS = {  # job id -> (what it is, expected gap in hours before it counts as lat
     "outbox": ("Message sender", 0.5), "vault": ("Document folders (00:10)", 26), "reports": ("Excel reports (07:30)", 26),
     "model_assist": ("Review helper (local AI)", 26), "snapshot": ("Daily Label snapshot", 26),
     "staff_lists": ("RM / DC lists (11:00)", 26), "nudges": ("Evening nudge (17:00)", 26),
+    "reading_eval": ("Nightly reading evaluation (02:30)", 26),
 }
 
 

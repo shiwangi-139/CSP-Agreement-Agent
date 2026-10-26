@@ -36,8 +36,10 @@ def reread_waiting(db: Session, q: ManualReviewQueue, d: Document) -> dict:
     d.date_source = ex.get("date_source")
     d.validity_months = ex.get("validity_months")
     d.has_explicit_3year_clause = bool(ex.get("has_explicit_3year_clause"))
+    from .why import explain
     d.extracted_fields = {**(d.extracted_fields or {}), "start_date": ex.get("start_date"), "expiry_date": expiry,
-                          "reread": f"re-read with the current rules on {date.today().isoformat()}"}
+                          "reread": f"re-read with the current rules on {date.today().isoformat()}",
+                          "why": explain(ex, typed)}
     fmt = lambda x: x.strftime("%d-%m-%Y") if x else "no expiry"
     note = ex.get("type_review") or (f"Re-read with the current rules: issued {fmt(after['issue'])}, valid till "
                                      f"{fmt(after['expiry'])} ({after['rule']}). Check it on the document and accept.")

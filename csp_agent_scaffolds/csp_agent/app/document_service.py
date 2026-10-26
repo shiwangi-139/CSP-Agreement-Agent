@@ -123,6 +123,13 @@ def store_extracted_document(
         "extraction_method", "model_provider", "page_count", "pages_readable",
         "readability_reason", "rejection_reason")}
     fields["registration_number"] = extraction.get("iibf_registration_number")
+    if decision == "READABLE":
+        # In plain words: which date and rule were used, the text, what was ignored (app/why.py).
+        from .why import explain
+        try:
+            fields["why"] = explain(extraction, _d(extraction.get("typed_issue_date")))
+        except Exception:
+            logger.exception("why_failed")
     owner_review = extraction.get("owner_review") if decision == "READABLE" else None
     if owner_review:
         fields["owner_check"] = owner_review

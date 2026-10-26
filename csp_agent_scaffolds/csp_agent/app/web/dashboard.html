@@ -6,7 +6,7 @@
 <title>Eko CSP Renewals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
-<link rel="stylesheet" href="static/eko.css?v=5">
+<link rel="stylesheet" href="static/eko.css?v=7">
 </head>
 <body>
 <div id="login" class="login card" style="display:none">
@@ -760,6 +760,7 @@
         <div class="meta">${badge(kind(r.reason)[0], kind(r.reason)[1])} <b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)} · ${esc(DOC[r.document.type] || r.document.type)}
           · issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : r.document.validity_rule === "PVR_PCC_LIFETIME" ? ` · <b>no expiry</b> (Police Clearance Certificate)` : ""}</div>
         <p>${esc(r.reason)}</p>
+        ${whyBox(r.document, true)}
         ${aiHint(r.document.model_suggestion)}
         <div class="toolbar"><a href="#" data-file="${r.document.id}">View document</a> · <a href="#" data-fileorig="${r.document.id}" class="small">download original</a>
           <label>Correct issue date <input type="date" id="rv${r.id}" value="${esc(r.document.issue_date || "")}"></label>
@@ -774,6 +775,18 @@
           <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button></div></div>`).join("") || `<div class="card empty">Nothing to review.</div>`}`;
     },
   };
+
+  // How the agent read a document (app/why.py): the dates, where each came
+  // from, the exact text, and what it ignored. Open in the Review queue.
+  function whyBox(d, open) {
+    const w = d && d.why;
+    if (!w) return "";
+    return `<details class="why" ${open ? "open" : ""}><summary>How the agent read it${d.decided_by_person ? " · dates now set by a person" : ""}</summary>
+      <div class="why-sum">${esc(w.summary)}</div>
+      ${(w.lines || []).map((l) => `<div class="why-line"><b>${esc(l.what)}: ${esc(l.value)}</b> <span class="muted">from ${esc(l.how)}</span>
+        ${l.text ? `<div class="why-text">“${esc(l.text)}”</div>` : ""}</div>`).join("")}
+      ${(w.ignored || []).length ? `<div class="why-ign">${w.ignored.map((i) => `<div>↷ ${esc(i)}</div>`).join("")}</div>` : ""}</details>`;
+  }
 
   // What the local AI model read (a suggestion only; the reviewer decides).
   function aiHint(s) {
@@ -834,7 +847,7 @@
       <div class="card" style="margin-top:14px"><h2>All files received (${d.documents.length})</h2><div class="tablewrap"><table><thead><tr><th>Type</th><th>Status</th><th>Issued</th><th>Expires</th><th>How</th><th>Received</th><th></th></tr></thead><tbody>
         ${d.documents.map((x) => `<tr><td>${esc(DOC[x.type] || x.type)}${x.is_current ? " <span class='b VALID'>current</span>" : ""}</td>
           <td>${badge(x.readability === "UNREADABLE" ? "UNREADABLE" : x.status)}</td><td class="mono">${fmt(x.issue_date)}</td><td class="mono">${fmt(x.expiry_date)}</td>
-          <td class="small">${esc((x.date_source || x.reason || "").replaceAll("_", " ").toLowerCase())}</td><td class="small">${esc(x.channel === "CSP_UPLOAD_PORTAL" ? "portal" : "gmail")} ${fmt(x.source_date || x.uploaded_at)}</td>
+          <td class="small">${esc((x.date_source || x.reason || "").replaceAll("_", " ").toLowerCase())}${whyBox(x, false)}</td><td class="small">${esc(x.channel === "CSP_UPLOAD_PORTAL" ? "portal" : "gmail")} ${fmt(x.source_date || x.uploaded_at)}</td>
           <td><a href="#" data-file="${x.id}">view</a> · <a href="#" data-fileorig="${x.id}" class="small">original</a></td></tr>`).join("") || `<tr><td colspan="7" class="empty">None.</td></tr>`}</tbody></table></div></div>
       <div class="card" style="margin-top:14px"><h2>Follow-up cycles</h2>${d.cycles.map((y) => `<div class="small">${badge(y.closed_at ? "DONE" : "PENDING", y.closed_at ? "closed" : "open")}
         <b>${esc(y.kind)}</b> ${esc(y.document_type)} · CSP ${y.csp} · RM ${y.rm}/2 · DC ${y.dc}/1 · opened ${fmt(y.opened_at)}${y.close_reason ? " · " + esc(y.close_reason.replaceAll("_", " ").toLowerCase()) : ""}</div>`).join("") || `<div class="muted small">No follow-ups yet.</div>`}</div>

@@ -87,6 +87,7 @@ def _doc_json(d: Document) -> dict:
             "source_date": _iso(d.source_date), "sender_on_sheet": d.sender_on_sheet,
             "holder_name": d.holder_name, "registration_number": d.iibf_reg_number,
             "typed_issue_date": f.get("typed_issue_date"),
+            "why": f.get("why"), "decided_by_person": d.date_source == "MANUAL_REVIEW" or d.status == DocumentStatus.MANUAL_VERIFIED,
             "reason": f.get("readability_reason") or f.get("rejection_reason")}
 
 

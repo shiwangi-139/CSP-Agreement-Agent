@@ -20,6 +20,7 @@ Schedule (Asia/Kolkata):
   Ollama memory guard (stops this project's Ollama)             every minute
   Campaign: RM / DC lists of pending CSPs (app/escalation.py)    daily 11:00 (weekly after it)
   Campaign: CSPs' short evening nudge                            daily 17:00
+  Reading evaluation (scripts/eval_reading.py, both sets)        daily 02:30, low priority
 Missed runs while the worker was running late are run once (coalesce + 6 h
 grace). Daily runs missed while it was stopped (09:00 run, 11:00 lists,
 17:00 nudge) are run once when it starts again (job_catch_up). It is kept
@@ -243,6 +244,27 @@ def job_model_guard():
         logger.exception("model_guard_failed")
 
 
+def job_reading_eval():
+    """Every night: re-read the documents people decided (tuning and hold-out
+    sets) with the current rules, at low priority, and save the score
+    (scripts/eval_reading.py). Changes nothing."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    app_dir = Path(__file__).resolve().parent.parent
+
+    def go():
+        out = {}
+        for extra in ([], ["--holdout"]):
+            r = subprocess.run(["nice", "-n", "19", sys.executable, "-m", "scripts.eval_reading", *extra],
+                               cwd=app_dir, env={**__import__("os").environ, "OCR_WORKERS": "1"},
+                               capture_output=True, text=True, timeout=4 * 3600)
+            last = [line for line in r.stdout.splitlines() if line.startswith("Score")]
+            out["holdout" if extra else "tuning"] = last[-1] if last else f"exit {r.returncode}"
+        return out
+    return _run("reading_eval", go)
+
+
 def job_staff_lists():
     from . import escalation
 
@@ -289,6 +311,7 @@ def build_scheduler():
     sched.add_job(job_catch_up, id="catch_up_at_start", next_run_time=datetime.now())
     sched.add_job(job_model_guard, IntervalTrigger(minutes=1), id="model_guard", next_run_time=datetime.now())
     sched.add_job(job_staff_lists, CronTrigger(hour=11, minute=0), id="staff_lists")
+    sched.add_job(job_reading_eval, CronTrigger(hour=2, minute=30), id="reading_eval")
     sched.add_job(job_nudges, CronTrigger(hour=17, minute=0), id="nudges")
     return sched
 

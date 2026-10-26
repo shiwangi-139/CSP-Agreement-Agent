@@ -257,3 +257,11 @@ textarea { width: 100%; min-height: 180px; font-family: var(--font-body); }
   .mx-strip { grid-template-columns: minmax(0, 1fr); } .mx-metric { border-left: 0; } .mx-metric + .mx-metric { border-top: 1px solid var(--border); }
   .mx-bar { grid-template-columns: minmax(0, 8rem) minmax(0, 1fr) 2.6rem; }
 }
+
+/* "How the agent read it" (app/why.py) */
+.why { margin: 6px 0 4px; border: 1px solid var(--border); border-radius: .6rem; padding: 6px 10px; background: var(--card); }
+.why summary { cursor: pointer; font-weight: 600; font-size: .85rem; color: var(--accent-ink); }
+.why-sum { margin: 6px 0 4px; font-weight: 600; }
+.why-line { margin: 4px 0; font-size: .88rem; }
+.why-text { font-family: var(--font-mono); font-size: .78rem; background: var(--mist); border-radius: .4rem; padding: 4px 6px; margin-top: 2px; white-space: pre-wrap; word-break: break-word; }
+.why-ign { margin-top: 6px; font-size: .82rem; color: var(--muted); }

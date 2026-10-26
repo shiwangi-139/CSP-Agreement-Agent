@@ -78,6 +78,12 @@ _DIGIT_LOOKALIKES = str.maketrans({"o": "0", "O": "0", "S": "5", "s": "5", "l": 
 _O_DATE = re.compile(r"(?<![\w])[\doOlI|]{1,2}\s?[-/.]\s?[\doOlI|]{1,2}\s?[-/.]\s?(?:[12][\doOSsl]{3}|[\doO]{2})(?![\w])")
 
 
+def camera_stamp_lines(text: str) -> list[str]:
+    """The lines strip_camera_stamps() removes (for the "why" of a reading)."""
+    kept = set(strip_camera_stamps(text).split("\n"))
+    return [line for line in (text or "").split("\n") if line.strip() and line not in kept]
+
+
 def strip_camera_stamps(text: str) -> str:
     lines = (text or "").split("\n")
     out, after_brand = [], False

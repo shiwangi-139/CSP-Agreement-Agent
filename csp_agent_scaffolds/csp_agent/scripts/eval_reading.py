@@ -23,7 +23,11 @@ What each document counts as:
                    person rejected: the dangerous kind, target 0
   wrong reject     turned away (unreadable / not the document / expired)
                    although a person accepted it
-Writes logs/reading_eval.csv and saves the totals for the Monitoring page.
+Writes logs/reading_eval.csv and saves the totals for the Monitoring page
+and the Agent Coach, with one SCORE per document type: 10 x wrong accepts +
+1 x wrong rejects (a wrong acceptance is ten times worse), and which
+documents were fixed or newly broken since the previous run of the same set.
+The worker runs both sets every night at 02:30 (app/worker.py).
 """
 import argparse
 import csv
@@ -90,6 +94,7 @@ def main():
         Path("logs").mkdir(exist_ok=True)
         totals = defaultdict(Counter)
         field_ok = defaultdict(Counter)
+        failures = {}                                  # doc id -> verdict, for "fixed / newly broken"
         with open("logs/reading_eval.csv", "w", newline="") as out:
             w = csv.writer(out)
             w.writerow(["csp_code", "type", "doc_id", "truth", "true_issue", "true_expiry", "read_issue", "read_expiry",
@@ -111,6 +116,7 @@ def main():
                             (ex.get("type_review") or ex.get("rejection_reason") or ex.get("error") or "")[:200]])
                 out.flush()
                 if v in ("WRONG ACCEPT", "wrong reject"):
+                    failures[str(d.id)] = v
                     print(f"{c.current_code} {d.document_type[:6]:6} doc {d.id}: {v}  person {d.issue_date} -> "
                           f"{d.expiry_date}   read {ex.get('start_date')} -> {ex.get('expiry_date')}", flush=True)
                 if i % 25 == 0:
@@ -124,7 +130,8 @@ def main():
                           "wrong_accept_percent": round(100 * cnt["WRONG ACCEPT"] / n, 1) if n else None,
                           "review_percent": round(100 * cnt["safe review"] / n, 1) if n else None,
                           "issue_date_right_when_found": f"{f['issue_right']}/{f['issue_found']}" if f else None,
-                          "expiry_right_when_found": f"{f['expiry_right']}/{f['issue_found']}" if f else None}
+                          "expiry_right_when_found": f"{f['expiry_right']}/{f['issue_found']}" if f else None,
+                          "score": 10 * cnt["WRONG ACCEPT"] + cnt["wrong reject"]}
             print(f"\n{t}: {n} documents  " + ", ".join(f"{k} {cnt[k]}" for k in
                   ("correct", "safe review", "WRONG ACCEPT", "wrong reject", "could not read")))
         try:
@@ -132,9 +139,19 @@ def main():
                                     timeout=5).stdout.strip()
         except Exception:
             commit = None
+        from app.models import MonitorRun
         from app.monitoring import record_run
-        record_run(db, "reading_eval", started, "OK", {"set": "holdout" if a.holdout else "tuning",
-                                                        "commit": commit, "by_type": summary})
+        set_name = "holdout" if a.holdout else "tuning"
+        before = next((r.summary or {} for r in db.query(MonitorRun).filter(MonitorRun.kind == "reading_eval")
+                       .order_by(MonitorRun.started_at.desc()).limit(10) if (r.summary or {}).get("set") == set_name), {})
+        old = before.get("failures") or {}
+        fixed = sorted(k for k in old if k not in failures)
+        broken = sorted(k for k in failures if k not in old)
+        print(f"Score (10 x wrong accepts + wrong rejects): {summary.get('ALL', {}).get('score')}   "
+              f"fixed since last run: {len(fixed)}   newly broken: {len(broken)}")
+        record_run(db, "reading_eval", started, "OK", {"set": set_name, "commit": commit, "by_type": summary,
+                                                        "failures": failures, "fixed": fixed[:200], "broken": broken[:200],
+                                                        "previous_score": (before.get("by_type") or {}).get("ALL", {}).get("score")})
         print("\nFull list: logs/reading_eval.csv   (nothing in the database was changed)")
     finally:
         db.rollback()

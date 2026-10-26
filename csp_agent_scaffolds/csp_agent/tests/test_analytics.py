@@ -66,7 +66,9 @@ def test_link_opens_are_recorded_once_an_hour(db_session):
     from app.api import portal
     from app.models import AgreementEvent, CSP
     db = db_session
-    c = CSP(name="Opener", current_code="6L000001", lookup_code="6L000001", is_active_in_calling_sheet=True)
+    import uuid
+    code = f"6L{uuid.uuid4().int % 1000000:06d}"
+    c = CSP(name="Opener", current_code=code, lookup_code=code, is_active_in_calling_sheet=True)
     db.add(c)
     db.flush()
     portal._record_link_open(db, c.id)
