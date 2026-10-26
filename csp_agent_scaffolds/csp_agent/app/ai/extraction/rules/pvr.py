@@ -125,6 +125,7 @@ def extract_pvr(text: str, today: Optional[date] = None) -> dict:
             out["validity_months"], out["validity_source"] = months, source
         elif BIHAR_BCHC.search(text):
             out["validity_months"], out["validity_source"] = 6, "PVR_STATED_6_MONTHS_BIHAR_BCHC"
-        elif PCC.search(text):
-            out["validity_months"], out["validity_source"] = None, "PVR_PCC_LIFETIME"
+        # A Police Clearance Certificate that states no validity: 1 year like any
+        # police certificate (Eko's rule since 2026-10-26; was "no expiry"). A
+        # reviewer can still set "No expiry (PCC)" in the Review queue.
     return out

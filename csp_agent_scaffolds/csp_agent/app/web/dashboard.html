@@ -709,7 +709,7 @@
       const results = (r) => `<div class="kv" style="margin-top:6px">${r.results.map((x) => `
           <dt>${esc(DOC[x.type] || x.section)}</dt>
           <dd>${x.in_review ? "🔍" : x.ok ? "✅" : "❌"} ${esc(x.now ? x.now : x.reason)}${x.now ? ` <span class="muted">(at upload: ${esc(x.reason)})</span>` : ""}${x.read_as && !x.ok ? ` <span class="muted">(read as ${esc(DOC[x.read_as] || x.read_as)})</span>` : ""}
-            ${x.document_id ? ` · <a href="#" data-file="${x.document_id}">view</a>` : ""}${x.kept_file ? ` · <a href="#" data-keptfile="${r.id}/${x.i}">view what they sent</a>` : ""}
+            ${x.document_id ? ` · <a href="#" data-file="${x.document_id}">view</a>` : ""}${x.kept_file ? ` · <a href="#" data-keptfile="${r.id}/${x.i}">view what they sent</a>` : ""}${x.kept_file && !x.ok && state.summary.me.role === "ADMIN" ? (x.taken ? ` · <span class="small">taken → in the Review queue</span>` : ` · <a href="#" data-takefile="${r.id}/${x.i}" title="The agent refused it by mistake: save it for this CSP and check it in the Review queue">take this file</a>`) : ""}
             ${x.filename ? `<span class="small muted"> · ${esc(x.filename)}</span>` : ""}</dd>`).join("")}</div>`;
       const attempt = (r, n) => `<div style="border-top:1px solid var(--border);padding-top:8px;margin-top:8px">
           <div class="meta small">${badge(OUT[r.outcome][0], OUT[r.outcome][1])} <b>Attempt ${n}</b>
@@ -868,7 +868,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -976,6 +976,12 @@
         return render();
       }
       if (ds.fdays !== undefined) { state.fdays = +ds.fdays; return render(); }
+      if (ds.takefile) {
+        e.preventDefault();
+        if (!confirm("Take this file for the CSP? It is saved as their document and waits in the Review queue, where you set the dates and accept it.")) return;
+        const [ev, i] = ds.takefile.split("/");
+        await post(`/api/hub/form-uploads/${ev}/take/${i}`); toast("Taken: it is in the Review queue"); return render();
+      }
       if (ds.keptfile) { e.preventDefault(); const [ev, i] = ds.keptfile.split("/"); return openPath(`api/hub/form-uploads/${ev}/file/${i}`); }
       if (ds.answer) { await post(`/api/hub/questions/${ds.answer}/answer`, {note: $(`#qn${ds.answer}`)?.value || ""}); toast("Marked answered."); return render(); }
       if (ds.qstatus !== undefined) { state.qstatus = ds.qstatus; return render(); }

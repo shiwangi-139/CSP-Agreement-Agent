@@ -298,6 +298,13 @@ def classify_allowlist_gate(text: str, filename: str = "", expected_type: Option
     body = (text or "").lower()
 
     structure = _matches(AGREEMENT_MARKERS, body)
+    # An issued police certificate addressed "To, BANK BC CUSTOMER SERVICE POINT,
+    # EKO BHARAT VENTURE" (Maharashtra PCC, Bhushan Nandre) names Eko and the
+    # CSP but is not the agreement.
+    if _matches(STRONG_PVR, body) and _matches(PVR_ISSUED, body) and len(structure) < 3 \
+            and not re.search(r"service\s*point\s*agreement|csp\s+agreement|hereby\s+appoints|on\s+this\s+day\s+of", body) \
+            and not (_matches(PVR_APPLICATION, body) and not _matches(PVR_ISSUED, body)):
+        return True, "POLICE_VERIFICATION", "Matched POLICE_VERIFICATION phrases of an issued certificate", 0.9
     if len(structure) >= 3:
         return True, "AGREEMENT", f"Agreement structure: {len(structure)} markers", 0.9
     for doc_type, patterns in (("AGREEMENT", STRONG_AGREEMENT), ("POLICE_VERIFICATION", STRONG_PVR),

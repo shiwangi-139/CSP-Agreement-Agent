@@ -245,3 +245,39 @@ def test_a_date_read_as_today_while_another_was_typed_goes_to_a_person(client, m
     d = s.query(Document).filter_by(csp_id=cid).one()
     assert d.status.value == "NEEDS_REVIEW" and "photo's date" in d.extracted_fields["needs_confirmation"]
     s.close()
+
+
+def test_an_admin_takes_a_refused_file_and_accepts_it_in_the_review_queue(client, monkeypatch):
+    from app import auth
+    from app.compliance import evaluate
+    from app.models import AgreementEvent, ManualReviewQueue, ReviewStatus
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    cid, _, token = _csp(Session)
+    name, mobile, email, rm, dc = _with_dc(Session, cid)
+    res = c.post("/api/portal/upload", data=_csp_form(token, name, mobile, email, rm, dc,
+                                                       agreement_issue_date=ISSUE.isoformat()),
+                 files={"agreement_file": ("a.pdf", _agreement_pdf(1), "application/pdf")}).json()["results"][0]
+    assert not res["ok"]                                              # refused (1 page)
+    s = Session()
+    ev = s.query(AgreementEvent).filter_by(csp_id=cid, event_type="PORTAL_UPLOAD").one()
+    ev_id = ev.id
+    s.close()
+    row = next(r for r in c.get("/api/hub/form-uploads", headers=hdr).json()["rows"] if r["id"] == ev_id)
+    assert row["results"][0]["kept_file"] and not row["results"][0]["taken"]
+    took = c.post(f"/api/hub/form-uploads/{ev_id}/take/0", headers=hdr).json()
+    assert took["document_id"] and not took["already"]
+    assert c.post(f"/api/hub/form-uploads/{ev_id}/take/0", headers=hdr).json()["already"]      # once only
+    s = Session()
+    q = s.query(ManualReviewQueue).filter_by(document_id=took["document_id"], status=ReviewStatus.PENDING).one()
+    assert q.reason.startswith("Taken by")
+    qid = q.id
+    s.close()
+    ok = c.post(f"/api/hub/review/{qid}/resolve", headers=hdr,
+                json={"accept": True, "issue_date": ISSUE.isoformat(), "document_type": "AGREEMENT", "validity_months": 36})
+    assert ok.status_code == 200, ok.text
+    s = Session()
+    st = evaluate(s, s.get(CSP, cid)).docs["AGREEMENT"]
+    assert st.status == "VALID" and st.expiry_date.year == ISSUE.year + 3
+    s.close()

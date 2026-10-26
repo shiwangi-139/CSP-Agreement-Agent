@@ -205,8 +205,11 @@ def check_owner(db: Session, csp: CSP, ex: dict, everyone: list[CSP],
     known = [csp.name, *(learned or {}).get(csp.id, [])]
     if any(_name_on_document(n, text) for n in known):
         return csp, None, None
-    named = next((o for o in everyone if o.id != csp.id and len(_letters(o.name).split()) >= 2
-                  and f" {_letters(o.name)} " in f" {text} "), None)
+    # Another CSP's full name (every word, any order: certificates often put the
+    # surname first, "MISAL RAJESH VASANT").
+    named = next((o for o in everyone if o.id != csp.id
+                  and len([w for w in _letters(o.name).split() if len(w) >= 3]) >= 2
+                  and _name_on_document(o.name, text)), None)
 
     ans = None
     if ex.get("model_csp_code") or ex.get("model_csp_name"):

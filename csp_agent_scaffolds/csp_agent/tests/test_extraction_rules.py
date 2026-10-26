@@ -651,3 +651,48 @@ def test_an_issued_certificate_is_still_a_certificate():
     t = ("CHARACTER CERTIFICATE\nThis is to certify that Mr. X ... no adverse entry was found against the said candidate "
          "in the police records. This certificate is valid only for one year.\nRegistered office: Giridih\n")
     assert classify_allowlist_gate(t, "pvr.pdf", "POLICE_VERIFICATION")[1] == "POLICE_VERIFICATION"
+
+
+# ----------------------------------------- cases refused by mistake, 25-10-2026
+@pytest.mark.parametrize("name,text,issue,end", [
+    ("Indrajeet Jha 1A850396", "On this day of 23/10/2025 (Effective Date) to 22/10/2028, Indrajeet Jha an\nIndian national",
+     date(2025, 10, 23), date(2028, 10, 22)),
+    ("Shatrughna Ray 1A850333", 'On this day of 15.06.2025,("Effective Date") CSP Name Mr.SHATRUGHNA RAY\n'
+     "is agreement would be Va|d for Two Years from the date of signing .", date(2025, 6, 15), date(2027, 6, 15)),
+    ("Roshan Kumar 1A850249", "ROSHAN KUMAR(1A850249)\nOn this day of, 30th December 2023 to 29th December 2026, an Indian national",
+     date(2023, 12, 30), date(2026, 12, 29)),
+])
+def test_agreements_refused_by_mistake_now_read(name, text, issue, end):
+    from app.ai.extraction.rules.agreement import extract_agreement
+    r = extract_agreement("CUSTOMER SERVICE POINT AGREEMENT\n" + text + "\n", date(2026, 10, 26))
+    assert (r["issue_date"], r["explicit_expiry"]) == (issue, end), name
+
+
+def test_three_years_from_the_date_of_signing():
+    from app.ai.extraction.rules.agreement import extract_agreement
+    r = extract_agreement('CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 30/12/2024 ("Effective Date"), X\n'
+                          "This agreement would be valid for three years from the date of signing.\n", date(2026, 10, 26))
+    assert r["has_explicit_3year_clause"]
+
+
+MH_PCC_TO_EKO = ("POLICE CLEARANCE CERTIFICATE\nTo,\nBANK BC CUSTOMER SERVICE POINT\nEKO BHARAT VENTURE PVT LTD\n"
+                 "Subject : Verification of Character and Antecedents of BHUSHA RAMESH NANDRE residing at Chhadvel\n"
+                 "There is nothing adverse against the above applicant on police record ... report dated 07/02/2026\n"
+                 "Signature valid\nDigitally Signed by\nChandrakant Vasantrao Khonde\nDate:24/4/2026 5:57:19 PM\n"
+                 "For Superintendent of Police.\n")
+
+
+def test_police_clearance_addressed_to_eko_csp_is_a_police_certificate_valid_one_year():
+    """Bhushan Nandre 1A851806: 'To, BANK BC CUSTOMER SERVICE POINT, EKO ...' made it look like an agreement;
+    a Police Clearance Certificate that states no validity is valid 1 year (since 26-10-2026)."""
+    from app.ocr_service import classify_allowlist_gate
+    assert classify_allowlist_gate(MH_PCC_TO_EKO, "pvr.pdf", "POLICE_VERIFICATION")[1] == "POLICE_VERIFICATION"
+    r = extract_pvr(MH_PCC_TO_EKO, date(2026, 10, 26))
+    assert r["validity_months"] == 12 and r["validity_source"] == "PVR_DEFAULT_1_YEAR"
+
+
+def test_an_agreement_still_reads_as_an_agreement():
+    from app.ocr_service import classify_allowlist_gate
+    t = ('CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 01/01/2026 ("Effective Date"), X\nEko hereby appoints X.\n'
+         "CSP shall submit police verification and character certificate. nothing adverse\n")
+    assert classify_allowlist_gate(t, "a.pdf", "AGREEMENT")[1] == "AGREEMENT"

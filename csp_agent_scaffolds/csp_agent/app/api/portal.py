@@ -231,6 +231,22 @@ def _on_record_elsewhere(db: Session, csp: CSP, data: bytes) -> bool:
     return db.query(Document.id).filter(Document.sha256 == sha, Document.csp_id != csp.id).first() is not None
 
 
+def _misfiled_note(db: Session, csp: CSP, data: bytes) -> str:
+    """The other CSPs a file is on record for, and their copies put in the
+    Review queue (the document names this CSP: those were probably misfiled)."""
+    sha = hashlib.sha256(data).hexdigest()
+    codes = []
+    for d in db.query(Document).filter(Document.sha256 == sha, Document.csp_id != csp.id):
+        other = db.get(CSP, d.csp_id)
+        codes.append(other.current_code if other else "?")
+        if not db.query(ManualReviewQueue).filter(ManualReviewQueue.document_id == d.id,
+                                                  ManualReviewQueue.status == ReviewStatus.PENDING).first():
+            db.add(ManualReviewQueue(document_id=d.id, status=ReviewStatus.PENDING, reason=(
+                f"Probably misfiled: this same file was uploaded for {csp.current_code} {csp.name}, whose name is "
+                "on it. Reject it here if it isn't this CSP's document.")[:500]))
+    return ", ".join(dict.fromkeys(codes)) + " (that copy is in the Review queue)"
+
+
 def _same_as_on_file(db: Session, csp: CSP, doc_type: str, ex: dict) -> bool:
     """The document read is the one already on file (same issue date)."""
     s = evaluate(db, csp).docs[doc_type]
@@ -618,9 +634,9 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
             # Photos -> one small PDF (shrunk, upright, pages in order).
             data = await run_in_threadpool(lambda: pages.photos_to_pdf([pages.shrink_photo(f) for f in files]))
             mime = "application/pdf"
-        if via_dc and _on_record_elsewhere(db, csp, data):
-            turn_away("dup_other", data, mime)
-            continue
+        # The same file already filed under another CSP: refused, unless the
+        # document itself names this CSP (then the other copy was misfiled).
+        elsewhere = via_dc and _on_record_elsewhere(db, csp, data)
         # The section is a hint: a readable file whose wording or date the
         # rules don't recognise goes to a person instead of being turned away.
         ex = await run_in_threadpool(lambda: extract_document_fields_deterministic(
@@ -746,6 +762,11 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         if via_dc:
             # A wrong KO code typed by the DC: the document shows another CSP.
             other, owner_note = _other_owner(db, csp, ex)
+            if elsewhere:
+                if other is not None or owner_note:
+                    turn_away("dup_other", data, mime)
+                    continue
+                owner_note = "the same file is also on record for " + _misfiled_note(db, csp, data)
             if other is not None:
                 turn_away("dc_other_csp", data, mime)
                 if other:

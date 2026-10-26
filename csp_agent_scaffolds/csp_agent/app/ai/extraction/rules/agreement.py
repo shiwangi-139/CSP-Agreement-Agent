@@ -59,6 +59,8 @@ THREE_YEAR = [
     # unambiguous without the word, as long as it isn't "three months".
     re.compile(r"(?:remain\s+)?valid\s+for\s+(?:a\s+)?period\s+of\s+(?:three|thr[e3]{2}|3)\b\s*(?:\(\s*3\s*\))?"
                r"(?!\s*(?:\(\s*3\s*\)\s*)?months?)", re.I),
+    # "...three years from the date of signing" (the word valid may be under a stamp)
+    re.compile(r"\b(?:three|thr[e3]{2}|3)\s*(?:\(\s*3\s*\)\s*)?y\w{0,4}\s+from\s+the\s+date\s+of\s+(?:sign|exec)", re.I),
     # "valid" after the term, in a heading under the title: "3 Years For Valid",
     # "3 Years Valid", "Three (3) years validity" (Sunny Singh, 01-07-2026).
     re.compile(r"\b(?:three|thr[e3]{2}|3)\s*(?:\(\s*3\s*\)\s*)?y[ea]\w{0,3}'?s?\s*(?:for\s*)?va\w{0,2}d\w*", re.I),
@@ -71,6 +73,10 @@ RANGE = [
     re.compile(r"(?:valid\s+)?(?:from|w\.?\s?e\.?\s?f\.?)\s*[:\-]?\s*(?P<a>[^\n]{6,30}?)\s*(?:to|till|until|upto|up\s+to)\s*(?P<b>[^\n]{6,30})", re.I),
     re.compile(r"(?:for\s+the\s+)?period\s+(?:of\s+)?(?P<a>[^\n]{6,30}?)\s*(?:to|till|until)\s*(?P<b>[^\n]{6,30})", re.I),
     re.compile(r"(?P<a>[^\n]{6,30}?)\s*से\s*(?P<b>[^\n]{6,30}?)\s*तक"),
+    # "On this day of 23/10/2025 (Effective Date) to 22/10/2028" (Indrajeet Jha): the
+    # label between the two dates hid the range.
+    re.compile(rf"(?P<a>{_DATE})\s*[(\[]?\s*[\"“”']*\s*effective\s*date\s*[\"“”']*\s*[)\]]?\s*,?\s*"
+               rf"(?:to|till|until|upto|up\s+to)\s*(?P<b>{_DATE})", re.I),
     # Two full dates joined by to/till/a dash, anywhere: "On this day of,
     # 26/03/2025 to 25/03/2027 (Effective Date)", "valid for two years i.e.
     # 06-06-2024 to 05-06-2026", "20/12/23 - 19/12/2025", "24-08-2025to23-8-2028".
@@ -185,8 +191,15 @@ STATED_YEARS = re.compile(
     r"\b(one|two|four|five|[1245])\b\s*(?:\(\s*[1245]\s*\)\s*)?y(?:ea)?rs?\b", re.I)
 
 
+# "This agreement would be Valid for Two Years from the date of signing" with a
+# stamp over "Valid" (Shatrughna Ray): "N years from the date of signing" alone.
+YEARS_FROM_SIGNING = re.compile(
+    r"\b(one|two|four|five|[1245])\b\s*(?:\(\s*[1245]\s*\)\s*)?y(?:ea)?rs?\s+from\s+the\s+date\s+of\s+(?:sign|exec)", re.I)
+
+
 def stated_years(text: str) -> Optional[int]:
-    m = STATED_YEARS.search(re.sub(r"\s+", " ", normalize(text)))
+    flat = re.sub(r"\s+", " ", normalize(text))
+    m = STATED_YEARS.search(flat) or YEARS_FROM_SIGNING.search(flat)
     return YEAR_WORDS[m.group(1).lower()] if m else None
 
 

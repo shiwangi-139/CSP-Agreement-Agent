@@ -305,3 +305,34 @@ def test_no_dc_is_split_by_rm_for_excel_summary_and_live_sheet(client, monkeypat
     for name in (f"No DC - {rm_name}", f"No DC – RM {rm_name}"):
         d = c.post("/upload", data={"action": "dc_sheet", "key": key, "dc_name": name}).json()
         assert d["ok"] and [r[0] for r in d["rows"]] == [code]
+
+
+def test_file_misfiled_under_another_csp_is_taken_when_it_names_this_csp(client):
+    """Rajesh Vasant Misal: his certificate was on record for another CSP; it names him, so it is taken
+    for him and the other copy goes to the Review queue."""
+    c, Session = client
+    cid_a, code_a, _ = _csp(Session)
+    cid_b, code_b, _ = _csp(Session)
+    s = Session()
+    s.get(CSP, cid_a).name = "Rajesh Vasant Misal"
+    s.get(CSP, cid_b).name = "Kamla Devi"
+    s.commit()
+    s.close()
+    dc = _link(Session)
+    issue = date.today() - timedelta(days=20)
+    data = _pvr_pdf(issue, holder="MISAL RAJESH VASANT")
+    assert _upload(c, dc, code_b, issue, data).json()["results"][0]["ok"] is False      # names A, not B
+    s = Session()
+    s.add(Document(csp_id=cid_b, document_type="POLICE_VERIFICATION", status=DocumentStatus.VALID, is_current=True,
+                   readability="READABLE", issue_date=issue, expiry_date=issue + timedelta(days=365),
+                   sha256=__import__("hashlib").sha256(data).hexdigest()))           # misfiled earlier
+    s.commit()
+    s.close()
+    res = _upload(c, dc, code_a, issue, data).json()["results"][0]
+    assert res["ok"], res
+    s = Session()
+    mine = s.query(Document).filter_by(csp_id=cid_a).one()
+    other = s.query(Document).filter_by(csp_id=cid_b).one()
+    assert s.query(ManualReviewQueue).filter_by(document_id=other.id, status=ReviewStatus.PENDING).one().reason.startswith("Probably misfiled")
+    assert code_b in s.query(ManualReviewQueue).filter_by(document_id=mine.id).one().reason
+    s.close()

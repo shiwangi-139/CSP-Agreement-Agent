@@ -780,6 +780,7 @@ def form_uploads(outcome: str = "", days: int = 0, me: Principal = Depends(requi
                          "read_as": r.get("read_as"), "filename": r.get("filename"),
                          "document_id": r.get("rechecked_document_id") or r.get("document_id"),
                          "kept_file": bool(r.get("kept_file")), "now": r.get("now"),
+                         "taken": r.get("taken_document_id"),
                          "in_review": bool(r.get("in_review"))}
                         for i, r in enumerate(results)]})
     return {"rows": rows[:500], "counts": _form_upload_counts(db, me)}
@@ -801,6 +802,58 @@ def form_upload_file(event_id: int, i: int, me: Principal = Depends(require_user
     return FileResponse(path.resolve(), media_type=media.get(path.suffix.lower(), "application/octet-stream"),
                         headers={"Content-Disposition": f'inline; filename="{path.name}"',
                                  "X-Content-Type-Options": "nosniff"})
+
+
+@router.post("/form-uploads/{event_id}/take/{i}", dependencies=[Depends(require_admin)])
+def take_refused_file(event_id: int, i: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """A file the upload page turned away, taken by a person anyway: it is read
+    again and saved as the CSP's document, waiting in the Review queue, where
+    the person sets the dates / validity and accepts (or rejects) it."""
+    from sqlalchemy.orm.attributes import flag_modified
+    from ..ai.extraction.deterministic_extractor import extract_document_fields_deterministic
+    from ..compliance import refresh_category
+    from ..document_service import store_extracted_document
+    from ..ocr_service import detect_mime
+    e = db.get(AgreementEvent, event_id)
+    if e is None or e.event_type != "PORTAL_UPLOAD":
+        raise HTTPException(404, "not found")
+    c = _own_csp(db, e.csp_id, me)
+    results = (e.payload or {}).get("results") or []
+    if not 0 <= i < len(results):
+        raise HTTPException(404, "not found")
+    r = results[i]
+    if r.get("taken_document_id"):
+        return {"document_id": r["taken_document_id"], "already": True}
+    path = vault.abs_path(r.get("kept_file")) if r.get("kept_file") else None
+    if path is None or not path.exists() or not vault.is_inside_vault(path.resolve()):
+        raise HTTPException(404, "The file they sent was not kept.")
+    data = path.read_bytes()
+    section_type = SECTION_TYPE.get(r.get("section"), "AGREEMENT")
+    ex = extract_document_fields_deterministic(data, r.get("filename") or path.name, allow_llm_fallback=False,
+                                               expected_type=section_type)
+    ex["readability"] = "READABLE"
+    if ex.get("document_type") not in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"):
+        ex["document_type"] = section_type
+    why = REASON_TEXT.get(r.get("reason"), r.get("reason") or "refused")
+    ex["type_review"] = " ".join(x for x in (
+        f"Taken by {me.name} from a refused upload ({why}): check the type, the dates and the validity on the "
+        "document (set them below), then Accept, or Reject.", ex.get("type_review")) if x)[:480]
+    out = store_extracted_document(db, c, data, r.get("filename") or path.name, detect_mime(data), ex,
+                                   channel=(e.source or "CSP_UPLOAD_PORTAL"))
+    doc = out.document
+    if out.decision == "DUPLICATE" and doc is not None:
+        # The same file is on record already (e.g. rejected earlier): back to a person.
+        doc.status = DocumentStatus.NEEDS_REVIEW
+        if not db.query(ManualReviewQueue).filter(ManualReviewQueue.document_id == doc.id,
+                                                  ManualReviewQueue.status == ReviewStatus.PENDING).first():
+            db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=ex["type_review"]))
+    if doc is None:
+        raise HTTPException(422, f"Could not save the file ({out.reason or out.decision}).")
+    r["taken_document_id"] = doc.id
+    flag_modified(e, "payload")
+    refresh_category(db, c)
+    db.commit()
+    return {"document_id": doc.id, "already": False}
 
 
 # ------------------------------------------------------ messaging analytics

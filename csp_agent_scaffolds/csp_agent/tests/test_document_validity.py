@@ -51,13 +51,14 @@ def test_pvr_expiry_date_computation():
 
 
 
-def test_police_clearance_certificate_without_validity_is_lifetime():
+def test_police_clearance_certificate_without_validity_is_one_year():
+    """Since 2026-10-26 a PCC that states no validity is valid 1 year (was: no expiry)."""
     from datetime import date
     from app.ai.extraction.rules.pvr import extract_pvr
     pcc = ("POLICE CLEARANCE CERTIFICATE  PCC No. 4521/2023  Date: 14/03/2023  This is to certify that "
            "Sh. Ram Pal s/o Sh. Mohan Lal has no criminal record in this police station.")
     r = extract_pvr(pcc, date(2026, 9, 29))
-    assert r["issue_date"] == date(2023, 3, 14) and r["validity_source"] == "PVR_PCC_LIFETIME"
+    assert r["issue_date"] == date(2023, 3, 14) and r["validity_source"] == "PVR_DEFAULT_1_YEAR" and r["validity_months"] == 12
 
 
 def test_pvr_with_stated_validity_keeps_it_even_if_it_says_pcc():
