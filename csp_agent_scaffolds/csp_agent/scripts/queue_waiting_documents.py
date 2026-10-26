@@ -1,8 +1,10 @@
 """
-Documents shown as "being checked" (status NEEDS_REVIEW or NEEDS_APPROVAL,
-the copy that counts for the CSP) but with no item waiting in the Review
-queue: nobody could check them, and the CSP got no reminder for them. This
-adds the missing Review queue items. Dry run first:
+Documents waiting for a person (status NEEDS_REVIEW or NEEDS_APPROVAL) but
+with no item in the Review queue, so nobody could check them:
+  - the copy that counts for the CSP ("being checked"), and
+  - uploads that don't count yet, when the CSP has no valid copy of that
+    document (if a valid copy came since, they are only listed).
+This adds the missing Review queue items. Dry run first:
 
     .venv/bin/python -m scripts.queue_waiting_documents
     .venv/bin/python -m scripts.queue_waiting_documents --apply
@@ -22,11 +24,27 @@ def main():
     db = SessionLocal()
     try:
         waiting = {i for (i,) in db.query(ManualReviewQueue.document_id).filter(ManualReviewQueue.status == ReviewStatus.PENDING)}
+        from app.compliance import canonical_type, evaluate
         rows = (db.query(Document, CSP).join(CSP, CSP.id == Document.csp_id)
-                .filter(Document.is_current.is_(True), CSP.is_active_in_calling_sheet.is_(True),
+                .filter(CSP.is_active_in_calling_sheet.is_(True),
                         Document.status.in_([DocumentStatus.NEEDS_REVIEW, DocumentStatus.NEEDS_APPROVAL]))
-                .order_by(CSP.current_code).all())
-        missing = [(d, c) for d, c in rows if d.id not in waiting]
+                .order_by(CSP.current_code, Document.uploaded_at).all())
+        missing, replaced, states = [], [], {}
+        for d, c in rows:
+            if d.id in waiting:
+                continue
+            t = canonical_type(d.document_type)
+            if not d.is_current and t in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"):
+                st = states.setdefault(c.id, evaluate(db, c)).docs[t]
+                if st.status == "VALID" and not st.in_review:
+                    replaced.append((d, c))          # a valid copy counts now: nothing to decide
+                    continue
+            missing.append((d, c))
+        if replaced:
+            print(f"Already replaced by a valid copy (only listed, nothing to do): {len(replaced)}")
+            for d, c in replaced:
+                print(f"  {c.current_code}  {c.name[:26]:26}  {d.document_type:20}  uploaded {d.uploaded_at:%d-%m-%Y}")
+            print("To add to the Review queue:")
         for d, c in missing:
             print(f"  {c.current_code}  {c.name[:26]:26}  {d.document_type:20}  {d.status.value:15} issued {d.issue_date} "
                   f"expires {d.expiry_date}  rule {d.validity_rule_used}  via {d.upload_channel}")

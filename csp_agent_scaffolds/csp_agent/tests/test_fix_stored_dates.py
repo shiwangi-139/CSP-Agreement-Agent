@@ -158,3 +158,28 @@ def test_being_checked_documents_missing_from_the_queue_are_added(db_session, tm
     assert db.query(ManualReviewQueue).filter_by(document_id=doc.id, status=ReviewStatus.PENDING).count() == 1
     s.main()                                                               # second run adds nothing
     assert db.query(ManualReviewQueue).filter_by(document_id=doc.id).count() == 1
+
+
+def test_waiting_uploads_that_dont_count_yet_are_queued_unless_replaced(db_session, tmp_path, monkeypatch, capsys):
+    from app.models import ReviewStatus
+    import scripts.queue_waiting_documents as s
+    db = db_session
+    c, waiting = _doc(db, tmp_path, ["x"], status=DocumentStatus.NEEDS_REVIEW, issue_date=date(2026, 5, 1),
+                      expiry_date=date(2027, 5, 1), validity_rule_used="AGREEMENT_DEFAULT_1_YEAR")
+    waiting.is_current = False                                          # e.g. "check the CSP's name": doesn't count
+    db.commit()
+    monkeypatch.setattr(s, "SessionLocal", sessionmaker(bind=db.get_bind()))
+    monkeypatch.setattr(sys, "argv", ["x", "--apply"])
+    s.main()
+    assert db.query(ManualReviewQueue).filter_by(document_id=waiting.id, status=ReviewStatus.PENDING).count() == 1
+    # Another CSP: the waiting upload was replaced by a valid copy since -> only listed.
+    c2, old = _doc(db, tmp_path, ["x"], status=DocumentStatus.NEEDS_REVIEW, issue_date=date(2026, 1, 1),
+                   expiry_date=date(2027, 1, 1))
+    old.is_current = False
+    db.add(Document(csp_id=c2.id, document_type="AGREEMENT", status=DocumentStatus.VALID, is_current=True,
+                    readability="READABLE", issue_date=date(2026, 6, 1), expiry_date=date(2029, 6, 1),
+                    sha256=uuid.uuid4().hex))
+    db.commit()
+    s.main()
+    assert "Already replaced by a valid copy" in capsys.readouterr().out
+    assert db.query(ManualReviewQueue).filter_by(document_id=old.id).count() == 0
