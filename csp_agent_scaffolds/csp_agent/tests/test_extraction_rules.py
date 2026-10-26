@@ -633,3 +633,21 @@ def test_proceeding_is_not_an_end_date():
     r = extract_agreement('CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 16/01/2025 ("Effective Date"), X\n'
                           "any proceeding on 15/01/2027 under this clause\n", date(2026, 10, 25))
     assert r["explicit_expiry"] is None
+
+
+@pytest.mark.parametrize("text", [
+    "झारखंड पुलिस गिरिडीह\nसेवा निवेदन रसीद\nअनुरोध का प्रकार चरित्र प्रमाण पत्र का अनुरोध\nअनुरोध संख्या 341102611739\n"
+    "आवेदक का नाम JAYNARAYN PRASAD YADAV\nआवेदन स्थिति Registered\nआवेदन करने की तिथि 07/10/2026\n",
+    "झारखंड पुलिस\nचरित्र प्रमाण पत्र का अनुरोध\n341102611739\nJAYNARAYN PRASAD YADAV\nRegistered\n07/10/2026\n",
+])
+def test_jharkhand_service_request_receipt_is_not_a_certificate(text):
+    """Jaynarayn Prasad Yadav 1A850583: the Jharkhand Police 'सेवा निवेदन रसीद' (application receipt)."""
+    from app.ocr_service import classify_allowlist_gate
+    assert classify_allowlist_gate(text, "pvr.jpg", "POLICE_VERIFICATION")[1] == "PVR_APPLICATION_ONLY"
+
+
+def test_an_issued_certificate_is_still_a_certificate():
+    from app.ocr_service import classify_allowlist_gate
+    t = ("CHARACTER CERTIFICATE\nThis is to certify that Mr. X ... no adverse entry was found against the said candidate "
+         "in the police records. This certificate is valid only for one year.\nRegistered office: Giridih\n")
+    assert classify_allowlist_gate(t, "pvr.pdf", "POLICE_VERIFICATION")[1] == "POLICE_VERIFICATION"

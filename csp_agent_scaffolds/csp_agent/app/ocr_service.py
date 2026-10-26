@@ -240,6 +240,10 @@ PVR_APPLICATION = [
     r"status\s*:?\s*under\b",
     # Bihar RTPS "आवेदन का विवरण ... सेवा प्रदान करने की प्रस्तावित तिथि"
     r"आवेदन\s*का\s*विवरण", r"प्रस्तावित\s*तिथि",
+    # Jharkhand Police "सेवा निवेदन रसीद": अनुरोध का प्रकार - चरित्र प्रमाण पत्र का अनुरोध,
+    # अनुरोध संख्या, आवेदन स्थिति Registered (Jaynarayn Prasad Yadav 1A850583)
+    r"सेवा\s*निवेदन", r"निवेदन\s*रसीद", r"अनुरोध\s*(?:का\s*प्रकार|संख्या)", r"प्रमाण\s*पत्र\s*का\s*अनुरोध",
+    r"रसीद", r"(?:status|स्थिति)\s*:?\s*registered\b", r"(?m)^\s*registered\s*$",
 ]
 # Forms that are not a police verification at all (but mention one).
 NOT_A_PVR = [
