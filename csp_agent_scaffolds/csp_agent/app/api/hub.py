@@ -3,6 +3,7 @@ app/api/hub.py
 Data for the dashboard (app/web/dashboard.html). All routes need X-API-Key.
 """
 import io
+from collections import Counter
 import logging
 import threading
 import zipfile
@@ -915,6 +916,118 @@ def monitor(tab: str, days: int = 0, db: Session = Depends(get_db)):
     if fn is None:
         raise HTTPException(404, "unknown tab")
     return fn(db, days=min(max(days, 1), 90)) if days and "days" in fn.__code__.co_varnames else fn(db)
+
+
+# ------------------------------------------------- Today, journey, Agent Coach
+def _scope(me: Principal):
+    """None for an admin (everything); an RM's own CSPs otherwise."""
+    return None if me.is_admin else _rm_filter(me)
+
+
+@router.get("/today")
+def today_page(me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """The 9 AM page: the goal, four numbers, and who needs a person today (app/insights.py)."""
+    from .. import insights
+    return insights.today(db, _scope(me))
+
+
+@router.get("/journey")
+def journey_page(days: int = 14, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from .. import insights
+    return insights.journey(db, _scope(me), min(max(days, 1), 90))
+
+
+@router.get("/coach", dependencies=[Depends(require_admin)])
+def coach_page(db: Session = Depends(get_db)):
+    """What the agent should improve, most urgent first (app/insights.py)."""
+    from .. import insights
+    return {"findings": insights.coach(db), "questions": insights.QUESTIONS}
+
+
+@router.post("/coach/ask")
+def coach_ask(question: str = Body("", embed=True), me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from .. import insights
+    return insights.ask(db, question[:300], _scope(me))
+
+
+@router.get("/search")
+def search_csps(q: str = "", me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """The search box on every page: KO code, name or phone, best matches first."""
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"rows": []}
+    like = f"%{q}%"
+    rows = (_mine(db.query(CSP), me).filter(CSP.is_active_in_calling_sheet.is_(True))
+            .filter(or_(CSP.current_code.ilike(like), CSP.lookup_code.ilike(like), CSP.name.ilike(like),
+                        CSP.phone.ilike(like), CSP.preferred_phone.ilike(like)))
+            .order_by(CSP.current_code).limit(12).all())
+    return {"rows": [{"id": c.id, "code": c.current_code, "name": c.name, "category": c.category,
+                      "sub_slab": c.sub_slab, "phone": c.phone} for c in rows]}
+
+
+@router.post("/csp/{csp_id}/send-reminder")
+def send_reminder_now(csp_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """One WhatsApp to the CSP now, with their upload link: what they must
+    upload, or the renewal of a document ending soon. Same checks as every
+    message (number on record, Inactive, daily limit)."""
+    import uuid
+    from ..portal_tokens import issue_upload_link
+    from ..renewal_engine import _ctx, _upload_template
+    c = _own_csp(db, csp_id, me)
+    st = evaluate(db, c)
+    if st.needs_upload:
+        tpl, types = _upload_template(st), st.needs_upload
+        if tpl == "ONBOARD_ALL":
+            tpl = "UPLOAD_MISSING"               # the onboard layout may still wait for Meta
+        extra = {}
+    else:
+        ending = sorted((s for s in st.docs.values() if s.status == "VALID" and s.days_left is not None
+                         and s.days_left <= 60), key=lambda s: s.days_left)
+        if not ending:
+            raise HTTPException(422, "Nothing to remind: all documents are valid for more than 60 days, or being checked.")
+        s0 = ending[0]
+        tpl, types = "RENEWAL_FOLLOWUP", [s0.document_type]
+        extra = {"doc_label_en": DOC_LABELS[s0.document_type][0], "doc_label_hi": DOC_LABELS[s0.document_type][1],
+                 "expiry": s0.expiry_date.strftime("%d-%m-%Y"), "days_left": s0.days_left}
+    link = issue_upload_link(db, c, types)
+    [m] = outbound.draft(db, csp=c, role="CSP", template_key=tpl, ctx=_ctx(db, c, st, link, **extra),
+                         key_base=f"MANUAL:{c.id}:{uuid.uuid4().hex[:8]}", channels=("WHATSAPP",),
+                         document_type=",".join(types), stage="MANUAL")
+    if m.status != OutboundStatus.BLOCKED:
+        try:
+            outbound.approve(db, m, f"{me.name} (Today: send reminder)")
+        except ValueError as e:
+            db.rollback()
+            raise HTTPException(422, str(e))
+        outbound.send(db, m)
+    db.commit()
+    return {"status": m.status.value, "template": m.template_name, "to": m.destination, "error": m.error_log}
+
+
+@router.get("/activity", dependencies=[Depends(require_admin)])
+def activity(user_id: Optional[int] = None, days: int = 7, db: Session = Depends(get_db)):
+    """Who did what on the dashboard, and what CSPs did on their links, newest first."""
+    from ..audit import label
+    from ..models import UserAction
+    since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=min(max(days, 1), 90))
+    q = db.query(UserAction).filter(UserAction.at >= since)
+    if user_id:
+        q = q.filter(UserAction.user_id == user_id)
+    acts = q.order_by(UserAction.at.desc()).limit(400).all()
+    names = {c.id: (c.current_code, c.name) for c in db.query(CSP).filter(CSP.id.in_({a.csp_id for a in acts if a.csp_id} or {-1}))}
+    people = db.query(UserAction.user_id, UserAction.user_name, UserAction.role, func.count(UserAction.id),
+                      func.max(UserAction.at)).filter(UserAction.at >= since).group_by(
+        UserAction.user_id, UserAction.user_name, UserAction.role).all()
+    local_since = local_now() - timedelta(days=min(max(days, 1), 90))
+    csp_events = Counter(t for (t,) in db.query(AgreementEvent.event_type).filter(
+        AgreementEvent.sent_at >= local_since,
+        AgreementEvent.event_type.in_(["LINK_OPENED", "DC_LINK_VIEW", "PORTAL_UPLOAD", "LINK_REQUEST"])))
+    return {"people": [{"id": u, "name": n, "role": r, "actions": k, "last": _iso(t)} for u, n, r, k, t in people],
+            "csp_events": dict(csp_events),
+            "rows": [{"at": _iso(a.at), "who": a.user_name, "role": a.role, "what": label(a.method, a.path),
+                      "ok": (a.status_code or 0) < 400,
+                      "csp": ({"id": a.csp_id, "code": names[a.csp_id][0], "name": names[a.csp_id][1]}
+                              if a.csp_id in names else None)} for a in acts]}
 
 
 @router.get("/master-link", dependencies=[Depends(require_admin)])

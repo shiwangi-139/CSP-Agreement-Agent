@@ -45,7 +45,7 @@ from sqlalchemy.orm import Session
 
 from ..ai.extraction.deterministic_extractor import extract_document_fields_deterministic
 from ..compliance import DOC_LABELS, evaluate, refresh_category, slab_label, sub_slab_label
-from ..config import FEATURE_MESSAGING_ANALYTICS, MAX_UPLOAD_SIZE_BYTES, local_now
+from ..config import MAX_UPLOAD_SIZE_BYTES, local_now
 from ..db import SessionLocal, get_db
 from ..document_service import store_extracted_document
 from ..models import (AgreementEvent, ContactChangeRequest, CSP, CspQuestion, Document, DocumentStatus, InternalUser,
@@ -297,16 +297,15 @@ def _get_link_page(notice: str = "", result: str = "") -> HTMLResponse:
                         .replace("__RESULT__", card("done", result) if result else ""))
 
 
-def _record_link_open(db: Session, csp_id: int) -> None:
-    """For the messaging analytics: the CSP opened their link (at most one
-    record per CSP per hour, so reloading the page isn't counted again)."""
-    if not FEATURE_MESSAGING_ANALYTICS:                    # parked feature: record nothing
-        return
+def _record_link_open(db: Session, csp_id: int, kind: str = "LINK_OPENED", source: str = "CSP_UPLOAD_PORTAL") -> None:
+    """The CSP opened their link (LINK_OPENED), or a DC opened this CSP on the
+    master link (DC_LINK_VIEW): for the CSP journey on the dashboard (Today,
+    Agent Coach). At most one record per CSP per hour, so reloads don't count."""
     since = local_now() - timedelta(hours=1)               # sent_at is in local time (database clock)
-    if db.query(AgreementEvent.id).filter(AgreementEvent.csp_id == csp_id, AgreementEvent.event_type == "LINK_OPENED",
+    if db.query(AgreementEvent.id).filter(AgreementEvent.csp_id == csp_id, AgreementEvent.event_type == kind,
                                           AgreementEvent.sent_at >= since).first():
         return
-    db.add(AgreementEvent(csp_id=csp_id, event_type="LINK_OPENED", source="CSP_UPLOAD_PORTAL", channel="WEB"))
+    db.add(AgreementEvent(csp_id=csp_id, event_type=kind, source=source, channel="WEB"))
     db.commit()
 
 
@@ -449,6 +448,7 @@ def request_link(request: Request, background: BackgroundTasks, code: str = Form
         csp = master_link.find(db, code)
         if csp is None:
             return JSONResponse({"ok": False, "message": _msg("dc_unknown_csp")}, status_code=404)
+        _record_link_open(db, csp.id, "DC_LINK_VIEW", master_link.CHANNEL)
         return JSONResponse({"ok": True, "context": _dc_context(db, csp)})
     if action == "question":
         # Only Nginx's public routes reach the app, so questions share this one.

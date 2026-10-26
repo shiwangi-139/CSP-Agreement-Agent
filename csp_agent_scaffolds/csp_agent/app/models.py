@@ -513,3 +513,19 @@ class DcSheetKey(Base):
     created_by = Column(String)
     created_at = Column(DateTime, nullable=False)
     revoked_at = Column(DateTime)
+
+
+class UserAction(Base):
+    """Every request a signed-in person makes to the dashboard API (except the
+    sidebar's own refresh): who, what, when, and the CSP if the address names
+    one. Read on the dashboard's Activity page (admins only)."""
+    __tablename__ = "user_actions"
+    id = Column(Integer, primary_key=True)
+    at = Column(DateTime, nullable=False, index=True)          # UTC
+    user_id = Column(Integer, index=True)
+    user_name = Column(String)
+    role = Column(String)
+    method = Column(String)
+    path = Column(String)
+    status_code = Column(Integer)
+    csp_id = Column(Integer, index=True)

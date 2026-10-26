@@ -71,3 +71,10 @@ def _campaign_off(monkeypatch):
     from app import policy
     for name in ("CAMPAIGN_FROM", "ESCALATE_FROM", "ESCALATE_DC_FROM", "CAMPAIGN_UNTIL"):
         monkeypatch.setattr(policy, name, date(2000, 1, 1))
+
+
+@pytest.fixture(autouse=True)
+def _audit_to_test_db(test_engine, monkeypatch):
+    """The dashboard action log (app/audit.py) writes to the test database."""
+    from app import audit
+    monkeypatch.setattr(audit, "SESSION", sessionmaker(bind=test_engine))

@@ -32,6 +32,17 @@ warn_if_open()
 
 admin = [Depends(require_admin)]
 
+
+@app.middleware("http")
+async def record_dashboard_actions(request, call_next):
+    """Who opened or did what on the dashboard (app/audit.py)."""
+    response = await call_next(request)
+    if request.url.path.startswith("/api/hub/"):
+        from starlette.concurrency import run_in_threadpool
+        from .audit import record
+        await run_in_threadpool(record, request, response.status_code)
+    return response
+
 # Public: the CSP upload portal (token-protected) and health checks.
 app.include_router(portal.router, tags=["portal"])
 # The WhatsApp agent's own API (X-Agent-Key).

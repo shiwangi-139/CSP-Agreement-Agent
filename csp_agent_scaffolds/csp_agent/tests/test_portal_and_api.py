@@ -2,7 +2,7 @@
 Documents are generated on the fly; no real CSP files are used."""
 import io
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -175,7 +175,8 @@ def _approved_whatsapp(Session, cid, link="https://x/upload?token=abc"):
     s = Session()
     m = OutboundMessage(csp_id=cid, template_name="UPLOAD_MISSING", channel="WHATSAPP", destination="9876500000",
                         payload_json={"subject": "", "body": "hello", "link": link}, status=OutboundStatus.APPROVED,
-                        idempotency_key=uuid.uuid4().hex, recipient_role="CSP", attempts=0)
+                        idempotency_key=uuid.uuid4().hex, recipient_role="CSP", attempts=0,
+                        created_at=datetime(2000, 1, 1))        # first in line, whatever else waits in the test DB
     s.add(m)
     s.commit()
     mid = m.id

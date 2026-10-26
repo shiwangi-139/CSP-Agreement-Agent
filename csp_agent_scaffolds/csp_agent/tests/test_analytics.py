@@ -60,13 +60,17 @@ def test_sent_and_what_csps_did_afterwards(db_session):
     assert only_b["periods"]["last_7_days"]["csps_reached"] == 1
 
 
-def test_parked_by_default_page_is_off_and_nothing_is_recorded(monkeypatch):
+def test_link_opens_are_recorded_once_an_hour(db_session):
+    """Since 2026-10-26 link opens are always recorded (the Today page and the
+    Agent Coach use them), whether or not the analytics page is switched on."""
     from app.api import portal
-    monkeypatch.setattr(portal, "FEATURE_MESSAGING_ANALYTICS", False)
-    calls = []
-
-    class DB:                                    # any query would mean a record was attempted
-        def query(self, *a):
-            calls.append(a)
-    portal._record_link_open(DB(), 1)
-    assert calls == []
+    from app.models import AgreementEvent, CSP
+    db = db_session
+    c = CSP(name="Opener", current_code="6L000001", lookup_code="6L000001", is_active_in_calling_sheet=True)
+    db.add(c)
+    db.flush()
+    portal._record_link_open(db, c.id)
+    portal._record_link_open(db, c.id)                          # a reload within the hour: not counted again
+    portal._record_link_open(db, c.id, "DC_LINK_VIEW", "DC_MASTER_LINK")
+    kinds = sorted(k for (k,) in db.query(AgreementEvent.event_type).filter(AgreementEvent.csp_id == c.id))
+    assert kinds == ["DC_LINK_VIEW", "LINK_OPENED"]
