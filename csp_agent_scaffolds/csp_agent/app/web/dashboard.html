@@ -6,7 +6,7 @@
 <title>Eko CSP Renewals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
-<link rel="stylesheet" href="static/eko.css?v=6">
+<link rel="stylesheet" href="static/eko.css?v=5">
 </head>
 <body>
 <div id="login" class="login card" style="display:none">
@@ -26,35 +26,25 @@
       onerror="this.replaceWith(Object.assign(document.createElement('span'), {className: 'logo-text', innerHTML: 'eko<span>.</span>'}))">
       CSP Renewals</div>
     <div class="sub">SBI Kiosk Banking · document compliance</div>
-    <div class="navgroup">Work</div>
-    <button data-view="today" class="active"><span><i aria-hidden="true">🏠</i>Today</span> <span class="count" id="n-today"></span></button>
-    <button data-view="find"><span><i aria-hidden="true">🔍</i>Find CSPs</span></button>
-    <button data-view="categories"><span><i aria-hidden="true">🏷️</i>Labels</span> <span class="count" id="n-cat"></span></button>
-    <button data-view="overview"><span><i aria-hidden="true">📊</i>Overview</span></button>
-    <div class="navgroup">Documents</div>
-    <button data-view="review"><span><i aria-hidden="true">🗂️</i>Review queue</span> <span class="count" id="n-review"></span></button>
-    <button data-view="formuploads"><span><i aria-hidden="true">📥</i>Form uploads</span> <span class="count" id="n-form"></span></button>
-    <button data-view="documents"><span><i aria-hidden="true">📄</i>Latest documents</span></button>
-    <div class="navgroup">Messages</div>
-    <button data-view="comms"><span><i aria-hidden="true">💬</i>Communication Hub</span> <span class="count" id="n-drafts"></span></button>
-    <button data-view="questions"><span><i aria-hidden="true">❓</i>CSP questions</span> <span class="count" id="n-questions"></span></button>
-    <button data-view="analytics" id="nav-analytics" style="display:none"><span><i aria-hidden="true">📈</i>Messaging analytics</span></button>
-    <div class="navgroup admin-only">Admin</div>
-    <button data-view="activity" class="admin-only"><span><i aria-hidden="true">🕒</i>Activity</span></button>
-    <button data-view="monitoring"><span><i aria-hidden="true">🩺</i>Monitoring</span></button>
-    <button data-view="accuracy"><span><i aria-hidden="true">🎯</i>Accuracy</span></button>
-    <button data-view="contacts"><span><i aria-hidden="true">📇</i>Contacts &amp; gaps</span></button>
-    <button data-view="ingestion"><span><i aria-hidden="true">✉️</i>Gmail ingestion</span></button>
+    <button data-view="overview" class="active">Overview</button>
+    <button data-view="categories">Labels <span class="count" id="n-cat"></span></button>
+    <button data-view="documents">Latest documents</button>
+    <button data-view="comms">Communication Hub <span class="count" id="n-drafts"></span></button>
+    <button data-view="contacts">Contacts &amp; gaps</button>
+    <button data-view="ingestion">Gmail ingestion</button>
+    <button data-view="review">Review queue <span class="count" id="n-review"></span></button>
+    <button data-view="analytics" id="nav-analytics" style="display:none">Messaging analytics</button>
+    <button data-view="find">Find CSPs</button>
+    <button data-view="formuploads">Form uploads <span class="count" id="n-form"></span></button>
+    <button data-view="questions">CSP questions <span class="count" id="n-questions"></span></button>
+    <button data-view="accuracy">Accuracy</button>
+    <button data-view="monitoring">Monitoring</button>
     <div class="foot" id="modes"></div>
     <div class="foot" id="whoami"></div>
   </nav>
   <main>
     <div class="topbar">
-      <h1 id="title">Today</h1>
-      <div class="gsearch" role="search">
-        <input type="search" id="gsearch" placeholder="Search a CSP: KO code, name or phone…" autocomplete="off" aria-label="Search a CSP">
-        <div id="gresults" class="gresults" role="listbox"></div>
-      </div>
+      <h1 id="title">Overview</h1>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <span class="pill warn" id="modepill"></span>
         <button class="btn" id="theme" title="Toggle light / dark">◐</button>
@@ -68,8 +58,6 @@
 <div class="backdrop" id="backdrop"></div>
 <aside class="drawer" id="drawer"></aside>
 <div class="toast" id="toast"></div>
-<button class="coachbtn admin-only" id="coachbtn" aria-controls="coach" aria-expanded="false">🤖 Agent Coach <span class="count" id="n-coach"></span></button>
-<aside class="coach" id="coach" aria-label="Agent Coach"></aside>
 
 <script>
 (() => {
@@ -98,7 +86,7 @@
     ["Everything valid", {agr: "VALID", pvr: "VALID", iibf: "VALID"}],
   ];
   const findQuery = (f) => ["agr", "pvr", "iibf", "slab", "rm", "form"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&");
-  const state = {view: "today", find: {}, cat: 1, q: "", expiredOnly: false, page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
+  const state = {view: "overview", find: {}, cat: 1, q: "", expiredOnly: false, page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
 
   // ---------------------------------------------------------------- api
   // Paths are relative (no leading "/"): the page is served at "/" on the
@@ -376,113 +364,7 @@
   };
 
   // ------------------------------------------------------------- views
-  // Small helpers for the Today page.
-  const pctOf = (n, d) => d ? Math.round(100 * n / d) : 0;
-  const ACT = (a, it) => {
-    const cls = `btn${a.primary ? " primary" : ""}`;
-    const id = it.csp ? it.csp.id : "";
-    if (a.do === "csp") return `<button class="${cls}" data-csp="${id}">${esc(a.label)}</button>`;
-    if (a.do === "view") return `<button class="${cls}" data-go="${esc(a.arg)}">${esc(a.label)}</button>`;
-    if (a.do === "take") return `<button class="${cls}" data-takefile="${esc(a.arg)}">${esc(a.label)}</button>`;
-    if (a.do === "kept") return `<button class="${cls}" data-keptfile="${esc(a.arg)}">${esc(a.label)}</button>`;
-    if (a.do === "remind") return `<button class="${cls}" data-remind="${id}">${esc(a.label)}</button>`;
-    if (a.do === "run") return `<button class="${cls}" data-run="${esc(a.arg)}">${esc(a.label)}</button>`;
-    return "";
-  };
-  const KIND = {refused: "Refused upload", stuck: "Keeps trying", question: "Question", expiring: "Ends soon",
-                opened_no_upload: "Opened, no upload", failed: "WhatsApp failed", review: "Review queue"};
-  function sparkline(trend) {
-    if (trend.length < 2) return `<div class="small muted">The daily trend appears after two days of snapshots.</div>`;
-    const W = 320, H = 64, xs = (i) => 6 + i * (W - 12) / (trend.length - 1);
-    const lo = Math.min(...trend.map((t) => t.pct)), hi = Math.max(...trend.map((t) => t.pct), lo + 1);
-    const ys = (v) => H - 8 - (v - lo) * (H - 16) / (hi - lo);
-    const pts = trend.map((t, i) => `${xs(i).toFixed(1)},${ys(t.pct).toFixed(1)}`).join(" ");
-    return `<svg class="spark" viewBox="0 0 ${W} ${H}" role="img" aria-label="Fully compliant % per day">
-      <polyline points="${pts}" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-      ${trend.map((t, i) => `<circle cx="${xs(i).toFixed(1)}" cy="${ys(t.pct).toFixed(1)}" r="${i === trend.length - 1 ? 4 : 2.5}" fill="var(--primary)"><title>${fmt(t.day)}: ${t.pct}% (${t.done} of ${t.total})</title></circle>`).join("")}
-      <rect x="0" y="0" width="${W}" height="${H}" fill="transparent"/></svg>
-      <div class="small muted spark-axis"><span>${fmt(trend[0].day)}</span><span>${fmt(trend[trend.length - 1].day)}</span></div>`;
-  }
-
   const views = {
-    async today() {
-      const isAdmin = state.summary.me.role === "ADMIN";
-      const [d, j] = await Promise.all([api("/api/hub/today"), api("/api/hub/journey?days=14")]);
-      const g = d.goal, t = d.tiles;
-      $("#n-today").textContent = d.attention_total || "";
-      const hour = new Date().getHours();
-      const hello = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
-      const first = (state.summary.me.name || "").split(/[ @.]/)[0];
-      const top = j.steps[0].n;
-      const items = d.attention.map((it) => `<li class="att p${it.priority}">
-          <span class="att-chip">${it.priority === 1 ? "● Urgent" : "● Today"} · ${esc(KIND[it.kind] || it.kind)}</span>
-          <div class="att-body">${it.csp ? `<a href="#" data-csp="${it.csp.id}"><b class="mono">${esc(it.csp.code)}</b> ${esc(it.csp.name)}</a>` : ""}
-            <div class="att-why">${esc(it.why)}</div></div>
-          <div class="att-acts">${it.actions.map((a) => ACT(a, it)).join("")}</div></li>`).join("");
-      return `
-      <div class="hello">${hello}${first ? ", " + esc(first) : ""}. ${d.attention_total ? `<b>${d.attention_total}</b> thing${d.attention_total > 1 ? "s" : ""} need you today, the most urgent first.` : "Nothing needs you right now. ✓"}</div>
-      <div class="grid today-top">
-        <div class="card goal">
-          <div class="goal-head"><h2>Goal: every working CSP with all 3 documents valid</h2></div>
-          <div class="goal-n"><span class="big">${g.pct}%</span> <span class="muted">${g.done} of ${g.total} CSPs · ${g.left} to go</span></div>
-          <div class="bar" role="progressbar" aria-valuenow="${g.pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${Math.min(100, g.pct)}%"></span></div>
-          <div class="small" style="margin:8px 0 4px">${g.pace_per_day == null ? "Pace appears after a few days of snapshots."
-            : g.pace_per_day > 0 ? `<b>+${g.pace_per_day}</b> CSPs completed a day this week${g.eta ? ` → all done by <b>${fmt(g.eta)}</b> at this pace` : ""}.`
-            : "<b>No progress this week.</b> See the Agent Coach for why."}</div>
-          ${sparkline(g.trend)}
-        </div>
-        <div class="grid k2 tiles">
-          <div class="card tile" data-go="documents" role="button"><div class="label">Documents accepted today</div><div class="n">${t.accepted_today}</div></div>
-          <div class="card tile ${t.review_waiting ? "warn" : ""}" data-go="review" role="button"><div class="label">Waiting in the Review queue</div><div class="n">${t.review_waiting}</div></div>
-          <div class="card tile" data-go="comms" role="button"><div class="label">WhatsApp sent today</div><div class="n">${t.whatsapp_sent_today}</div></div>
-          <div class="card tile ${t.whatsapp_failed_today ? "bad" : ""}" data-go="comms" role="button"><div class="label">CSPs whose WhatsApp failed today</div><div class="n">${t.whatsapp_failed_today}</div></div>
-        </div>
-      </div>
-      <div class="card" style="margin-top:14px">
-        <div class="meta"><h2 style="margin:0">Needs attention today</h2><span class="small muted">who, why, and the one thing to do · ${d.attention_total} in all${d.attention_total > d.attention.length ? `, first ${d.attention.length} shown` : ""}</span></div>
-        ${items ? `<ul class="attlist">${items}</ul>` : `<div class="empty">Nothing needs a person right now. ✓</div>`}
-      </div>
-      <div class="grid k2" style="margin-top:14px">
-        <div class="card">
-          <h2>The CSP journey · last ${j.days} days</h2>
-          <p class="small muted" style="margin-top:-4px">Of the CSPs who got a reminder: what they did next.${j.link_tracking_since ? "" : " Link opens are recorded from today."}</p>
-          ${j.steps.map((st) => `<div class="fstep" title="${esc(st.step)}: ${st.n} (${pctOf(st.n, top)}%)">
-              <div class="fl"><span>${esc(st.step)}</span><b>${st.n}</b></div>
-              <div class="fbar"><span style="width:${pctOf(st.n, top)}%"></span></div><div class="small muted">${pctOf(st.n, top)}%</div></div>`).join("")}
-        </div>
-        <div class="card">
-          <h2>Reminders before CSPs uploaded</h2>
-          <p class="small muted" style="margin-top:-4px">CSPs who uploaded in the last ${j.days} days, by how many reminders they had got first.${j.median_hours_last_reminder_to_upload != null ? ` Typically <b>${j.median_hours_last_reminder_to_upload} h</b> from the last reminder to the upload.` : ""}</p>
-          ${(() => { const mx = Math.max(1, ...j.reminders_before_upload.map((b) => b.n));
-            return `<div class="hist">${j.reminders_before_upload.map((b) => `<div class="hcol" title="${esc(b.label)}: ${b.n} CSPs">
-              <div class="hval">${b.n || ""}</div><div class="hbar" style="height:${Math.round(100 * b.n / mx)}%"></div><div class="hlab">${esc(b.label.replace(" (by themselves)", ""))}</div></div>`).join("")}</div>
-              <div class="small muted">0 = uploaded without any reminder.</div>`; })()}
-        </div>
-      </div>
-      ${isAdmin ? `<p class="small muted" style="margin-top:12px">Open the <b>🤖 Agent Coach</b> (bottom right) for what the agent itself should improve.</p>` : ""}`;
-    },
-
-    async activity() {
-      const d = await api(`/api/hub/activity?days=${state.actDays || 7}${state.actUser ? "&user_id=" + state.actUser : ""}`);
-      const ev = d.csp_events || {};
-      return `<p class="small muted">What people did on the dashboard, and what CSPs and DCs did on their links. Newest first.</p>
-      <div class="tabs">${[[1, "Today"], [7, "7 days"], [30, "30 days"]].map(([v, l]) => `<button class="${(state.actDays || 7) === v ? "active" : ""}" data-actdays="${v}">${l}</button>`).join("")}</div>
-      <div class="grid k4" style="margin-bottom:14px">
-        <div class="card tile"><div class="label">CSP link opens</div><div class="n">${ev.LINK_OPENED || 0}</div></div>
-        <div class="card tile"><div class="label">Upload page submissions</div><div class="n">${ev.PORTAL_UPLOAD || 0}</div></div>
-        <div class="card tile"><div class="label">DC master link: CSPs looked up</div><div class="n">${ev.DC_LINK_VIEW || 0}</div></div>
-        <div class="card tile"><div class="label">"Get my link" requests</div><div class="n">${ev.LINK_REQUEST || 0}</div></div>
-      </div>
-      <div class="card tablewrap" style="margin-bottom:14px"><h2>People</h2><table><thead><tr><th>Name</th><th>Role</th><th class="num">Actions</th><th>Last</th><th></th></tr></thead><tbody>
-        ${d.people.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.role)}</td><td class="num">${p.actions}</td><td class="small">${when(p.last)}</td>
-          <td><button class="btn" data-actuser="${state.actUser === p.id ? "" : p.id}">${state.actUser === p.id ? "Show everyone" : "Only this person"}</button></td></tr>`).join("") || `<tr><td colspan="5" class="empty">No one yet.</td></tr>`}
-      </tbody></table></div>
-      <div class="card tablewrap"><h2>Timeline</h2><table><thead><tr><th>When</th><th>Who</th><th>What</th><th>CSP</th></tr></thead><tbody>
-        ${d.rows.map((r) => `<tr><td class="small mono">${when(r.at)}</td><td>${esc(r.who)}</td><td>${r.ok ? "" : "⚠ "}${esc(r.what)}</td>
-          <td>${r.csp ? `<a href="#" data-csp="${r.csp.id}"><span class="mono">${esc(r.csp.code)}</span> ${esc(r.csp.name)}</a>` : ""}</td></tr>`).join("") || `<tr><td colspan="4" class="empty">Nothing yet.</td></tr>`}
-      </tbody></table></div>`;
-    },
-
     async overview() {
       const s = state.summary;
       const c = s.categories;
@@ -986,7 +868,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -1094,16 +976,6 @@
         return render();
       }
       if (ds.fdays !== undefined) { state.fdays = +ds.fdays; return render(); }
-      if (ds.remind) {
-        if (!confirm("Send this CSP a WhatsApp now, with their upload link?")) return;
-        t.disabled = true;
-        try { const r = await post(`/api/hub/csp/${ds.remind}/send-reminder`); toast(r.status === "SENT" ? `Sent to ${r.to}` : `${r.status.replaceAll("_", " ").toLowerCase()}${r.error ? ": " + r.error : ""}`); }
-        catch (err) { toast(err.message); }
-        return render();
-      }
-      if (ds.ask !== undefined) { return coachAsk(ds.ask); }
-      if (ds.actdays) { state.actDays = +ds.actdays; return render(); }
-      if (ds.actuser !== undefined) { state.actUser = ds.actuser ? +ds.actuser : null; return render(); }
       if (ds.takefile) {
         e.preventDefault();
         if (!confirm("Take this file for the CSP? It is saved as their document and waits in the Review queue, where you set the dates and accept it.")) return;
@@ -1162,56 +1034,8 @@
   });
   async function refreshAfterAction() { if ($("#drawer").classList.contains("open")) closeDrawer(); render(); }
 
-  // ------------------------------------------------- search on every page
-  let searchTimer = null;
-  $("#gsearch").addEventListener("input", (e) => {
-    clearTimeout(searchTimer);
-    const q = e.target.value.trim();
-    if (q.length < 2) { $("#gresults").classList.remove("open"); return; }
-    searchTimer = setTimeout(async () => {
-      const d = await api(`/api/hub/search?q=${encodeURIComponent(q)}`);
-      $("#gresults").innerHTML = d.rows.length ? d.rows.map((r) => `<button data-csp="${r.id}" role="option">
-          <span class="mono">${esc(r.code)}</span> ${esc(r.name)} <span class="small muted">${r.category ? "Label " + esc(r.sub_slab || r.category) : ""}</span></button>`).join("")
-        : `<div class="small muted" style="padding:8px 10px">No CSP matches “${esc(q)}”.</div>`;
-      $("#gresults").classList.add("open");
-    }, 250);
-  });
-  document.addEventListener("click", (e) => { if (!e.target.closest(".gsearch")) $("#gresults").classList.remove("open"); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#gresults").classList.remove("open"); });
-
-  // ------------------------------------------------------- Agent Coach
-  const LEVEL = {critical: ["🔴", "Fix now"], warn: ["🟠", "Should fix"], info: ["🔵", "Good to know"], good: ["🟢", "Going well"]};
-  const coachAct = (a) => !a ? "" : a.do === "run" ? `<button class="btn primary" data-run="${esc(a.arg)}">${esc(a.label)}</button>`
-    : `<button class="btn" data-go="${esc(a.arg)}">${esc(a.label)}</button>`;
-  async function openCoach() {
-    const c = $("#coach");
-    c.classList.add("open"); $("#coachbtn").setAttribute("aria-expanded", "true");
-    c.innerHTML = `<div class="coach-head"><b>🤖 Agent Coach</b><button class="btn" id="coachclose" aria-label="Close">✕</button></div><div class="coach-body"><div class="small muted">Reading the agent's numbers…</div></div>`;
-    $("#coachclose").onclick = closeCoach;
-    try {
-      const d = await api("/api/hub/coach");
-      $("#n-coach").textContent = d.findings.filter((f) => f.level === "critical" || f.level === "warn").length || "";
-      $(".coach-body", c).innerHTML = `<p class="small muted" style="margin-top:0">What the agent should improve, most urgent first. Worked out from the agent's own records, nothing guessed.</p>
-        ${d.findings.map((f) => `<div class="finding ${f.level}"><div class="fhead">${LEVEL[f.level][0]} <span class="small muted">${LEVEL[f.level][1]}</span></div>
-          <b>${esc(f.title)}</b><div class="small">${esc(f.detail)}</div>${f.action ? `<div style="margin-top:6px">${coachAct(f.action)}</div>` : ""}</div>`).join("") || `<div class="finding good">🟢 Nothing to improve right now.</div>`}
-        <div class="coach-chat" id="coachchat"></div>
-        <div class="chips">${d.questions.map((q) => `<button class="chip" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>
-        <form id="coachform" class="coach-ask"><input type="text" id="coachq" placeholder="Ask about the agent…" autocomplete="off"><button class="btn primary">Ask</button></form>`;
-      $("#coachform").onsubmit = (e) => { e.preventDefault(); const q = $("#coachq").value.trim(); if (q) coachAsk(q); $("#coachq").value = ""; };
-    } catch (err) { $(".coach-body", c).innerHTML = `<div class="empty">Couldn't load: ${esc(err.message)}</div>`; }
-  }
-  function closeCoach() { $("#coach").classList.remove("open"); $("#coachbtn").setAttribute("aria-expanded", "false"); }
-  async function coachAsk(q) {
-    const chat = $("#coachchat"); if (!chat) return;
-    chat.insertAdjacentHTML("beforeend", `<div class="bubble me">${esc(q)}</div>`);
-    const r = await post("/api/hub/coach/ask", {question: q});
-    chat.insertAdjacentHTML("beforeend", `<div class="bubble bot"><b>${esc(r.answer)}</b>${(r.lines || []).length ? `<ul>${r.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}${r.action ? coachAct(r.action) : ""}</div>`);
-    chat.lastElementChild.scrollIntoView({block: "nearest"});
-  }
-  $("#coachbtn").onclick = () => $("#coach").classList.contains("open") ? closeCoach() : openCoach();
-
   // ------------------------------------------------------------ render
-  const TITLES = {today: "Today", activity: "Activity", overview: "Overview", categories: "Labels", documents: "Latest documents", comms: "Communication Hub",
+  const TITLES = {overview: "Overview", categories: "Labels", documents: "Latest documents", comms: "Communication Hub",
                   contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy",
                   questions: "CSP questions", formuploads: "Form uploads", find: "Find CSPs",
                   analytics: "Messaging analytics", monitoring: "Monitoring"};
@@ -1231,7 +1055,6 @@
       $("#logout").onclick = (e) => { e.preventDefault(); logout(); };
       document.querySelectorAll('#nav [data-view="contacts"],#nav [data-view="ingestion"],#nav [data-view="accuracy"],#nav [data-view="monitoring"]')
         .forEach((b) => b.style.display = me.role === "ADMIN" ? "" : "none");
-      document.querySelectorAll(".admin-only").forEach((el) => el.style.display = me.role === "ADMIN" ? "" : "none");
       window.WA_MODE = s.modes.whatsapp;
       $("#modes").innerHTML = `Outbound: <b>${esc(s.modes.outbound)}</b><br>WhatsApp: <b>${esc(s.modes.whatsapp)}</b><br>Sheet: ${esc(s.modes.calling_sheet)}`;
       document.querySelectorAll("#nav [data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
