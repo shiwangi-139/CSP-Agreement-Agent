@@ -228,6 +228,7 @@ def today(db: Session, scope=None, limit: int = 60) -> dict:
         OutboundMessage.csp_id.in_(ids), OutboundMessage.channel == "WHATSAPP",
         OutboundMessage.status == OutboundStatus.SENT, OutboundMessage.sent_at >= local_today - off).scalar())
     return {"goal": goal(db, scope), "attention": items[:limit], "attention_total": len(items),
+            "attention_urgent": sum(1 for x in items if x["priority"] == 1),
             "tiles": {"accepted_today": accepted_today, "review_waiting": n_review,
                       "whatsapp_sent_today": sent_today, "whatsapp_failed_today": failed_today}}
 

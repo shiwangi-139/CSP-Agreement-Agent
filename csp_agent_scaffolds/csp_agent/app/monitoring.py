@@ -273,6 +273,63 @@ def reading_accuracy(db: Session) -> dict:
             "evaluations": [_run_json(r) for r in evals], "document_checks": [_run_json(r) for r in checks]}
 
 
+def reading_check(db: Session) -> dict:
+    """The dashboard's "Reading check" card: the nightly evaluation of both
+    sets (scripts/eval_reading.py) with its score (10 x wrong accepts + wrong
+    refusals), the documents fixed / newly broken since the run before, the
+    score of the last 14 runs, how many current documents carry a "why"
+    (app/why.py), and the validity rules in use in plain words."""
+    from .why import VALIDITY
+    runs = _last_runs(db, "reading_eval", 60)
+
+    def _score(s: dict) -> Optional[int]:
+        a = ((s or {}).get("by_type") or {}).get("ALL")
+        if not a:
+            return None
+        return a.get("score", 10 * a.get("WRONG ACCEPT", 0) + a.get("wrong reject", 0))
+
+    def _docs(ids: list, verdicts: dict) -> list[dict]:
+        out = []
+        for i in ids[:30]:
+            d = db.get(Document, int(i))
+            if d is None:
+                continue
+            c = db.get(CSP, d.csp_id)
+            out.append({"doc_id": d.id, "type": canonical_type(d.document_type), "verdict": verdicts.get(str(i)),
+                        "csp_id": c.id if c else None, "csp_code": c.current_code if c else None,
+                        "csp_name": c.name if c else None})
+        return out
+
+    sets = {}
+    for name in ("tuning", "holdout"):
+        mine = [r for r in runs if (r.summary or {}).get("set", "tuning") == name]
+        if not mine:
+            sets[name] = None
+            continue
+        last, s = mine[0], mine[0].summary or {}
+        before = (mine[1].summary or {}) if len(mine) > 1 else {}
+        by_type = {t: {"documents": v.get("documents", 0), "wrong_accept": v.get("WRONG ACCEPT", 0),
+                       "wrong_reject": v.get("wrong reject", 0), "correct": v.get("correct", 0),
+                       "safe_review": v.get("safe review", 0),
+                       "score": v.get("score", 10 * v.get("WRONG ACCEPT", 0) + v.get("wrong reject", 0))}
+                   for t, v in (s.get("by_type") or {}).items()}
+        sets[name] = {"at": last.started_at.isoformat() + "Z", "commit": s.get("commit"), "by_type": by_type,
+                      "score": _score(s), "previous_score": s.get("previous_score", _score(before) if before else None),
+                      "fixed": _docs(s.get("fixed") or [], before.get("failures") or {}),
+                      "broken": _docs(s.get("broken") or [], s.get("failures") or {}),
+                      "history": [{"at": r.started_at.isoformat() + "Z", "score": _score(r.summary)}
+                                  for r in reversed(mine[:14]) if _score(r.summary) is not None]}
+    current = db.query(Document).filter(Document.is_current.is_(True),
+                                        Document.status.in_([DocumentStatus.VALID, DocumentStatus.EXPIRED,
+                                                             DocumentStatus.MANUAL_VERIFIED,
+                                                             DocumentStatus.NEEDS_REVIEW])).all()
+    with_why = sum(1 for d in current if (d.extracted_fields or {}).get("why"))
+    rules = Counter(d.validity_rule_used for d in current if d.validity_rule_used)
+    return {"sets": sets, "why_coverage": {"with_why": with_why, "current": len(current)},
+            "rules": [{"code": r, "words": VALIDITY.get(r, r.replace("_", " ").lower()), "documents": n,
+                       "default": "DEFAULT" in r} for r, n in rules.most_common(20)]}
+
+
 # ------------------------------------------------------------ 4. review queue
 def _review_kind(reason: str) -> str:
     r = (reason or "").lower()

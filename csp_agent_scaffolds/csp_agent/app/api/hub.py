@@ -919,6 +919,14 @@ def monitor(tab: str, days: int = 0, db: Session = Depends(get_db)):
     return fn(db, days=min(max(days, 1), 90)) if days and "days" in fn.__code__.co_varnames else fn(db)
 
 
+@router.get("/reading-check", dependencies=[Depends(require_admin)])
+def reading_check(db: Session = Depends(get_db)):
+    """The "Reading check" card (admins): last night's reading score, fixed /
+    broken documents, "why" coverage and the rules in use (app/monitoring.py)."""
+    from .. import monitoring
+    return monitoring.reading_check(db)
+
+
 # ------------------------------------------------- Today, journey, Agent Coach
 def _scope(me: Principal):
     """None for an admin (everything); an RM's own CSPs otherwise."""

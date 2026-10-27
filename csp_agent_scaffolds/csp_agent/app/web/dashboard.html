@@ -6,9 +6,39 @@
 <title>Eko CSP Renewals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
-<link rel="stylesheet" href="static/eko.css?v=7">
+<link rel="stylesheet" href="static/eko.css?v=8">
 </head>
 <body>
+<!-- Icons (line style, drawn in the text colour). -->
+<svg class="sprite" aria-hidden="true">
+  <symbol id="i-today" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4.5 4.5"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15v2M11 11v6M15 7v10M19 12v5"/></symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 4h16l2 11v5H2v-5z"/><path d="M2 15h6l2 3h4l2-3h6"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></symbol>
+  <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5z"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17.5h.01"/></symbol>
+  <symbol id="i-trend" viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M21 21v-2a4 4 0 0 0-3-3.8M16 3.2a4 4 0 0 1 0 7.6"/></symbol>
+  <symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.9 13A9 9 0 0 1 11 3.1 9 9 0 1 0 20.9 13z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 4v6h-6"/><path d="M4 20v-6h6"/><path d="M5.6 9A7 7 0 0 1 19 10M18.4 15A7 7 0 0 1 5 14"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="13" rx="3"/><path d="M12 3v4M9 13h.01M15 13h.01M9 17h6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 4h6l-1 6 4 4H6l4-4z"/><path d="M12 14v7"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 2.6 17.2A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4m0 3h.01"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></symbol>
+</svg>
+
 <div id="login" class="login card" style="display:none">
   <img src="static/logo.png?v=2" alt="Eko" class="logo-img" style="height:28px;width:auto;max-width:110px;margin-bottom:8px" onerror="this.remove()">
   <h2>Eko CSP Renewals</h2>
@@ -16,48 +46,79 @@
   <form id="loginf">
     <label>Email <input type="email" id="lemail" autocomplete="username" required style="width:100%"></label>
     <label>Password <input type="password" id="lpass" autocomplete="current-password" required style="width:100%"></label>
-    <p class="small" id="lerr" style="color:#b42318"></p>
-    <p><button class="btn primary">Sign in</button></p></form>
+    <p class="small" id="lerr" style="color:var(--danger-ink)"></p>
+    <p><button class="btn primary" style="width:100%">Sign in</button></p></form>
 </div>
 
 <div class="shell" id="app" style="display:none">
-  <nav class="side" id="nav">
-    <div class="brand"><img src="static/logo.png?v=2" alt="Eko" class="logo-img" style="height:20px;width:auto;max-width:72px"
-      onerror="this.replaceWith(Object.assign(document.createElement('span'), {className: 'logo-text', innerHTML: 'eko<span>.</span>'}))">
-      CSP Renewals</div>
-    <div class="sub">SBI Kiosk Banking · document compliance</div>
-    <button data-view="overview" class="active">Overview</button>
-    <button data-view="categories">Labels <span class="count" id="n-cat"></span></button>
-    <button data-view="documents">Latest documents</button>
-    <button data-view="comms">Communication Hub <span class="count" id="n-drafts"></span></button>
-    <button data-view="contacts">Contacts &amp; gaps</button>
-    <button data-view="ingestion">Gmail ingestion</button>
-    <button data-view="review">Review queue <span class="count" id="n-review"></span></button>
-    <button data-view="analytics" id="nav-analytics" style="display:none">Messaging analytics</button>
-    <button data-view="find">Find CSPs</button>
-    <button data-view="formuploads">Form uploads <span class="count" id="n-form"></span></button>
-    <button data-view="questions">CSP questions <span class="count" id="n-questions"></span></button>
-    <button data-view="accuracy">Accuracy</button>
-    <button data-view="monitoring">Monitoring</button>
-    <div class="foot" id="modes"></div>
-    <div class="foot" id="whoami"></div>
-  </nav>
-  <main>
-    <div class="topbar">
-      <h1 id="title">Overview</h1>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <span class="pill warn" id="modepill"></span>
-        <button class="btn" id="theme" title="Toggle light / dark">◐</button>
-        <button class="btn" id="refresh">Refresh</button>
-      </div>
+  <!-- Menu: icons only; it opens over the page on hover (or with the keyboard), and stays open when pinned. -->
+  <aside class="side" id="nav" aria-label="Main menu">
+    <div class="brand">
+      <span class="brandmark"><img src="static/logo.png?v=2" alt="Eko" onerror="this.replaceWith(Object.assign(document.createElement('b'), {textContent: 'eko'}))"></span>
+      <span class="navtext brandtext"><strong>CSP Renewals</strong><small>SBI Kiosk Banking · compliance</small></span>
+      <button class="pin navtext" id="pin" title="Keep the menu open" aria-pressed="false"><svg><use href="#i-pin"/></svg></button>
     </div>
-    <section id="view"></section>
+    <div class="navgroup"><div class="navlabel">Work</div>
+      <button class="nav" data-view="today" title="Today"><svg><use href="#i-today"/></svg><span class="navtext">Today</span><span class="count" id="n-today"></span></button>
+      <button class="nav" data-view="find" title="Find CSPs"><svg><use href="#i-search"/></svg><span class="navtext">Find CSPs</span></button>
+      <button class="nav" data-view="categories" title="Labels"><svg><use href="#i-tag"/></svg><span class="navtext">Labels</span><span class="count" id="n-cat"></span></button>
+      <button class="nav" data-view="overview" title="Overview"><svg><use href="#i-chart"/></svg><span class="navtext">Overview</span></button>
+    </div>
+    <div class="navgroup"><div class="navlabel">Documents</div>
+      <button class="nav" data-view="review" title="Review queue"><svg><use href="#i-inbox"/></svg><span class="navtext">Review queue</span><span class="count" id="n-review"></span></button>
+      <button class="nav" data-view="formuploads" title="Form uploads & DC link"><svg><use href="#i-upload"/></svg><span class="navtext">Form uploads &amp; DC link</span><span class="count" id="n-form"></span></button>
+      <button class="nav" data-view="documents" title="Latest documents"><svg><use href="#i-file"/></svg><span class="navtext">Latest documents</span></button>
+    </div>
+    <div class="navgroup"><div class="navlabel">Messages</div>
+      <button class="nav" data-view="comms" title="Communication Hub"><svg><use href="#i-message"/></svg><span class="navtext">Communication Hub</span><span class="count" id="n-drafts"></span></button>
+      <button class="nav" data-view="questions" title="CSP questions"><svg><use href="#i-help"/></svg><span class="navtext">CSP questions</span><span class="count" id="n-questions"></span></button>
+      <button class="nav" data-view="analytics" id="nav-analytics" title="Messaging analytics" style="display:none"><svg><use href="#i-trend"/></svg><span class="navtext">Messaging analytics</span></button>
+    </div>
+    <div class="navgroup admin-only"><div class="navlabel">Admin</div>
+      <button class="nav" data-view="activity" title="Activity"><svg><use href="#i-clock"/></svg><span class="navtext">Activity</span></button>
+      <button class="nav" data-view="monitoring" title="Monitoring"><svg><use href="#i-pulse"/></svg><span class="navtext">Monitoring</span></button>
+      <button class="nav" data-view="accuracy" title="Accuracy & reading check"><svg><use href="#i-target"/></svg><span class="navtext">Accuracy</span></button>
+      <button class="nav" data-view="contacts" title="Contacts & gaps"><svg><use href="#i-users"/></svg><span class="navtext">Contacts &amp; gaps</span></button>
+      <button class="nav" data-view="ingestion" title="Gmail ingestion"><svg><use href="#i-mail"/></svg><span class="navtext">Gmail ingestion</span></button>
+    </div>
+    <div class="sidefoot">
+      <div class="navtext small" id="modes"></div>
+      <div class="user"><span class="avatar" id="avatar"></span><span class="navtext" id="whoami"></span></div>
+    </div>
+  </aside>
+  <main>
+    <header class="topbar">
+      <button class="iconbtn menu" id="menu" aria-label="Open the menu"><svg><use href="#i-menu"/></svg></button>
+      <div class="ttl"><div class="crumb" id="crumb"></div><div class="title" id="title">Today</div></div>
+      <div class="gsearch" role="search">
+        <svg><use href="#i-search"/></svg>
+        <input type="search" id="gsearch" placeholder="Search a CSP: KO code, name or phone…" autocomplete="off" aria-label="Search a CSP">
+        <kbd class="kbd">/</kbd>
+        <div id="gresults" class="gresults" role="listbox"></div>
+      </div>
+      <div class="topactions">
+        <span class="mode" id="modepill"></span>
+        <button class="iconbtn" id="theme" title="Light / dark" aria-label="Switch light or dark"><svg><use href="#i-moon"/></svg></button>
+        <button class="btn refresh" id="refresh"><svg><use href="#i-refresh"/></svg><span>Refresh</span></button>
+      </div>
+    </header>
+    <div class="content"><section id="view"></section></div>
   </main>
 </div>
 
+<nav class="mobilebar" id="mobilebar" aria-label="Menu">
+  <button data-view="today"><svg><use href="#i-today"/></svg>Today</button>
+  <button data-view="find"><svg><use href="#i-search"/></svg>Find</button>
+  <button data-view="review"><svg><use href="#i-inbox"/></svg>Review<span class="count" id="m-review"></span></button>
+  <button data-view="comms"><svg><use href="#i-message"/></svg>Messages</button>
+  <button id="more"><svg><use href="#i-more"/></svg>More</button>
+</nav>
+
+<button class="coachbtn admin-only" id="coachbtn" aria-controls="coach" aria-expanded="false" style="display:none"><svg><use href="#i-bot"/></svg>Agent Coach <span class="count" id="n-coach"></span></button>
+<aside class="drawer coach" id="coach" aria-label="Agent Coach"></aside>
 <div class="backdrop" id="backdrop"></div>
-<aside class="drawer" id="drawer"></aside>
-<div class="toast" id="toast"></div>
+<aside class="drawer" id="drawer" aria-label="CSP"></aside>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
 (() => {
@@ -86,7 +147,7 @@
     ["Everything valid", {agr: "VALID", pvr: "VALID", iibf: "VALID"}],
   ];
   const findQuery = (f) => ["agr", "pvr", "iibf", "slab", "rm", "form"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&");
-  const state = {view: "overview", find: {}, cat: 1, q: "", expiredOnly: false, page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
+  const state = {view: "today", find: {}, cat: 1, q: "", expiredOnly: false, page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
 
   // ---------------------------------------------------------------- api
   // Paths are relative (no leading "/"): the page is served at "/" on the
@@ -103,7 +164,7 @@
   }
   const post = (path, body) => api(path, {method: "POST", body: JSON.stringify(body || {})});
   function toast(t) { const el = $("#toast"); el.textContent = t; el.style.display = "block"; clearTimeout(toast.t); toast.t = setTimeout(() => el.style.display = "none", 3200); }
-  function showLogin() { $("#app").style.display = "none"; $("#login").style.display = "block"; }
+  function showLogin() { $("#app").style.display = "none"; $("#mobilebar").style.display = "none"; $("#coachbtn").style.display = "none"; $("#login").style.display = "block"; }
   $("#loginf").onsubmit = async (e) => {
     e.preventDefault(); $("#lerr").textContent = "";
     const r = await fetch("auth/login", {method: "POST", credentials: "same-origin", headers: {"Content-Type": "application/json", ...H},
@@ -115,12 +176,133 @@
   async function logout() { await fetch("auth/logout", {method: "POST", credentials: "same-origin", headers: H}); location.reload(); }
 
   // --------------------------------------------------------------- theme
+  const isDark = () => (document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")) === "dark";
+  const themeIcon = () => { $("#theme use").setAttribute("href", isDark() ? "#i-sun" : "#i-moon"); };
   $("#theme").onclick = () => {
-    const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-    document.documentElement.dataset.theme = cur === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = isDark() ? "light" : "dark";
     try { localStorage.setItem("eko_theme", document.documentElement.dataset.theme); } catch (e) {}
+    themeIcon();
   };
   try { const t = localStorage.getItem("eko_theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  themeIcon();
+
+  // ---------------------------------------------------------------- menu
+  // Icons only; it opens over the page on hover or with the keyboard, and
+  // stays open (taking its own space) when pinned. On a phone it is hidden
+  // and opens from "More" in the bottom bar.
+  const side = $("#nav");
+  function setPin(on) {
+    side.classList.toggle("pinned", on); document.body.classList.toggle("pinned", on);
+    $("#pin").setAttribute("aria-pressed", on); $("#pin").title = on ? "Let the menu fold away" : "Keep the menu open";
+    try { localStorage.setItem("eko_side", on ? "pinned" : ""); } catch (e) {}
+  }
+  try { setPin(localStorage.getItem("eko_side") === "pinned"); } catch (e) { setPin(false); }
+  $("#pin").onclick = (e) => { e.stopPropagation(); setPin(!side.classList.contains("pinned")); };
+  const phone = () => matchMedia("(max-width: 640px)").matches;
+  function openNav() { side.classList.add("open"); $("#backdrop").classList.add("open"); }
+  function closeNav() { side.classList.remove("open"); if (!$("#drawer").classList.contains("open") && !$("#coach").classList.contains("open")) $("#backdrop").classList.remove("open"); }
+  $("#menu").onclick = () => phone() ? openNav() : setPin(!side.classList.contains("pinned"));
+  $("#more").onclick = openNav;
+
+  // ------------------------------------------------------------- Today
+  const pctOf = (n, d) => d ? Math.round(100 * n / d) : 0;
+  const ACT = (a, it) => {
+    const cls = `btn${a.primary ? " primary" : ""}`;
+    const id = it.csp ? it.csp.id : "";
+    if (a.do === "csp") return `<button class="${cls}" data-csp="${id}">${esc(a.label)}</button>`;
+    if (a.do === "view") return `<button class="${cls}" data-go="${esc(a.arg)}">${esc(a.label)}</button>`;
+    if (a.do === "take") return `<button class="${cls}" data-takefile="${esc(a.arg)}">${esc(a.label)}</button>`;
+    if (a.do === "kept") return `<button class="${cls}" data-keptfile="${esc(a.arg)}">${esc(a.label)}</button>`;
+    if (a.do === "remind") return `<button class="${cls}" data-remind="${id}">${esc(a.label)}</button>`;
+    if (a.do === "run") return `<button class="${cls}" data-run="${esc(a.arg)}">${esc(a.label)}</button>`;
+    return "";
+  };
+  const KIND = {refused: "Refused upload", stuck: "Keeps trying", question: "Question", expiring: "Ends soon",
+                opened_no_upload: "Opened, no upload", failed: "WhatsApp failed", review: "Review queue"};
+  // The goal's daily % (fully compliant), drawn to scale with an area under it.
+  function goalSpark(trend) {
+    if (trend.length < 2) return `<div class="small muted">The daily trend appears after two days of snapshots.</div>`;
+    const W = 160, H = 48, xs = (i) => 3 + i * (W - 6) / (trend.length - 1);
+    const lo = Math.min(...trend.map((t) => t.pct)), hi = Math.max(...trend.map((t) => t.pct), lo + 1);
+    const ys = (v) => H - 5 - (v - lo) * (H - 12) / (hi - lo);
+    const pts = trend.map((t, i) => `${xs(i).toFixed(1)},${ys(t.pct).toFixed(1)}`).join(" ");
+    return `<svg class="gspark" viewBox="0 0 ${W} ${H}" role="img" aria-label="Fully compliant per day: ${trend.map((t) => t.pct + "%").join(", ")}">
+      <polygon points="${xs(0).toFixed(1)},${H} ${pts} ${xs(trend.length - 1).toFixed(1)},${H}" class="area"/>
+      <polyline points="${pts}" class="line"/>
+      ${trend.map((t, i) => `<circle cx="${xs(i).toFixed(1)}" cy="${ys(t.pct).toFixed(1)}" r="${i === trend.length - 1 ? 3.5 : 2}"><title>${fmt(t.day)}: ${t.pct}% (${t.done} of ${t.total})</title></circle>`).join("")}</svg>`;
+  }
+  // Page heading: [menu group, title, one line on what the page is for].
+  const PAGES = {
+    today: ["Work", "Today", "Your daily compliance worklist"],
+    find: ["Work", "Find CSPs", "Pick a state for each document and see exactly those CSPs"],
+    categories: ["Work", "Labels", "CSPs by how many of their 3 documents are on file"],
+    overview: ["Work", "Overview", "Document health across the whole network, and the jobs you can run by hand"],
+    review: ["Documents", "Review queue", "Documents waiting for a person's decision before the CSP's status changes"],
+    formuploads: ["Documents", "Form uploads & DC link", "What CSPs and DCs sent through the upload page, the DC master link and DC reports"],
+    documents: ["Documents", "Latest documents", "Current documents per CSP, and every file uploaded through the links"],
+    comms: ["Messages", "Communication Hub", "Drafts, sent and failed messages to CSPs, RMs and DCs"],
+    questions: ["Messages", "CSP questions", "Questions CSPs asked on their upload page"],
+    analytics: ["Messages", "Messaging analytics", "From message to documents"],
+    activity: ["Admin", "Activity", "What people did on the dashboard, and what CSPs and DCs did on their links"],
+    monitoring: ["Admin", "Monitoring", "Is the agent running, reading, sending and keeping records right"],
+    accuracy: ["Admin", "Accuracy", "How well the agent reads documents: the nightly reading check and people's checks"],
+    contacts: ["Admin", "Contacts & gaps", "RM and DC numbers, missing contacts, and contact changes CSPs typed"],
+    ingestion: ["Admin", "Gmail ingestion", "Emails read for CSP documents"],
+  };
+
+  // ------------------------------------------------------- reading check
+  // Last night's re-reading of documents a person already decided
+  // (scripts/eval_reading.py, 02:30): the score, what got fixed or broke,
+  // the hold-out set (never used to write rules), the "why" records, and
+  // the validity rules in use. GET /api/hub/reading-check (admins).
+  const T3S = {AGREEMENT: "Agreement", POLICE_VERIFICATION: "Police certificate", IIBF_CERTIFICATE: "IIBF"};
+  const scoreTrend = (now, before) => before == null || now == null ? `<span class="small muted">first run</span>`
+    : now < before ? chip("ok", `better: ${before} → ${now}`) : now > before ? chip("bad", `worse: ${before} → ${now}`) : chip("", "same as the run before");
+  function rcList(rows, kind) {
+    if (!rows.length) return `<p class="small muted">${kind === "fixed" ? "Nothing newly fixed." : "Nothing broke. ✓"}</p>`;
+    return `<ul class="rc-list">${rows.map((r) => `<li><a href="#" data-csp="${r.csp_id}"><b class="mono">${esc(r.csp_code)}</b> ${esc(r.csp_name)}</a>
+      · ${esc(T3S[r.type] || r.type)} · <a href="#" data-file="${r.doc_id}">view</a>
+      <div class="small muted">${kind === "fixed" ? `was: ${r.verdict === "WRONG ACCEPT" ? "would be accepted wrongly" : "refused wrongly"} → now read right`
+        : r.verdict === "WRONG ACCEPT" ? "now: would be ACCEPTED wrongly" : "now: would be refused wrongly"}</div></li>`).join("")}</ul>`;
+  }
+  function readingCheckCard(rc) {
+    if (!rc) return "";
+    const t = rc.sets.tuning, h = rc.sets.holdout, cov = rc.why_coverage;
+    const covBar = `<div class="rc-why"><b>"How the agent read it" records</b>: ${cov.with_why} of ${cov.current} current documents
+      <div class="meter"><span style="width:${pctOf(cov.with_why, cov.current)}%"></span></div>
+      <span class="small muted">Saved for every document read from now on; older ones get one with "Re-read with current rules" in the Review queue.</span></div>`;
+    const rules = rc.rules.length ? `<details class="why"><summary>Validity rules in use (${rc.rules.length})</summary><table class="rc-rules"><tbody>
+      ${rc.rules.map((r) => `<tr><td>${esc(r.words)}${r.default ? ` ${chip("warn", "default")}` : ""}</td><td class="mono small muted">${esc(r.code)}</td><td class="num">${r.documents}</td></tr>`).join("")}</tbody></table></details>` : "";
+    if (!t) return `<div class="card rc"><div class="rc-head"><div><div class="overline">Context &amp; harness</div><h2>Reading check</h2>
+      <div class="small muted">Every night at 02:30 the agent re-reads the documents a person already decided and scores itself. The first check hasn't run yet.</div></div></div>${covBar}${rules}</div>`;
+    const ty = Object.entries(t.by_type).filter(([k]) => k !== "ALL");
+    const all = t.by_type.ALL || {};
+    const level = all.wrong_accept ? "bad" : all.wrong_reject ? "warn" : "ok";
+    return `<div class="card rc rc-${level}">
+      <div class="rc-head">
+        <div><div class="overline">Context &amp; harness</div><h2>Reading check</h2>
+          <div class="small muted">Last run ${ago(t.at)} · ${all.documents || 0} documents a person decided, re-read with today's rules</div></div>
+        <div class="rc-score"><div class="n">${t.score ?? "—"}</div><div class="small muted">score · lower is better</div>${scoreTrend(t.score, t.previous_score)}</div>
+        <div class="rc-trend">${spark(t.history.map((x) => x.score), level === "ok" ? "ok" : "")}<div class="small muted">last ${t.history.length} runs</div></div>
+      </div>
+      <p class="small muted" style="margin:0 0 12px">Score = 10 × documents it would accept wrongly + documents it would refuse wrongly. A wrong accept counts 10 times: an invalid document would get through.</p>
+      <div class="rc-types">${ty.map(([k, v]) => `<div class="rc-type">
+          <div class="label">${esc(T3S[k] || k)}</div>
+          <div class="rc-row"><span>Accepted wrongly</span><b class="${v.wrong_accept ? "rc-tbad" : ""}">${v.wrong_accept}</b></div>
+          <div class="rc-row"><span>Refused wrongly</span><b class="${v.wrong_reject ? "rc-twarn" : ""}">${v.wrong_reject}</b></div>
+          <div class="rc-row muted"><span>Re-read</span><span>${v.documents}</span></div></div>`).join("")}</div>
+      <div class="rc-changes">
+        <div><h3>Fixed since the run before (${t.fixed.length})</h3>${rcList(t.fixed, "fixed")}</div>
+        <div><h3>Broke since the run before (${t.broken.length})</h3>${rcList(t.broken, "broken")}</div>
+      </div>
+      <div class="rc-foot">
+        <div><b>Hold-out check</b> <span class="small muted">(documents never used to write rules)</span><br>
+          ${h ? `score <b>${h.score ?? "—"}</b> on ${h.by_type.ALL?.documents || 0} documents ${scoreTrend(h.score, h.previous_score)}` : `<span class="small muted">not run yet</span>`}</div>
+        ${covBar}
+      </div>
+      ${rules}
+    </div>`;
+  }
 
   // ----------------------------------------------------------- badges
   const badge = (s, label) => `<span class="b ${esc(s)}">${esc(label || String(s).replaceAll("_", " ").toLowerCase())}</span>`;
@@ -365,6 +547,96 @@
 
   // ------------------------------------------------------------- views
   const views = {
+    async today() {
+      const isAdmin = state.summary.me.role === "ADMIN";
+      const [d, j, rc] = await Promise.all([api("/api/hub/today"), api("/api/hub/journey?days=14"),
+                                            isAdmin ? api("/api/hub/reading-check").catch(() => null) : null]);
+      const g = d.goal, t = d.tiles;
+      $("#n-today").textContent = d.attention_total || "";
+      const hour = new Date().getHours();
+      const hello = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+      const first = (state.summary.me.name || "").split(/[ @.]/)[0];
+      const urgent = d.attention_urgent ?? d.attention.filter((a) => a.priority === 1).length;
+      const kinds = [...new Set(d.attention.map((a) => a.kind))];
+      const f = state.attFilter || "all";
+      const show = (a) => f === "all" || (f === "urgent" ? a.priority === 1 : a.kind === f);
+      const goalChip = g.pace_per_day == null ? `<span class="chip">Building history</span>`
+        : g.pace_per_day > 0 ? `<span class="chip ok">Moving · +${g.pace_per_day} a day</span>` : `<span class="chip warn">No progress this week</span>`;
+      const rows = d.attention.map((it) => `<div class="row" data-kind="${esc(it.kind)}" data-p="${it.priority}" ${show(it) ? "" : 'style="display:none"'}>
+          <div class="prio p${it.priority}">P${it.priority}</div>
+          <div class="person">${it.csp ? `<a href="#" data-csp="${it.csp.id}" class="personname">${esc(it.csp.name)}</a><div class="ko">KO ${esc(it.csp.code)}</div>` : `<div class="personname">${esc(KIND[it.kind] || it.kind)}</div>`}</div>
+          <div class="reasonwrap"><div class="kind k-${esc(it.kind)}">${esc(KIND[it.kind] || it.kind)}</div><div class="reason">${esc(it.why)}</div></div>
+          <div class="rowactions">${it.actions.map((a) => ACT(a, it)).join("")}</div></div>`).join("");
+      const top = j.steps[0].n;
+      const mx = Math.max(1, ...j.reminders_before_upload.map((b) => b.n));
+      return `
+      <div class="greeting"><div><div class="eyebrow">${new Date().toLocaleDateString("en-IN", {weekday: "long"})} · operations briefing</div>
+        <h1>${hello}${first ? ", " + esc(first) : ""}.</h1>
+        <div class="sub">${d.attention_total ? `<b>${d.attention_total}</b> thing${d.attention_total > 1 ? "s" : ""} need a person today, the most urgent first.` : "Nothing needs a person right now. ✓"}</div></div>
+        <div class="datetag">${new Date().toLocaleString("en-IN", {dateStyle: "medium", timeStyle: "short"})}</div></div>
+      <div class="hero">
+        <article class="card goal">
+          <div class="cardtop"><div class="overline">Goal · every working CSP with all 3 documents valid</div>${goalChip}</div>
+          <div class="goalnum"><strong>${g.pct}%</strong><span>of CSPs fully compliant</span></div>
+          <div class="meter big" role="progressbar" aria-label="Goal" aria-valuenow="${g.pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${Math.min(100, g.pct)}%"></span></div>
+          <div class="goalmeta"><span><b>${g.done}</b> of ${g.total} CSPs complete</span><span><b>${g.left}</b> to go</span></div>
+          <div class="goalbottom"><div class="pace">${g.pace_per_day == null ? "The pace appears after a few days of snapshots."
+            : g.pace_per_day > 0 ? `<b>+${g.pace_per_day} CSPs a day</b> this week${g.eta ? ` · all done by <strong>${fmt(g.eta)}</strong> at this pace` : ""}`
+            : `<b class="bad">No progress this week</b> · the Agent Coach says why`}</div>${goalSpark(g.trend)}</div>
+        </article>
+        <article class="card pulse">
+          <div class="cardtop"><div class="overline">Needs a person</div><span class="chip ok">live</span></div>
+          <div><div class="pulsebig">${d.attention_total} CSP${d.attention_total === 1 ? "" : "s"}</div><div class="sub">need someone to take the next step</div></div>
+          <div class="minigrid"><button class="ministat" data-attfilter="urgent"><small>Urgent · act now</small><strong class="bad">${urgent}</strong></button>
+            <button class="ministat" data-attfilter="all"><small>Due today</small><strong class="warnc">${d.attention_total - urgent}</strong></button></div>
+        </article>
+      </div>
+      <div class="kpis">
+        <article class="card kpi" data-go="documents" role="button" tabindex="0"><div class="kpitop"><span class="kpilabel">Documents accepted today</span><span class="kpiicon"><svg><use href="#i-check"/></svg></span></div><div class="kpival">${t.accepted_today}</div><div class="kpifoot">Gmail, CSP links and the DC link</div></article>
+        <article class="card kpi" data-go="review" role="button" tabindex="0"><div class="kpitop"><span class="kpilabel">Waiting in the Review queue</span><span class="kpiicon warn"><svg><use href="#i-inbox"/></svg></span></div><div class="kpival">${t.review_waiting}</div><div class="kpifoot">${t.review_waiting ? "a person decides these" : "nothing waiting ✓"}</div></article>
+        <article class="card kpi" data-go="comms" role="button" tabindex="0"><div class="kpitop"><span class="kpilabel">WhatsApp sent today</span><span class="kpiicon ok"><svg><use href="#i-message"/></svg></span></div><div class="kpival">${t.whatsapp_sent_today}</div><div class="kpifoot">${esc(state.summary.modes.outbound === "review" ? "review mode" : "auto mode")} · approved layouts only</div></article>
+        <article class="card kpi" data-go="comms" role="button" tabindex="0"><div class="kpitop"><span class="kpilabel">CSPs whose WhatsApp failed today</span><span class="kpiicon bad"><svg><use href="#i-alert"/></svg></span></div><div class="kpival">${t.whatsapp_failed_today}</div><div class="kpifoot">${t.whatsapp_failed_today ? `<span class="bad">look at the reason</span> in Communication Hub` : "none ✓"}</div></article>
+      </div>
+      <div class="sectionhead"><div class="sectionleft"><h2>Needs attention today</h2><span class="count-chip">${d.attention_total} open</span></div>
+        <div class="filters">${[["all", `All · ${d.attention.length}`], ["urgent", `Urgent · ${d.attention.filter((a) => a.priority === 1).length}`],
+          ...kinds.map((k) => [k, `${KIND[k] || k} · ${d.attention.filter((a) => a.kind === k).length}`])].map(([k, l]) =>
+          `<button class="filter ${f === k ? "active" : ""}" data-attfilter="${esc(k)}">${esc(l)}</button>`).join("")}</div></div>
+      <div class="card queue" id="attq"><div class="queuehead"><strong>Priority worklist</strong><p>Who, why, and the one thing to do · urgent first${d.attention_total > d.attention.length ? ` · first ${d.attention.length} of ${d.attention_total} shown` : ""}</p></div>
+        ${rows || `<div class="empty">Nothing needs a person right now. ✓</div>`}</div>
+      <div class="analytics">
+        <article class="card chart"><div class="sectionhead tight"><div><h2>Where CSPs drop off</h2><div class="chartsub">Last ${j.days} days · from a reminder to fully compliant${j.link_tracking_since ? "" : " · link opens are recorded from today"}</div></div></div>
+          <div class="funnel">${j.steps.map((st, i) => `${i ? `<div class="drop">↓ ${pctOf(j.steps[i - 1].n - st.n, j.steps[i - 1].n)}% did not go on</div>` : ""}
+            <div class="funnelrow" title="${esc(st.step)}: ${st.n} (${pctOf(st.n, top)}%)"><span class="funnellabel">${esc(st.step)}</span>
+              <div class="bartrack"><div class="bar" style="width:${pctOf(st.n, top)}%;opacity:${(1 - i * .09).toFixed(2)}"></div></div><span class="barval">${st.n}</span></div>`).join("")}</div></article>
+        <article class="card chart"><div class="sectionhead tight"><div><h2>Reminders before upload</h2><div class="chartsub">CSPs who uploaded in the last ${j.days} days, by reminders they had got first</div></div></div>
+          <div class="hist" role="img" aria-label="Reminders before upload">${j.reminders_before_upload.map((b) => `<div class="histcol" title="${esc(b.label)}: ${b.n} CSPs">
+            <span class="histnum">${b.n}</span><div class="histbar" style="--h:${Math.round(100 * b.n / mx)}%"></div><span class="histlabel">${esc(b.label.replace(" (by themselves)", ""))}</span></div>`).join("")}</div>
+          <div class="histnote">0 = uploaded without any reminder.${j.median_hours_last_reminder_to_upload != null ? ` Typically <b>${j.median_hours_last_reminder_to_upload} h</b> from the last reminder to the upload.` : ""}</div></article>
+      </div>
+      ${isAdmin ? `<div style="margin-top:16px">${readingCheckCard(rc)}</div>` : ""}`;
+    },
+
+    async activity() {
+      const d = await api(`/api/hub/activity?days=${state.actDays || 7}${state.actUser ? "&user_id=" + state.actUser : ""}`);
+      const ev = d.csp_events || {};
+      return `<div class="tabs">${[[1, "Today"], [7, "7 days"], [30, "30 days"]].map(([v, l]) => `<button class="${(state.actDays || 7) === v ? "active" : ""}" data-actdays="${v}">${l}</button>`).join("")}</div>
+      <div class="kpis">
+        <article class="card kpi"><div class="kpilabel">CSP link opens</div><div class="kpival">${ev.LINK_OPENED || 0}</div></article>
+        <article class="card kpi"><div class="kpilabel">Upload page submissions</div><div class="kpival">${ev.PORTAL_UPLOAD || 0}</div></article>
+        <article class="card kpi"><div class="kpilabel">DC master link: CSPs looked up</div><div class="kpival">${ev.DC_LINK_VIEW || 0}</div></article>
+        <article class="card kpi"><div class="kpilabel">"Get my link" requests</div><div class="kpival">${ev.LINK_REQUEST || 0}</div></article>
+      </div>
+      <div class="analytics">
+        <div class="card tablewrap"><h2>People</h2><table><thead><tr><th>Name</th><th>Role</th><th class="num">Actions</th><th>Last</th><th></th></tr></thead><tbody>
+          ${d.people.map((p) => `<tr><td><b>${esc(p.name)}</b></td><td>${esc(p.role)}</td><td class="num">${p.actions}</td><td class="small">${when(p.last)}</td>
+            <td><button class="btn" data-actuser="${state.actUser === p.id ? "" : p.id}">${state.actUser === p.id ? "Show everyone" : "Only this person"}</button></td></tr>`).join("") || `<tr><td colspan="5" class="empty">No one yet.</td></tr>`}
+        </tbody></table></div>
+        <div class="card"><h2>Timeline</h2>${d.rows.length ? `<div class="timeline">${d.rows.map((r) => `<div class="tl"><time>${when(r.at)}</time>
+          <p><b>${esc(r.who)}</b> ${r.ok ? "" : "⚠ "}${esc(r.what)}</p>${r.csp ? `<a href="#" data-csp="${r.csp.id}" class="ko">KO ${esc(r.csp.code)} · ${esc(r.csp.name)}</a>` : ""}</div>`).join("")}</div>`
+          : `<div class="empty">Nothing yet.</div>`}</div>
+      </div>`;
+    },
+
     async overview() {
       const s = state.summary;
       const c = s.categories;
@@ -562,13 +834,14 @@
       return `<div class="mx">${nav}${MON[tab] ? MON[tab](d) : `<div class="card empty">Unknown tab.</div>`}</div>`;
     },
     async accuracy() {
-      const a = await api("/api/hub/accuracy");
+      const [a, rc] = await Promise.all([api("/api/hub/accuracy"), api("/api/hub/reading-check").catch(() => null)]);
       const pct = (v) => v == null ? "—" : v + "%";
       const row = (label, r) => `<tr><td>${esc(label)}</td><td class="num">${r.checked}</td><td class="num">${r.correct}</td>
         <td class="num">${r.date_wrong}</td><td class="num">${r.wrong_document}</td><td class="num"><b>${pct(r.accuracy)}</b></td></tr>`;
       const head = `<thead><tr><th></th><th>Checked</th><th>Correct</th><th>Date wrong</th><th>Wrong document / CSP</th><th>Accuracy</th></tr></thead>`;
       const T = {AGREEMENT: "CSP Agreement", POLICE_VERIFICATION: "PVR / Character certificate", IIBF_CERTIFICATE: "IIBF certificate"};
-      return `
+      return `${readingCheckCard(rc)}
+      <h2 class="section-title">Checks by people</h2>
       <div class="grid k4">
         <div class="card kpi"><div class="label">Measured accuracy</div><div class="n">${pct(a.overall.accuracy)}</div>
           <div class="small muted">from ${a.overall.checked} checked documents</div></div>
@@ -756,13 +1029,17 @@
       const d = await api("/api/hub/review");
       const kind = (reason) => /^Spot check/.test(reason) ? ["APPROVAL", "spot check"] : /^DC upload/.test(reason) ? ["APPROVAL", "DC upload"] : /^Reference check/.test(reason) ? ["APPROVAL", "reference check"] : ["REVIEW", "needs a decision"];
       return `<p class="small muted">Conflicts the agent can't decide (a different CSP's name on the document, a typed date that differs from the one read…), plus <b>spot checks</b> (5% of documents the agent accepted on its own) and <b>reference checks</b>. Open the document, then <b>Accept</b> if the type, the CSP and the issue date are right, correct the date if it's wrong, or <b>Reject</b> if it's the wrong document or CSP. Your answers measure the agent's accuracy (see Accuracy).</p>
-      ${d.rows.map((r) => `<div class="card" style="margin-bottom:10px">
-        <div class="meta">${badge(kind(r.reason)[0], kind(r.reason)[1])} <b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)} · ${esc(DOC[r.document.type] || r.document.type)}
-          · issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : r.document.validity_rule === "PVR_PCC_LIFETIME" ? ` · <b>no expiry</b> (Police Clearance Certificate)` : ""}</div>
-        <p>${esc(r.reason)}</p>
+      <div class="toolbar"><span class="count-chip">${d.rows.length} waiting</span>${d.rows.length ? `<span class="small muted">oldest waits ${ago(d.rows[0].created_at)}</span>` : ""}</div>
+      ${d.rows.map((r) => `<div class="card rv">
+        <a class="rv-file" href="#" data-file="${r.document.id}" title="View the document"><svg><use href="#i-file"/></svg><span>View</span></a>
+        <div class="rv-main">
+        <div class="meta">${badge(kind(r.reason)[0], kind(r.reason)[1])} <a href="#" data-csp="${r.csp.id}"><b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)}</a> · <b>${esc(DOC[r.document.type] || r.document.type)}</b>
+          <span class="small muted" style="margin-left:auto">waiting ${ago(r.created_at)}</span></div>
+        <div class="rv-dates">issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : r.document.validity_rule === "PVR_PCC_LIFETIME" ? ` · <b>no expiry</b> (Police Clearance Certificate)` : ""}</div>
+        <p class="rv-reason">${esc(r.reason)}</p>
         ${whyBox(r.document, true)}
         ${aiHint(r.document.model_suggestion)}
-        <div class="toolbar"><a href="#" data-file="${r.document.id}">View document</a> · <a href="#" data-fileorig="${r.document.id}" class="small">download original</a>
+        <div class="toolbar rv-fields"><a href="#" data-file="${r.document.id}">View document</a> · <a href="#" data-fileorig="${r.document.id}" class="small">download original</a>
           <label>Correct issue date <input type="date" id="rv${r.id}" value="${esc(r.document.issue_date || "")}"></label>
           <label>Expiry date <input type="date" id="re${r.id}" value="${esc(r.document.expiry_date || "")}" title="The last day written on the document (overrides 'Validity stated')"></label>
           <label>Type <select id="rt${r.id}">${["AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"].map((t) =>
@@ -772,7 +1049,7 @@
             <optgroup label="Police certificate"><option value="6">6 months</option><option value="12">1 year</option><option value="-1">No expiry (Police Clearance Certificate)</option></optgroup></select></label>
           <button class="btn" data-reread="${r.id}" title="Read the document again with the agent's latest rules (doesn't accept it)">Re-read with current rules</button>
           <button class="btn primary" data-resolve="${r.id}" data-accept="1">Accept</button>
-          <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button></div></div>`).join("") || `<div class="card empty">Nothing to review.</div>`}`;
+          <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button></div></div></div>`).join("") || `<div class="card empty">Nothing to review. ✓</div>`}`;
     },
   };
 
@@ -828,22 +1105,45 @@
     const d = await api(`/api/hub/csp/${id}`);
     const c = d.csp;
     const person = (p, label) => p ? `${esc(p.name)} · ${esc(p.phone || "no phone")} · ${esc(p.email || "no email")}` : `<span class="muted">no ${label} assigned</span>`;
+    const isAdmin = state.summary.me.role === "ADMIN";
+    // Newest first: files received and messages, the 8 latest.
+    const recent = [...d.documents.map((x) => ({at: x.uploaded_at || x.source_date, text: `${DOC[x.type] || x.type} received`,
+                       sub: `${x.channel === "CSP_UPLOAD_PORTAL" ? "upload page" : "Gmail"} · ${(x.status || "").replaceAll("_", " ").toLowerCase()}`})),
+                    ...d.messages.map((m) => ({at: m.sent_at || m.created_at, text: `${m.channel === "EMAIL" ? "Email" : "WhatsApp"} to ${m.role}: ${m.template}`,
+                       sub: (m.status || "").replaceAll("_", " ").toLowerCase() + (m.error ? " · " + m.error : "")}))]
+      .filter((x) => x.at).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, 8);
+    const docCard = (t, s) => `<div class="doc"><div class="t">${esc(DOC[t])}</div>${docCell(s)}
+        <div class="docline"><span>Issued</span><b class="mono">${fmt(s.issue_date)}</b></div>
+        <div class="docline"><span>Expires</span><b class="mono">${s.expiry_date ? fmt(s.expiry_date) : s.status === "VALID" ? "no expiry" : "—"}</b></div>
+        ${s.days_left != null ? `<div class="docline"><span>${s.days_left < 0 ? "Overdue" : "Left"}</span><b class="${s.days_left < 0 ? "bad" : s.days_left <= 60 ? "warnc" : "okc"}">${Math.abs(s.days_left)} days</b></div>` : ""}
+        ${s.applied_on ? `<div class="small"><b>Applied for a new one on ${fmt(s.applied_on)}</b> (waiting)</div>` : ""}
+        ${s.document_id ? `<button class="btn" style="width:100%;margin-top:10px" data-file="${s.document_id}">View</button>` : ""}</div>`;
     $("#drawer").innerHTML = `
-      <div class="topbar"><div><h1 style="font-size:1.25rem">${esc(c.name)}</h1><div class="mono muted">KO ${esc(c.code)} · ${esc(c.terminal_status || "")}</div>
-        ${c.active_override ? `<div class="small">Made <b>active</b> by ${esc(c.active_override_by || "")} ${fmt(c.active_override_at)} (the sheet says ${esc(c.terminal_status || "")}) · <a href="#" data-undoactive="${c.id}">undo</a></div>` : ""}</div>
-        <button class="btn" id="closedrawer">Close</button></div>
-      <div class="card"><div class="meta">${badge("c" + d.category, slab(d.category))} <span class="muted">${esc(d.reason)}</span></div>
-        <dl class="kv" style="margin-top:10px"><dt>Mobile (sheet)</dt><dd>${esc(c.phone || "—")}${c.alt_phone ? " / " + esc(c.alt_phone) : ""}</dd>
+      <div class="drawerhead"><div><div class="eyebrow">CSP profile</div><h2 class="dname">${esc(c.name)}</h2>
+        <div class="ko">KO ${esc(c.code)} · ${esc(c.terminal_status || "")} · RM ${esc(c.rm?.name || "—")} · DC ${esc(c.dc?.name || "—")}</div>
+        <div class="meta" style="margin-top:8px">${badge("c" + d.category, slab(d.category))} <span class="small muted">${esc(d.reason)}</span></div>
+        ${c.active_override ? `<div class="small" style="margin-top:4px">Made <b>active</b> by ${esc(c.active_override_by || "")} ${fmt(c.active_override_at)} (the sheet says ${esc(c.terminal_status || "")}) · <a href="#" data-undoactive="${c.id}">undo</a></div>` : ""}</div>
+        <button class="iconbtn" id="closedrawer" aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+      <div class="drawerbody">
+      <div class="sectionhead tight"><h2>Documents</h2><span class="small muted">3 required</span></div>
+      <div class="docgrid">${Object.entries(d.current).map(([t, s]) => docCard(t, s)).join("")}</div>
+      <h2 class="section-title">Quick actions</h2>
+      <div class="quick">
+        ${d.category !== 5 || c.active_override ? `<button class="btn primary" data-remind="${c.id}"><svg><use href="#i-send"/></svg>Send reminder now</button>` : ""}
+        <button class="btn" data-link="${c.id}">Create upload link</button>
+        <a class="btn" href="#" data-zip="${c.id}">Download all 3 (zip)</a>
+        ${d.category === 5 && !c.active_override && isAdmin ? `<button class="btn" data-makeactive="${c.id}">Make active</button>` : ""}
+      </div>
+      <div class="card"><h2>Contact</h2>
+        <dl class="kv"><dt>Mobile (sheet)</dt><dd>${esc(c.phone || "—")}${c.alt_phone ? " / " + esc(c.alt_phone) : ""}</dd>
           <dt>WhatsApp to</dt><dd><input id="wa${c.id}" inputmode="numeric" maxlength="10" placeholder="as on the sheet" value="${esc(c.preferred_phone || "")}" style="width:9.5rem">
             <button class="btn" data-wanum="${c.id}">Save</button>
             <span class="small muted">${c.preferred_phone ? `set by ${esc(c.preferred_phone_set_by || "")} ${fmt(c.preferred_phone_set_at)}; WhatsApp goes only here` : `WhatsApp goes to ${esc(c.phone || c.alt_phone || "—")}`}</span></dd>
           <dt>Email</dt><dd>${esc(c.email || "—")}</dd><dt>RM</dt><dd>${person(c.rm, "RM")}</dd><dt>DC</dt><dd>${person(c.dc, "DC")}</dd>
           <dt>Branch</dt><dd>${esc(c.branch || "—")}, ${esc(c.state || "")}</dd><dt>Next action</dt><dd class="mono">${fmt(c.next_action_at)}</dd>
-          <dt>Folder</dt><dd class="mono small">${esc(c.folder)}</dd></dl>
-        <div class="toolbar" style="margin-top:10px"><a class="btn" href="#" data-zip="${c.id}">Download all 3 (zip)</a>
-          <button class="btn" data-link="${c.id}">Create upload link</button></div></div>
-      <div class="docgrid" style="margin-top:14px">${Object.entries(d.current).map(([t, s]) => `<div class="doc"><div class="t">${esc(DOC[t])}</div>${docCell(s)}
-        <div class="small mono muted">issued ${fmt(s.issue_date)}</div>${s.applied_on ? `<div class="small"><b>Applied for a new one on ${fmt(s.applied_on)}</b> (waiting)</div>` : ""}${s.document_id ? `<a href="#" data-file="${s.document_id}" class="small">view</a>` : ""}</div>`).join("")}</div>
+          <dt>Folder</dt><dd class="mono small">${esc(c.folder)}</dd></dl></div>
+      <div class="card" style="margin-top:14px"><h2>Recent activity</h2>${recent.length ? `<div class="timeline">${recent.map((x) => `<div class="tl"><time>${when(x.at)}</time>
+        <p><b>${esc(x.text)}</b></p><div class="small muted">${esc(x.sub)}</div></div>`).join("")}</div>` : `<div class="muted small">Nothing yet.</div>`}</div>
       <div class="card" style="margin-top:14px"><h2>All files received (${d.documents.length})</h2><div class="tablewrap"><table><thead><tr><th>Type</th><th>Status</th><th>Issued</th><th>Expires</th><th>How</th><th>Received</th><th></th></tr></thead><tbody>
         ${d.documents.map((x) => `<tr><td>${esc(DOC[x.type] || x.type)}${x.is_current ? " <span class='b VALID'>current</span>" : ""}</td>
           <td>${badge(x.readability === "UNREADABLE" ? "UNREADABLE" : x.status)}</td><td class="mono">${fmt(x.issue_date)}</td><td class="mono">${fmt(x.expiry_date)}</td>
@@ -851,11 +1151,14 @@
           <td><a href="#" data-file="${x.id}">view</a> · <a href="#" data-fileorig="${x.id}" class="small">original</a></td></tr>`).join("") || `<tr><td colspan="7" class="empty">None.</td></tr>`}</tbody></table></div></div>
       <div class="card" style="margin-top:14px"><h2>Follow-up cycles</h2>${d.cycles.map((y) => `<div class="small">${badge(y.closed_at ? "DONE" : "PENDING", y.closed_at ? "closed" : "open")}
         <b>${esc(y.kind)}</b> ${esc(y.document_type)} · CSP ${y.csp} · RM ${y.rm}/2 · DC ${y.dc}/1 · opened ${fmt(y.opened_at)}${y.close_reason ? " · " + esc(y.close_reason.replaceAll("_", " ").toLowerCase()) : ""}</div>`).join("") || `<div class="muted small">No follow-ups yet.</div>`}</div>
-      <div class="card" style="margin-top:14px"><h2>Messages (${d.messages.length})</h2>${d.messages.map(msgCard).join("") || `<div class="muted small">None.</div>`}</div>`;
+      <div class="card" style="margin-top:14px"><h2>Messages (${d.messages.length})</h2>${d.messages.map(msgCard).join("") || `<div class="muted small">None.</div>`}</div>
+      </div>`;
+    closeCoach(); closeNav();
     $("#drawer").classList.add("open"); $("#backdrop").classList.add("open");
+    $("#drawer").scrollTop = 0;
   }
   function closeDrawer() { $("#drawer").classList.remove("open"); $("#backdrop").classList.remove("open"); }
-  $("#backdrop").onclick = closeDrawer;
+  $("#backdrop").onclick = () => { closeDrawer(); closeCoach(); closeNav(); };
 
   function openFile(id, download) { return openPath(`api/hub/documents/${id}/file${download ? "?download=1" : ""}`); }
   async function openPath(path) {
@@ -881,13 +1184,30 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-attfilter],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
       if (t.id === "closedrawer") return closeDrawer();
       if (t.id === "refresh") return render();
-      if (ds.view || ds.go) { e.preventDefault(); state.view = ds.view || ds.go; state.page = 1; return render(); }
+      if (ds.view || ds.go) { e.preventDefault(); if (t.closest("#nav")) t.blur(); closeNav(); closeCoach(); closeDrawer(); state.view = ds.view || ds.go; state.page = 1; return render(); }
+      if (ds.attfilter !== undefined) {
+        // Today's worklist: filter the rows already on the page.
+        state.attFilter = ds.attfilter;
+        document.querySelectorAll("[data-attfilter].filter").forEach((b) => b.classList.toggle("active", b.dataset.attfilter === ds.attfilter));
+        document.querySelectorAll("#attq .row").forEach((r) => { r.style.display = ds.attfilter === "all" || (ds.attfilter === "urgent" ? r.dataset.p === "1" : r.dataset.kind === ds.attfilter) ? "" : "none"; });
+        return;
+      }
+      if (ds.remind) {
+        if (!confirm("Send this CSP a WhatsApp now, with their upload link?")) return;
+        t.disabled = true;
+        try { const r = await post(`/api/hub/csp/${ds.remind}/send-reminder`); toast(r.status === "SENT" ? `Sent to ${r.to}` : `${r.status.replaceAll("_", " ").toLowerCase()}${r.error ? ": " + r.error : ""}`); }
+        catch (err) { toast(err.message); }
+        t.disabled = false; return;
+      }
+      if (ds.ask !== undefined) return coachAsk(ds.ask);
+      if (ds.actdays) { state.actDays = +ds.actdays; return render(); }
+      if (ds.actuser !== undefined) { state.actUser = ds.actuser ? +ds.actuser : null; return render(); }
       if (ds.cat) { state.view = "categories"; state.cat = +ds.cat; state.expiredOnly = false; state.sub = ""; state.tag = ""; state.page = 1; return render(); }
       if (ds.sub !== undefined) { state.sub = ds.sub; state.page = 1; return render(); }
       if (ds.tag !== undefined) { state.tag = ds.tag; state.page = 1; return render(); }
@@ -1026,6 +1346,7 @@
       }
       if (ds.cc) { await post(`/api/hub/contact-changes/${ds.cc}`); return render(); }
       if (ds.resolve) {
+        if (ds.accept !== "1" && !confirm("Reject this document? It will no longer count for this CSP.")) return;
         await post(`/api/hub/review/${ds.resolve}/resolve`, {accept: ds.accept === "1", issue_date: $(`#rv${ds.resolve}`)?.value || null,
           document_type: $(`#rt${ds.resolve}`)?.value || null, validity_months: Number($(`#rm${ds.resolve}`)?.value) || null,
           expiry_date: $(`#re${ds.resolve}`)?.value || null});
@@ -1034,7 +1355,9 @@
     } catch (err) { toast(err.message); }
   });
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeDrawer();
+    if (e.key === "Escape") { closeDrawer(); closeCoach(); closeNav(); $("#gresults").classList.remove("open"); }
+    if (e.key === "/" && !/input|textarea|select/i.test(document.activeElement.tagName)) { e.preventDefault(); $("#gsearch").focus(); }
+    if (e.key === "Enter" && e.target.matches(".kpi[data-go]")) e.target.click();
     if (e.key === "Enter" && e.target.id === "q") { state.q = e.target.value; state.page = 1; render(); }
   });
   document.addEventListener("change", (e) => {
@@ -1047,35 +1370,104 @@
   });
   async function refreshAfterAction() { if ($("#drawer").classList.contains("open")) closeDrawer(); render(); }
 
+  // ------------------------------------------------- search on every page
+  let searchTimer = null;
+  $("#gsearch").addEventListener("input", (e) => {
+    clearTimeout(searchTimer);
+    const q = e.target.value.trim();
+    if (q.length < 2) { $("#gresults").classList.remove("open"); return; }
+    searchTimer = setTimeout(async () => {
+      const d = await api(`/api/hub/search?q=${encodeURIComponent(q)}`);
+      $("#gresults").innerHTML = d.rows.length ? d.rows.map((r) => `<button data-csp="${r.id}" role="option">
+          <span>${esc(r.name)}</span><small class="mono">${esc(r.code)}${r.category ? " · Label " + esc(r.sub_slab || r.category) : ""}</small></button>`).join("")
+        : `<div class="small muted" style="padding:8px 10px">No CSP matches “${esc(q)}”.</div>`;
+      $("#gresults").classList.add("open");
+    }, 250);
+  });
+  $("#gsearch").addEventListener("keydown", (e) => { if (e.key === "Enter") { const b = $("#gresults [data-csp]"); if (b) b.click(); } });
+  document.addEventListener("click", (e) => { if (!e.target.closest(".gsearch")) $("#gresults").classList.remove("open"); else if (e.target.closest("[data-csp]")) $("#gresults").classList.remove("open"); });
+
+  // ------------------------------------------------------- Agent Coach
+  const LEVEL = {critical: ["bad", "Fix now"], warn: ["warn", "Should fix"], info: ["", "Good to know"], good: ["ok", "Going well"]};
+  const coachAct = (a) => !a ? "" : a.do === "run" ? `<button class="btn primary" data-run="${esc(a.arg)}">${esc(a.label)}</button>`
+    : `<button class="btn" data-go="${esc(a.arg)}">${esc(a.label)}</button>`;
+  async function openCoach() {
+    const c = $("#coach");
+    closeDrawer(); closeNav();
+    c.classList.add("open"); $("#backdrop").classList.add("open"); $("#coachbtn").setAttribute("aria-expanded", "true");
+    c.innerHTML = `<div class="drawerhead"><div><div class="eyebrow">What the agent should improve</div><h2 class="dname">Agent Coach</h2>
+      <div class="sub">Worked out from the agent's own records, nothing guessed.</div></div><button class="iconbtn" id="coachclose" aria-label="Close"><svg><use href="#i-close"/></svg></button></div>
+      <div class="drawerbody coach-body"><div class="small muted">Reading the agent's numbers…</div></div>`;
+    $("#coachclose").onclick = closeCoach;
+    try {
+      const d = await api("/api/hub/coach");
+      $("#n-coach").textContent = d.findings.filter((f) => f.level === "critical" || f.level === "warn").length || "";
+      $(".coach-body", c).innerHTML = `<div class="overline">Findings, most urgent first</div>
+        ${d.findings.map((f) => `<div class="finding ${esc(f.level)}"><div class="kind">${chip(LEVEL[f.level][0], LEVEL[f.level][1])}</div>
+          <h3>${esc(f.title)}</h3><p>${esc(f.detail)}</p>${f.action ? coachAct(f.action) : ""}</div>`).join("") || `<div class="finding good"><h3>Nothing to improve right now. ✓</h3></div>`}
+        <div class="overline" style="margin-top:18px">Ask the Coach</div>
+        <div class="quick">${d.questions.map((q) => `<button class="btn" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>
+        <div id="coachchat"></div>
+        <form id="coachform" class="coach-ask"><input type="text" id="coachq" placeholder="Ask about the agent…" autocomplete="off"><button class="btn primary">Ask</button></form>`;
+      $("#coachform").onsubmit = (e) => { e.preventDefault(); const q = $("#coachq").value.trim(); if (q) coachAsk(q); $("#coachq").value = ""; };
+    } catch (err) { $(".coach-body", c).innerHTML = `<div class="empty">Couldn't load: ${esc(err.message)}</div>`; }
+  }
+  function closeCoach() {
+    $("#coach").classList.remove("open"); $("#coachbtn").setAttribute("aria-expanded", "false");
+    if (!$("#drawer").classList.contains("open") && !side.classList.contains("open")) $("#backdrop").classList.remove("open");
+  }
+  async function coachAsk(q) {
+    const chat = $("#coachchat"); if (!chat) return;
+    chat.insertAdjacentHTML("beforeend", `<div class="bubble me">${esc(q)}</div>`);
+    try {
+      const r = await post("/api/hub/coach/ask", {question: q});
+      chat.insertAdjacentHTML("beforeend", `<div class="bubble bot"><b>${esc(r.answer)}</b>${(r.lines || []).length ? `<ul>${r.lines.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : ""}${r.action ? coachAct(r.action) : ""}</div>`);
+    } catch (err) { chat.insertAdjacentHTML("beforeend", `<div class="bubble bot">${esc(err.message)}</div>`); }
+    chat.lastElementChild.scrollIntoView({block: "nearest"});
+  }
+  $("#coachbtn").onclick = () => $("#coach").classList.contains("open") ? closeCoach() : openCoach();
+
   // ------------------------------------------------------------ render
-  const TITLES = {overview: "Overview", categories: "Labels", documents: "Latest documents", comms: "Communication Hub",
-                  contacts: "Contacts & gaps", ingestion: "Gmail ingestion", review: "Review queue", accuracy: "Accuracy",
-                  questions: "CSP questions", formuploads: "Form uploads", find: "Find CSPs",
-                  analytics: "Messaging analytics", monitoring: "Monitoring"};
   async function render() {
     try {
       state.summary = await api("/api/hub/summary");
       const s = state.summary;
+      const me = s.me || {}, isAdmin = me.role === "ADMIN";
+      if (!views[state.view] || (!isAdmin && ["activity", "monitoring", "accuracy", "contacts", "ingestion"].includes(state.view))) state.view = "today";
       const drafts = s.drafts_pending.EMAIL + s.drafts_pending.WHATSAPP;
       $("#n-drafts").textContent = drafts || ""; $("#n-review").textContent = s.review_pending || "";
+      $("#m-review").textContent = s.review_pending || "";
       $("#n-questions").textContent = s.questions_open || "";
       $("#nav-analytics").style.display = s.features?.analytics ? "" : "none";     // parked feature
       $("#n-form").textContent = s.form_uploads?.rejected || "";
       $("#n-cat").textContent = (s.categories[2] + s.categories[3] + s.categories[4]) || "";
-      $("#modepill").textContent = s.modes.outbound === "review" ? "Review mode: nothing is sent without approval" : "Auto mode: approved messages send automatically";
-      const me = s.me || {};
-      $("#whoami").innerHTML = `${esc(me.name || "")} · <b>${esc(me.role || "")}</b><br><a href="#" id="logout">Sign out</a>`;
+      const auto = s.modes.outbound !== "review";
+      $("#modepill").innerHTML = `<span class="dot"></span>${auto ? "Auto mode · approved messages" : "Review mode · nothing sent without approval"}`;
+      $("#modepill").className = `mode ${auto ? "ok" : "warn"}`;
+      $("#whoami").innerHTML = `<b>${esc(me.name || "")}</b><br>${esc(me.role || "")} · <a href="#" id="logout">Sign out</a>`;
+      $("#avatar").textContent = (me.name || "?").split(/[ @.]/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("");
       $("#logout").onclick = (e) => { e.preventDefault(); logout(); };
-      document.querySelectorAll('#nav [data-view="contacts"],#nav [data-view="ingestion"],#nav [data-view="accuracy"],#nav [data-view="monitoring"]')
-        .forEach((b) => b.style.display = me.role === "ADMIN" ? "" : "none");
+      document.querySelectorAll(".admin-only").forEach((el) => el.style.display = isAdmin ? "" : "none");
       window.WA_MODE = s.modes.whatsapp;
-      $("#modes").innerHTML = `Outbound: <b>${esc(s.modes.outbound)}</b><br>WhatsApp: <b>${esc(s.modes.whatsapp)}</b><br>Sheet: ${esc(s.modes.calling_sheet)}`;
-      document.querySelectorAll("#nav [data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === state.view));
-      $("#title").textContent = TITLES[state.view];
-      $("#view").innerHTML = await views[state.view]();
+      $("#modes").innerHTML = `Outbound: <b>${esc(s.modes.outbound)}</b> · WhatsApp: <b>${esc(s.modes.whatsapp)}</b><br>Sheet: ${esc(s.modes.calling_sheet)}`;
+      document.querySelectorAll("[data-view]").forEach((b) => { if (b.closest("#nav, #mobilebar")) b.classList.toggle("active", b.dataset.view === state.view); });
+      const [group, title, sub] = PAGES[state.view];
+      $("#crumb").textContent = group; $("#title").textContent = title;
+      document.title = `${title} · Eko CSP Renewals`;
+      const head = state.view === "today" ? "" : `<div class="greeting"><div><div class="eyebrow">${esc(group)}</div><h1>${esc(title)}</h1><div class="sub">${esc(sub)}</div></div></div>`;
+      const body = await views[state.view]();
+      $("#view").innerHTML = head + body;
     } catch (err) { if (err.message !== "Unauthorised") $("#view").innerHTML = `<div class="card empty">Couldn't load: ${esc(err.message)}</div>`; }
   }
-  async function boot() { $("#login").style.display = "none"; $("#app").style.display = "grid"; await render(); }
+  // The Coach's number on its button (admins), once per sign-in.
+  async function coachCount() {
+    try { const d = await api("/api/hub/coach"); $("#n-coach").textContent = d.findings.filter((f) => f.level === "critical" || f.level === "warn").length || ""; } catch (e) {}
+  }
+  async function boot() {
+    $("#login").style.display = "none"; $("#app").style.display = "block"; $("#mobilebar").style.display = "";
+    await render();
+    if (state.summary?.me?.role === "ADMIN") coachCount();
+  }
   boot();
 })();
 </script>

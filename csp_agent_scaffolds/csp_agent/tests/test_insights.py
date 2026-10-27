@@ -126,3 +126,42 @@ def test_dashboard_actions_are_recorded_with_who_and_which_csp(world):
     assert "Opened Today" in whats and "Opened a CSP's page" in whats
     assert any(r["csp"] and r["csp"]["code"] == w["mine"][1] for r in mine)
     assert not any("summary" in x.lower() for x in whats)
+
+
+def test_reading_check_card(client, monkeypatch):
+    """The dashboard's Reading check: the latest nightly score per set, the
+    documents fixed / newly broken (with their CSP), and admins only."""
+    from app.models import MonitorRun
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    c, Session = client
+    s = Session()
+    csp = _csp(s)
+    d = Document(csp_id=csp.id, document_type="AGREEMENT", status=DocumentStatus.VALID, is_current=True, sha256=uuid.uuid4().hex,
+                 validity_rule_used="AGREEMENT_DEFAULT_1_YEAR", extracted_fields={"why": {"summary": "x"}})
+    s.add(d)
+    s.flush()
+    far = datetime(2999, 1, 1)
+    runs = [MonitorRun(kind="reading_eval", started_at=far, status="OK",
+                       summary={"set": "tuning", "by_type": {"ALL": {"documents": 5, "wrong reject": 1, "score": 1}},
+                                "failures": {}, "fixed": [str(d.id)], "broken": [], "previous_score": 11}),
+            MonitorRun(kind="reading_eval", started_at=far - timedelta(days=1), status="OK",
+                       summary={"set": "tuning", "by_type": {"ALL": {"documents": 5, "WRONG ACCEPT": 1, "wrong reject": 1}},
+                                "failures": {str(d.id): "WRONG ACCEPT"}})]
+    s.add_all(runs)
+    s.commit()
+    try:
+        r = c.get("/api/hub/reading-check", headers=HDR)
+        assert r.status_code == 200, r.text
+        j = r.json()
+        t = j["sets"]["tuning"]
+        assert t["score"] == 1 and t["previous_score"] == 11 and [h["score"] for h in t["history"]][-2:] == [11, 1]
+        assert t["fixed"] == [{"doc_id": d.id, "type": "AGREEMENT", "verdict": "WRONG ACCEPT", "csp_id": csp.id,
+                               "csp_code": csp.current_code, "csp_name": csp.name}]
+        assert j["why_coverage"]["with_why"] >= 1
+        assert any(x["code"] == "AGREEMENT_DEFAULT_1_YEAR" and x["default"] for x in j["rules"])
+        assert c.get("/api/hub/reading-check").status_code in (401, 403)
+    finally:
+        for x in runs:
+            s.delete(x)
+        s.commit()
+        s.close()
