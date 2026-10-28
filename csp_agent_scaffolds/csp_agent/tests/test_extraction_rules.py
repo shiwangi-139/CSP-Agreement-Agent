@@ -760,7 +760,7 @@ def test_a_hidden_validity_gets_its_own_check_and_explanation():
 # under the date the DC typed (25-05-2025) + 1 year instead of 26-05-2025 -> 25-05-2028.
 MITAN = ('--- Page 2 --- CusrouER Senvrce Porrur AcRrrvrrur On this day ol 26th May 2025("Effective Date"), Mitan Prasad '
          'Verma, an lndian national, son/daughter of X. Eko and CSP have recorded the terms of their relationship for a '
-         'period oft16 months commencing from 26/ 05/ 2025 an ending on 25 I 05 I 2028.')
+         'period oft16 months commencing\nfrom 26/ 05/ 2025 an ending on 25 I 05 12028.\n2.\nREMUNERATIoN\nA. Eko shall')
 
 
 def test_scan_damaged_dates_and_period_are_read_right():
@@ -771,7 +771,9 @@ def test_scan_damaged_dates_and_period_are_read_right():
 
 @pytest.mark.parametrize("text, expected", [
     ("25 I 05 I 2028", date(2028, 5, 25)), ("25 l 05/ 2028", date(2028, 5, 25)), ("25 | 05 | 2028", date(2028, 5, 25)),
+    ("25 I 05 12028", date(2028, 5, 25)),           # the second slash read as a "1" glued to the year
     ("25 I 13 I 2028", None),                       # no month 13: left alone
+    ("25 I 05 12028 4", date(2028, 5, 25)), ("Rs 12 I 05 120281", None),
 ])
 def test_slashes_read_as_letters(text, expected):
     from app.ai.extraction.rules.dates import normalize

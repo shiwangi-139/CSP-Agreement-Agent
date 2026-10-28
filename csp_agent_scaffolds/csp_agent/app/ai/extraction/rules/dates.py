@@ -99,7 +99,10 @@ def strip_camera_stamps(text: str) -> str:
     return "\n".join(out)
 
 
-_LETTER_SEPARATORS = re.compile(r"(?<![\w])(\d{1,2})\s?([iIl|!/])\s?(\d{1,2})\s?([iIl|!/])\s?((?:19|20)\d{2})(?!\d)")
+# The second one can also be a "1" glued to the year: "25 I 05 12028" (Mitan
+# Prasad Verma 1A850197) -- only when a 19xx / 20xx year follows at once.
+_LETTER_SEPARATORS = re.compile(r"(?<![\w])(\d{1,2})\s?([iIl|!/])\s?(\d{1,2})\s?([iIl|!/]|1(?=(?:19|20)\d{2}(?!\d)))\s?"
+                                r"((?:19|20)\d{2})(?!\d)")
 
 
 def _slashes(m: re.Match) -> str:
@@ -125,8 +128,8 @@ def normalize(text: str) -> str:
         text = pat.sub(rep, text)
     # Recover dates with garbled OCR separators (e.g. 07i0512026 -> 07/05/2026)
     text = re.sub(r"(?<!\d)(\d{1,2})[i|!](\d{1,2})[1/|]((?:19|20)\d{2})(?!\d)", r"\1/\2/\3", text)
-    # Slashes read as letters, often with spaces: "25 I 05 I 2028", "25 l 05/ 2028"
-    # (Mitan Prasad Verma 1A850197). Only with a valid day and month.
+    # Slashes read as letters, often with spaces: "25 I 05 I 2028", "25 l 05/ 2028",
+    # "25 I 05 12028" (Mitan Prasad Verma 1A850197). Only with a valid day and month.
     text = _LETTER_SEPARATORS.sub(_slashes, text)
     # A handwritten "2" in the year read as "9": "15-04-9026" -> 15-04-2026.
     # Only in a full day-month-year shape, and only 9010-9039.
