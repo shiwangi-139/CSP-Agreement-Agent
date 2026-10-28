@@ -15,6 +15,10 @@ What happens to each current document (no AI model, one file at a time):
   check validity  an agreement still valid only by a guessed validity (no
                 term read): stays accepted, and a person sets its real term in
                 the Review queue ("Validity stated").
+  validity hidden  an agreement (valid or expired) whose validity sentence
+                is there but a stamp hides its number ("remain valid for a
+                from the Effective Date"): a person reads the years on the
+                document and sets them in the Review queue ("Validity stated").
   kept          dates a person entered or confirmed are never changed.
   1-year rule   an agreement held in the Review queue only because the old
                 rules treated the 1-year default as a guess ("No validity
@@ -58,6 +62,9 @@ def decide(doc: Document, ex: dict) -> tuple[str, str]:
     exp = ex.get("expiry_date")
     new_expiry = None if exp == "LIFETIME_NO_EXPIRY" else _d(exp)
     if new_issue == doc.issue_date and new_expiry == doc.expiry_date:
+        if doc.document_type == "AGREEMENT" and ex.get("validity_hidden") \
+                and "DEFAULT" in (doc.validity_rule_used or "").upper():
+            return "validity hidden", f"{doc.status.value.lower()} by the 1-year rule, but a stamp hides the stated years"
         if doc.document_type == "AGREEMENT" and doc.status == DocumentStatus.VALID \
                 and "DEFAULT" in (doc.validity_rule_used or "").upper():
             return "check validity", "still valid, but only by a guessed validity"
@@ -96,7 +103,7 @@ def main():
             ex = read_isolated(path, doc.document_type, a.timeout)
             what, why = decide(doc, ex)
             counts[what] = counts.get(what, 0) + 1
-            if what in ("corrected", "to review", "check validity"):
+            if what in ("corrected", "to review", "check validity", "validity hidden"):
                 print(f"{csp.current_code} {csp.name[:22]:22} {doc.document_type[:6]:6} {doc.issue_date} -> {doc.expiry_date}"
                       f"   now {ex.get('start_date')} -> {ex.get('expiry_date')}   [{what}] {why[:90]}", flush=True)
             if a.apply and what == "corrected":
@@ -114,12 +121,20 @@ def main():
                     f"Re-read with the current rules: stored {doc.issue_date} -> {doc.expiry_date}, now read "
                     f"{ex.get('start_date')} -> {ex.get('expiry_date')}. {why}. Check the dates on the document.")[:500]))
                 touched.add(csp.id)
-            elif a.apply and what == "check validity" and not db.query(ManualReviewQueue).filter(
-                    ManualReviewQueue.document_id == doc.id, ManualReviewQueue.status == ReviewStatus.PENDING).count():
-                db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=(
-                    f"Validity check: no term or end date was read, so a guessed validity was used (expiry "
-                    f"{doc.expiry_date:%d-%m-%Y}). Accepted meanwhile. Read the term on the document and set it "
-                    "under 'Validity stated' (e.g. 3 years), then Accept.")))
+            elif a.apply and what in ("check validity", "validity hidden"):
+                pending = db.query(ManualReviewQueue).filter(ManualReviewQueue.document_id == doc.id,
+                                                             ManualReviewQueue.status == ReviewStatus.PENDING).first()
+                reason = (f"Validity check: the validity sentence is there but its number is hidden (a stamp or seal "
+                          f"covers it), so the 1-year rule was used (expiry {doc.expiry_date:%d-%m-%Y}). Read the years "
+                          "in the heading on the document and set them under 'Validity stated' (e.g. 3 years), then "
+                          "Accept.") if what == "validity hidden" else (
+                          f"Validity check: no term or end date was read, so a guessed validity was used (expiry "
+                          f"{doc.expiry_date:%d-%m-%Y}). Accepted meanwhile. Read the term on the document and set it "
+                          "under 'Validity stated' (e.g. 3 years), then Accept.")
+                if pending is None:
+                    db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=reason))
+                elif what == "validity hidden" and pending.reason.startswith("Validity check"):
+                    pending.reason = reason
             if a.apply:
                 db.flush()
             if i % 25 == 0:

@@ -92,6 +92,23 @@ def test_a_valid_agreement_kept_only_by_a_guess_gets_a_check_but_stays_accepted(
     assert db.query(ManualReviewQueue).filter_by(document_id=doc.id).one().reason.startswith("Validity check")
 
 
+def test_an_expired_agreement_whose_years_a_stamp_hides_gets_a_hidden_validity_check(db_session, tmp_path, monkeypatch, capsys):
+    db = db_session
+    lines = ["CUSTOMER SERVICE POINT AGREEMENT", "(This Agreement shall remain valid for a from the Effective Date.)",
+             'On this day of, 11/06/2024 ("Effective Date"), CSP Name X',
+             "Eko hereby appoints the CSP. Security deposit. In witness whereof the parties sign."]
+    c, doc = _doc(db, tmp_path, lines, status=DocumentStatus.EXPIRED, issue_date=date(2024, 6, 11),
+                  expiry_date=date(2025, 6, 11), validity_rule_used="AGREEMENT_DEFAULT_1_YEAR")
+    _run(db, monkeypatch, "--csp", c.current_code)                    # dry run: listed, nothing written
+    assert "[validity hidden]" in capsys.readouterr().out
+    assert db.query(ManualReviewQueue).filter_by(document_id=doc.id).count() == 0
+    _run(db, monkeypatch, "--csp", c.current_code, "--apply")
+    capsys.readouterr()
+    db.expire_all()
+    q = db.query(ManualReviewQueue).filter_by(document_id=doc.id).one()
+    assert "number is hidden" in q.reason and db.get(Document, doc.id).status == DocumentStatus.EXPIRED
+
+
 def test_an_agreement_held_only_by_the_old_default_rule_becomes_expired_with_a_check(db_session, tmp_path, monkeypatch, capsys):
     from app.compliance import evaluate
     from app.models import ReviewStatus

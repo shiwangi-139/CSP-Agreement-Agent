@@ -116,7 +116,10 @@ def explain(ex: dict, typed_issue: Optional[date] = None) -> dict:
     rule = ex.get("validity_rule_used") or ""
     if end or rule:
         lines.append({"what": "Valid till", "value": _fmt(end) or "?",
-                      "how": VALIDITY.get(rule, rule.replace("_", " ").lower()),
+                      "how": (f"{rule.split('_')[2].lower()} year by Eko's rule meanwhile: the validity sentence is "
+                              "there but its number is hidden under a stamp (a person checks it)")
+                      if ex.get("validity_hidden") and rule.startswith("AGREEMENT_DEFAULT")
+                      else VALIDITY.get(rule, rule.replace("_", " ").lower()),
                       "text": None if "DEFAULT" in rule or "LIFETIME" in rule else _find_validity(text, end)})
     for line in camera_stamp_lines(text):
         ignored.append(f"Phone camera stamp: {line.strip()[:60]}")

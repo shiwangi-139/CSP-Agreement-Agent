@@ -696,3 +696,60 @@ def test_an_agreement_still_reads_as_an_agreement():
     t = ('CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 01/01/2026 ("Effective Date"), X\nEko hereby appoints X.\n'
          "CSP shall submit police verification and character certificate. nothing adverse\n")
     assert classify_allowlist_gate(t, "a.pdf", "AGREEMENT")[1] == "AGREEMENT"
+
+
+# A notary seal over "a period of three (3) years" in the heading: OCR kept
+# only "remain valid for a from the Effective Date" (Gurupad Mahato 1A852377).
+SEALED_HEADING = ("CUSTOMER SERVICE POINT AGREEMENT (This Agreeme nt shall r*main valid for a from the Effective Date.) "
+                  "On this day of, 01 October 2026, CSP Name GURUPAD MAHATO CSP Code LA852377 an lndian national")
+DEPOSIT_CLAUSE = ("This security deposit shall be refunded in all cases where CSP terminates the Agreement in accordance "
+                  "with Clause I(4)B after providing 36 months of continuous Services to customers. B. If, within 36 "
+                  "months of Effective Date, CSP terminates the Agreement in accordance with Clause I(4)B, a minimum "
+                  "penalty as mentioned in Clause 3 of Annexure 2 will apply to CSP's security deposit.")
+
+
+def test_validity_hidden_under_a_seal_is_flagged_not_read_as_a_period():
+    r = extract_agreement(SEALED_HEADING + " " + DEPOSIT_CLAUSE, today=date(2026, 10, 28))
+    assert r["issue_date"] == date(2026, 10, 1) and r["validity_source"] == "AGREEMENT_DEFAULT_1_YEAR"
+    assert r["validity_hidden"] and not r["explicit_expiry"]
+
+
+@pytest.mark.parametrize("heading, years", [
+    ("(This Agreement shall remain valid for a period of three (3) years from the Effective Date.)", 3),
+    ("(This Agreement shall remain valid for a pen od of Wee (3) years from the Effective Date.)", 3),
+    ("(This Agreement shall remain valid for a period of two (2) years from the Effective Date.)", 2),
+])
+def test_a_readable_validity_heading_is_not_called_hidden(heading, years):
+    r = extract_agreement(f"CUSTOMER SERVICE POINT AGREEMENT {heading} On this day of, 01 October 2026, CSP Name X "
+                          + DEPOSIT_CLAUSE, today=date(2026, 10, 28))
+    assert not r.get("validity_hidden")
+    if years == 3:
+        assert r["has_explicit_3year_clause"]
+    else:
+        assert r["explicit_expiry"] == date(2028, 10, 1)
+
+
+def test_the_deposit_clause_alone_is_neither_a_period_nor_hidden():
+    r = extract_agreement("CUSTOMER SERVICE POINT AGREEMENT On this day of, 01 October 2026, CSP Name X " + DEPOSIT_CLAUSE,
+                          today=date(2026, 10, 28))
+    assert r["validity_source"] == "AGREEMENT_DEFAULT_1_YEAR" and not r["validity_hidden"]
+    assert not r["explicit_expiry"] and not r["has_explicit_3year_clause"]
+
+
+def test_a_hidden_validity_gets_its_own_check_and_explanation():
+    import pymupdf
+    from app.ai.extraction.deterministic_extractor import extract_document_fields_deterministic
+    from app.why import explain
+    d = pymupdf.open()
+    page = d.new_page()
+    for i, line in enumerate(["CUSTOMER SERVICE POINT AGREEMENT",
+                              "(This Agreement shall remain valid for a from the Effective Date.)",
+                              'On this day of, 01/10/2026 ("Effective Date"), CSP Name X',
+                              "Eko hereby appoints the CSP. Security deposit. In witness whereof the parties sign."]):
+        page.insert_text((30, 60 + 20 * i), line, fontsize=8)
+    r = extract_document_fields_deterministic(d.tobytes(), "a.pdf", allow_llm_fallback=False, expected_type="AGREEMENT",
+                                              today=date(2026, 10, 28))
+    assert r["compliance_status"] == "VALID" and r["expiry_date"] == "2027-10-01" and r["validity_hidden"]
+    assert r["validity_check"].startswith("Validity check: the validity sentence is there but its number is hidden")
+    how = next(x for x in explain(r)["lines"] if x["what"] == "Valid till")["how"]
+    assert "hidden under a stamp" in how and "no validity written" not in how

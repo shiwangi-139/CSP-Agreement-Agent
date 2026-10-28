@@ -421,7 +421,11 @@ def extract_document_fields_deterministic(
     if doc_type == "AGREEMENT" and status in ("VALID", "EXPIRED") \
             and (validity_source or "").startswith("AGREEMENT_DEFAULT") \
             and not three_year and not r.get("explicit_expiry"):
-        validity_check = (f"Validity check: no term or end date was read, so the {AGREEMENT_DEFAULT_YEARS}-year rule "
+        validity_check = (f"Validity check: the validity sentence is there but its number is hidden (a stamp or seal "
+                          f"covers it), so the {AGREEMENT_DEFAULT_YEARS}-year rule was used meanwhile (expiry "
+                          f"{expiry:%d-%m-%Y}). Read the years in the heading on the document and set them under "
+                          "'Validity stated' (e.g. 3 years), then Accept.") if r.get("validity_hidden") else (
+                          f"Validity check: no term or end date was read, so the {AGREEMENT_DEFAULT_YEARS}-year rule "
                           f"was used (expiry {expiry:%d-%m-%Y}"
                           + ("; accepted meanwhile" if status == "VALID" else "; the CSP is asked to renew it")
                           + "). If the document states a longer term, set it under 'Validity stated' "
@@ -459,5 +463,6 @@ def extract_document_fields_deterministic(
         model_provider=(model_ans or {}).get("provider"),
         type_review=type_review,
         validity_check=validity_check,
+        validity_hidden=bool(r.get("validity_hidden")) or None,
         **common,
     )

@@ -47,7 +47,7 @@ def _read(path: str, doc_type: str, q) -> None:
                                                    allow_llm_fallback=False, expected_type=doc_type)
         q.put({k: ex.get(k) for k in ("readability", "document_type", "start_date", "expiry_date",
                                       "validity_rule_used", "type_review", "validity_conflict",
-                                      "compliance_status", "rejection_reason", "date_source")})
+                                      "compliance_status", "rejection_reason", "date_source", "validity_hidden")})
     except Exception as e:                                       # reported, the check goes on
         q.put({"error": f"{type(e).__name__}: {e}"[:200]})
 

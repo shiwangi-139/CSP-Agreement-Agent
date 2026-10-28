@@ -27,6 +27,9 @@ Validity, first match wins:
   A printed last day that disagrees with a stated period by more than a
   month is reported in validity_conflict (a person checks it).
   d. Validity not stated anywhere: default 1 year (AGREEMENT_DEFAULT_YEARS).
+     When the validity sentence is there but a stamp has wiped its number
+     ("remain valid for a from the Effective Date"), validity_hidden is set so
+     the person checking it is told to read the years in the heading.
 """
 import re
 from datetime import date
@@ -197,6 +200,15 @@ YEARS_FROM_SIGNING = re.compile(
     r"\b(one|two|four|five|[1245])\b\s*(?:\(\s*[1245]\s*\)\s*)?y(?:ea)?rs?\s+from\s+the\s+date\s+of\s+(?:sign|exec)", re.I)
 
 
+# The heading "shall remain valid for a period of three (3) years from the
+# Effective Date" with a notary seal over the middle: OCR keeps only "remain
+# valid for a from the Effective Date" (Gurupad Mahato 1A852377). Nothing
+# between "valid for" and "from the" may be a number, or it was read.
+VALIDITY_HIDDEN = re.compile(
+    r"va\w?id\s+for\s+(?:(?!\d|one\b|two\b|three|thr[e3]{2}|four|five|years?|months?)[^.\n]){0,30}?"
+    r"from\s+the\s+(?:effective|date)", re.I)
+
+
 def stated_years(text: str) -> Optional[int]:
     flat = re.sub(r"\s+", " ", normalize(text))
     m = STATED_YEARS.search(flat) or YEARS_FROM_SIGNING.search(flat)
@@ -326,4 +338,5 @@ def extract_agreement(text: str, today: Optional[date] = None) -> dict:
         else:
             out["validity_years"] = AGREEMENT_DEFAULT_YEARS
             out["validity_source"] = f"AGREEMENT_DEFAULT_{AGREEMENT_DEFAULT_YEARS}_YEAR"
+            out["validity_hidden"] = bool(VALIDITY_HIDDEN.search(re.sub(r"\s+", " ", text)))
     return out
