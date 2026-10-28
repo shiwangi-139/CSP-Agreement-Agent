@@ -1,5 +1,6 @@
 """The DC master link: one link for every working CSP; locked documents,
 duplicates and the Review queue listing."""
+import uuid
 from datetime import date, datetime, timedelta
 
 from app import auth
@@ -229,7 +230,45 @@ def test_dc_progress_compares_the_previous_day_with_now(client, monkeypatch):
     assert d["base_day"] is not None
     row = next(r for r in d["rows"] if r["dc"] == "DC Progress Person")
     assert row == {"dc": "DC Progress Person", "csps": 1, "left_now": 1, "complete_before": 0, "complete_now": 0,
-                   "valid_before": 0, "valid_now": 1, "improved": 1, "worse": 0, "need_now": 1}
+                   "valid_before": 0, "valid_now": 1, "improved": 1, "worse": 0, "need_now": 1,
+                   "recv_agr": 0, "recv_pvr": 1, "recv_iibf": 0, "need_agr": 1}
+
+
+def test_dc_progress_received_per_day_and_past_days(client, monkeypatch):
+    from app.models import InternalUser, LabelSnapshot
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+    c, Session = client
+    cid, _, _ = _csp(Session)
+    day = date.today() - timedelta(days=3)
+    noon_utc = datetime.combine(day, datetime.min.time()) + timedelta(hours=6, minutes=30)   # 12:00 India time
+    s = Session()
+    dc = InternalUser(name="DC Received Person", role="DC")
+    s.add(dc)
+    s.flush()
+    s.get(CSP, cid).dc_id = dc.id
+    s.query(LabelSnapshot).filter(LabelSnapshot.csp_id == cid).delete()
+    s.add(LabelSnapshot(day=day, csp_id=cid, category=4,
+                        docs={"AGREEMENT": "MISSING", "POLICE_VERIFICATION": "MISSING", "IIBF_CERTIFICATE": "MISSING"}))
+    s.add(LabelSnapshot(day=day + timedelta(days=1), csp_id=cid, category=3,
+                        docs={"AGREEMENT": "MISSING", "POLICE_VERIFICATION": "VALID", "IIBF_CERTIFICATE": "VALID"}))
+    for t, when, src in (("POLICE_VERIFICATION", noon_utc, None),                      # CSP link that day
+                         ("IIBF_CERTIFICATE", day.replace(year=day.year - 1), noon_utc),  # email sent that day
+                         ("IIBF_CERTIFICATE", noon_utc, noon_utc - timedelta(days=30)),   # old email, saved that day
+                         ("AGREEMENT", noon_utc + timedelta(days=1), None)):              # the next day
+        s.add(Document(csp_id=cid, document_type=t, status=DocumentStatus.NEEDS_REVIEW, uploaded_at=when,
+                       source_date=src, sha256=uuid.uuid4().hex))
+    s.commit()
+    s.close()
+    d = c.get(f"/api/hub/dc-progress?day={day.isoformat()}", headers=hdr).json()
+    assert (d["base_day"], d["after_day"], d["day"]) == (day.isoformat(), (day + timedelta(days=1)).isoformat(), day.isoformat())
+    row = next(r for r in d["rows"] if r["dc"] == "DC Received Person")
+    assert (row["recv_agr"], row["recv_pvr"], row["recv_iibf"], row["need_agr"]) == (0, 1, 1, 1)
+    assert (row["valid_before"], row["valid_now"], row["improved"], row["left_now"]) == (0, 2, 1, 1)
+    row = next(r for r in c.get(f"/api/hub/dc-progress?day={(day + timedelta(days=1)).isoformat()}", headers=hdr)
+               .json()["rows"] if r["dc"] == "DC Received Person")
+    assert row["recv_agr"] == 1
+    assert c.get(f"/api/hub/dc-progress?day={(day - timedelta(days=400)).isoformat()}", headers=hdr).json()["base_day"] is None
 
 
 def test_one_link_always_shown_never_expires_and_the_shared_one_can_be_brought_back(client, monkeypatch):

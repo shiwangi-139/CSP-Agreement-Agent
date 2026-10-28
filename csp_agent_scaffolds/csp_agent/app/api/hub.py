@@ -1079,10 +1079,11 @@ def _dc_or_404(db: Session, dc_id: int):
 
 
 @router.get("/dc-progress", dependencies=[Depends(require_admin)])
-def dc_progress(db: Session = Depends(get_db)):
-    """Per DC: documents valid and CSPs complete on the previous day and now."""
+def dc_progress(day: Optional[date] = None, db: Session = Depends(get_db)):
+    """Per DC: documents valid and CSPs complete on the previous day and now,
+    or over a past `day`; and the documents received on that day."""
     from .. import reports
-    return reports.dc_progress(db)
+    return reports.dc_progress(db, day=day)
 
 
 @router.get("/dc-summary", dependencies=[Depends(require_admin)])
