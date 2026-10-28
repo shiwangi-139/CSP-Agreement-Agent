@@ -47,7 +47,8 @@ EFFECTIVE_LABEL = re.compile(r"effective\s*date\s*[:\-–]\s*", re.I)
 # garbles the heading (",USTOMER SERVICEINT AGREEMENT"). OCR also reads "day"
 # as "gev" or "dav".
 # The stamp over the first line can also swallow "On t": "nhis day of, 15-04-2026".
-THIS_DAY_OF = re.compile(r"(?:on\s+th[il1]s\s+\w{2,4}|\b[tn]?h[il1]s\s+d[aeo][yv])\s+of\s*[,.:]?\s*[_\s]*", re.I)
+# "of" itself can come out as "ol" / "o1" / "oi" (Mitan Prasad Verma 1A850197).
+THIS_DAY_OF = re.compile(r"(?:on\s+th[il1]s\s+\w{2,4}|\b[tn]?h[il1]s\s+d[aeo][yv])\s+o[fl1i]\s*[,.:]?\s*[_\s]*", re.I)
 
 # OCR-tolerant: "three (3) years", "three (3) yea.s", "per od oJ three (3)",
 # "Three (3) Years", "3 years", Hindi "तीन वर्ष" / "3 वर्ष" / "तीन साल".
@@ -218,9 +219,11 @@ def stated_years(text: str) -> Optional[int]:
 MONTH_WORDS = {"twelve": 12, "eighteen": 18, "twenty-four": 24, "twenty four": 24, "thirty-six": 36,
                "thirty six": 36, "forty-eight": 48, "forty eight": 48, "sixty": 60}
 # "the terms of their relationship for a period of 36 months", "agreement ... thirty-six (36) months".
+# The number stands on its own or right after "of" ("of36"); one glued to a
+# stray letter is a damaged number ("oft16" was "of 36"), not a period.
 STATED_MONTHS = re.compile(
     r"(?:agreement|relationship|term)[^.\n]{0,80}?(?:period|for|valid|validity)[^.\n]{0,20}?"
-    r"(?:of)?\s*(twelve|eighteen|twenty[- ]four|thirty[- ]six|forty[- ]eight|sixty|\d{2})\s*"
+    r"(?:\bof\s*|\s)(twelve|eighteen|twenty[- ]four|thirty[- ]six|forty[- ]eight|sixty|\d{2})\s*"
     r"(?:\(\s*\d{2}\s*\)\s*)?months?\b", re.I)
 
 

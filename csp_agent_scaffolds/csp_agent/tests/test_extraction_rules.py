@@ -753,3 +753,38 @@ def test_a_hidden_validity_gets_its_own_check_and_explanation():
     assert r["validity_check"].startswith("Validity check: the validity sentence is there but its number is hidden")
     how = next(x for x in explain(r)["lines"] if x["what"] == "Valid till")["how"]
     assert "hidden under a stamp" in how and "no validity written" not in how
+
+
+# Mitan Prasad Verma (1A850197), DC link, 28-10-2026: the scan read "day of" as
+# "day ol", "36" as "t16" and the slashes of the end date as "I". It was put
+# under the date the DC typed (25-05-2025) + 1 year instead of 26-05-2025 -> 25-05-2028.
+MITAN = ('--- Page 2 --- CusrouER Senvrce Porrur AcRrrvrrur On this day ol 26th May 2025("Effective Date"), Mitan Prasad '
+         'Verma, an lndian national, son/daughter of X. Eko and CSP have recorded the terms of their relationship for a '
+         'period oft16 months commencing from 26/ 05/ 2025 an ending on 25 I 05 I 2028.')
+
+
+def test_scan_damaged_dates_and_period_are_read_right():
+    r = extract_agreement(MITAN, today=date(2026, 10, 28))
+    assert (r["issue_date"], r["date_source"]) == (date(2025, 5, 26), "AGREEMENT_THIS_DAY_OF")
+    assert r["explicit_expiry"] == date(2028, 5, 25) and not r.get("validity_conflict")   # "t16" is not a period
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("25 I 05 I 2028", date(2028, 5, 25)), ("25 l 05/ 2028", date(2028, 5, 25)), ("25 | 05 | 2028", date(2028, 5, 25)),
+    ("25 I 13 I 2028", None),                       # no month 13: left alone
+])
+def test_slashes_read_as_letters(text, expected):
+    from app.ai.extraction.rules.dates import normalize
+    assert [f.value for f in find_dates(text)] == ([expected] if expected else [])
+    assert len(normalize(text)) == len(text)        # same length, so positions in the text stay right
+
+
+@pytest.mark.parametrize("wording, months", [
+    ("the terms of their relationship for a period oft16 months", None),
+    ("the terms of their relationship for a period of36 months", 36),
+    ("the terms of their relationship for a period of 36 months", 36),
+    ("This agreement is valid for thirty-six (36) months", 36),
+])
+def test_a_period_number_glued_to_a_stray_letter_is_not_read(wording, months):
+    from app.ai.extraction.rules.agreement import stated_months
+    assert stated_months(wording) == months
