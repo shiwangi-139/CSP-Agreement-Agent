@@ -473,6 +473,32 @@
       + panel("How long they wait", "", bars(d.by_age.map(([k, v]) => [k, v, /days/.test(k) && v ? (k.startsWith("2") || k.startsWith("over") ? "bad" : "warn") : ""])))
       + panel("Waiting for", "RM of the CSP", bars(d.by_rm)) + `</div>`;
     },
+    signals(d) {
+      const c = d.causes, kinds = d.kinds.filter((k) => k.kind !== "S10_REVIEW_CAUSE");
+      const week = kinds.reduce((a, k) => a + k.this_week, 0), last = kinds.reduce((a, k) => a + k.last_week, 0);
+      const arrow = (a, b) => a > b ? `▲ from ${b}` : a < b ? `▼ from ${b}` : "same as last week";
+      const where = (rows) => rows.map(([k, v]) => `${esc(String(k).replace(/_/g, " ").toLowerCase())} ${v}`).join(" · ");
+      const cause = (x) => `<tr><td><b>${esc(x.cause)}</b>${x.fixable ? "" : ` <span class="small muted">(policy)</span>`}</td>
+        <td class="num">${x.count}</td><td class="small">${where(x.type)}</td><td class="small">${where(x.how_read)}</td>
+        <td class="small">${where(x.channel)}</td><td class="small">${where(x.state)}</td>
+        <td class="small">${x.examples.map((e) => e.csp_id ? `<a href="#" data-csp="${e.csp_id}" title="${esc(e.detail)}">${esc(e.csp_code || e.csp_name || "CSP")}</a>` : `#${e.document_id}`).join(", ")}</td></tr>`;
+      return band(d.status.level, week ? `${week} warning sign(s) this week` : "No warning signs this week", d.status.text,
+        [`<span class="mx-chip">last collected ${ago(d.last_run)}</span>`, `<a class="mx-link" href="#" data-sigxlsx="1">Download Excel →</a>`])
+      + strip(
+        metric("Warning signs · 7 days", week, "", arrow(week, last)),
+        metric("Sent to a person · 30 days", c.total, "", "Review items and unreadable files"),
+        metric("Agent could fix", c.fixable_share == null ? "—" : Math.round(100 * c.fixable_share), c.fixable_share == null ? "" : "%",
+               "the rest are policy checks", "", c.fixable_share > 0.5 ? "warn" : ""),
+        metric("Strong signs · 30 days", kinds.reduce((a, k) => a + (k.strength === "strong" ? k.days_30 : 0), 0), "", "a mistake is likely"))
+      + `<div class="mx-cols3">` + panel("Warning signs by kind", "This week; the agent finds these itself, nobody reviews anything",
+          bars(kinds.map((k) => [k.label, k.this_week, k.strength === "strong" && k.this_week ? "bad" : ""]), "No warning signs yet."))
+      + panel("Why documents went to a person", "Last 30 days", bars(c.by_cause.map((x) => [x.cause, x.count, x.fixable ? "warn" : ""]), "Nothing yet."))
+      + panel("Same signs last week", "To compare", bars(kinds.map((k) => [k.label, k.last_week]), "Nothing last week.")) + `</div>`
+      + panel("Where each cause comes from", "Document type, how it was read, channel and state; examples open the CSP",
+          c.by_cause.length ? `<div class="tablewrap"><table><thead><tr><th>Cause</th><th class="num">Count</th><th>Type</th><th>How read</th>
+            <th>Channel</th><th>State</th><th>Examples</th></tr></thead><tbody>${c.by_cause.map(cause).join("")}</tbody></table></div>`
+          : `<p class="mx-hint">Nothing yet: the first collection runs at 03:00.</p>`);
+    },
     experience(d) {
       return band(d.status.level, d.status.level === "ok" ? "No CSP got too many or wrong messages" : d.status.text,
         `Last ${d.days} days · ${d.csps_messaged} CSPs got ${d.messages} messages.`,
@@ -827,7 +853,8 @@
     async monitoring() {
       const TABS = [["status", "Agent status"], ["documents", "Documents in"], ["accuracy", "Reading accuracy"],
                     ["review", "Review queue"], ["experience", "CSP experience"], ["messaging", "Messaging"],
-                    ["network", "Network progress"], ["quality", "Data quality"], ["use", "Dashboard use"]];
+                    ["network", "Network progress"], ["quality", "Data quality"], ["use", "Dashboard use"],
+                    ["signals", "Agent's own warnings"]];
       const tab = state.mtab || "status";
       const d = await api(`/api/hub/monitor/${tab}`);
       const nav = `<div class="mx-tabs" role="tablist">${TABS.map(([v, l]) => `<button class="${tab === v ? "on" : ""}" role="tab" aria-selected="${tab === v}" data-mtab="${v}">${l}</button>`).join("")}</div>`;
@@ -1185,7 +1212,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-attfilter],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-attfilter],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -1226,6 +1253,13 @@
         if (!r.ok) return alert("Report failed: " + r.status);
         const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
         a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "report.xlsx"; a.click(); return;
+      }
+      if (ds.sigxlsx) {
+        e.preventDefault();
+        const r = await fetch("api/hub/signals.xlsx", {credentials: "same-origin", headers: H});
+        if (!r.ok) return alert("Download failed: " + r.status);
+        const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
+        a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "signals.xlsx"; a.click(); return;
       }
       if (ds.zip) {
         e.preventDefault();

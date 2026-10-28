@@ -562,6 +562,12 @@ def dashboard_use(db: Session, days: int = 30) -> dict:
             "open_csp_questions": q_open}
 
 
+def agent_signals(db: Session) -> dict:
+    """The agent's own warning signs and the Review-queue causes (app/signals.py)."""
+    from .signals import overview
+    return overview(db)
+
+
 TABS = {"status": agent_status, "documents": documents_in, "accuracy": reading_accuracy, "review": review_queue,
         "experience": csp_experience, "messaging": messaging, "network": network, "quality": data_quality,
-        "use": dashboard_use}
+        "use": dashboard_use, "signals": agent_signals}

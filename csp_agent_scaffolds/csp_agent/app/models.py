@@ -529,3 +529,25 @@ class UserAction(Base):
     path = Column(String)
     status_code = Column(Integer)
     csp_id = Column(Integer, index=True)
+
+
+class AgentSignal(Base):
+    """A warning sign that the agent read something wrongly, or could not
+    decide on its own, found in its own records every night (app/signals.py):
+    no person has to review anything for it. Only recorded: nothing else
+    changes. One row per kind and key, so running again adds nothing."""
+    __tablename__ = "agent_signals"
+    __table_args__ = (UniqueConstraint("kind", "key", name="uq_agent_signal_kind_key"),)
+    id = Column(Integer, primary_key=True)
+    kind = Column(String, nullable=False, index=True)       # S1_REFUSED_THEN_ACCEPTED ... S10_REVIEW_CAUSE
+    key = Column(String, nullable=False)                    # what makes it unique within its kind
+    strength = Column(String)                               # strong / medium / weak / info
+    csp_id = Column(Integer, index=True)
+    document_id = Column(Integer, index=True)
+    rule = Column(String)                                   # the rule or reading route involved
+    detail = Column(Text)                                   # one line in plain words (no Aadhaar, no full text)
+    facts = Column(JSONB)                                   # for grouping: cause, how read, channel, type, state, DC
+    happened_at = Column(DateTime, index=True)              # when the underlying event happened (UTC)
+    first_seen = Column(DateTime, nullable=False)           # UTC
+    last_seen = Column(DateTime, nullable=False, index=True)
+    status = Column(String, default="NEW", nullable=False)  # NEW / GROUPED / CLOSED

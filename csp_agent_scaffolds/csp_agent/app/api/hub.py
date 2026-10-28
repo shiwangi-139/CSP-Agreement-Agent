@@ -919,6 +919,33 @@ def monitor(tab: str, days: int = 0, db: Session = Depends(get_db)):
     return fn(db, days=min(max(days, 1), 90)) if days and "days" in fn.__code__.co_varnames else fn(db)
 
 
+@router.get("/signals.xlsx", dependencies=[Depends(require_admin)])
+def signals_xlsx(days: int = 30, db: Session = Depends(get_db)):
+    """The agent's own warning signs of the last `days` days, one row each
+    (app/signals.py), to look through in Excel."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    from .. import signals
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Signals"
+    ws.append(["Signal", "Strength", "When (UTC)", "KO code", "CSP", "Document", "Type", "Cause", "How read", "Channel",
+               "State", "DC", "Rule", "Detail"])
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    for r in signals.rows_for_excel(db, days=min(max(days, 1), 180)):
+        ws.append(r)
+    for col, w in zip("ABCDEFGHIJKLMN", (32, 10, 18, 12, 24, 10, 20, 26, 16, 18, 14, 18, 26, 80)):
+        ws.column_dimensions[col].width = w
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                             headers={"Content-Disposition": f'attachment; filename="Agent_signals_{date.today().isoformat()}.xlsx"'})
+
+
 @router.get("/reading-check", dependencies=[Depends(require_admin)])
 def reading_check(db: Session = Depends(get_db)):
     """The "Reading check" card (admins): last night's reading score, fixed /
