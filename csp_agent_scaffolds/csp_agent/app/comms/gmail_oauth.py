@@ -34,23 +34,37 @@ SCOPES = [
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 CREDENTIALS_FILE = PROJECT_ROOT / "credentials.json"
 TOKEN_FILE = PROJECT_ROOT / "gmail_token.json"
+# The second inbox (GMAIL_SECOND_TOKEN) is only ever read: no send, no changes.
+SECOND_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+
+
+def second_token_file() -> Path | None:
+    """The second inbox's token file, or None when it is switched off."""
+    from ..config import GMAIL_SECOND_TOKEN
+    if not GMAIL_SECOND_TOKEN:
+        return None
+    p = Path(GMAIL_SECOND_TOKEN)
+    return p if p.is_absolute() else PROJECT_ROOT / p
 
 
 class GmailAuthRequired(RuntimeError):
     pass
 
 
-def get_gmail_service():
+def get_gmail_service(token_file: Path | None = None, scopes: list[str] | None = None):
     """
     Authenticates using credentials.json and returns an authorized Gmail API service.
     If gmail_token.json does not exist or has expired, it refreshes automatically
-    or opens a one-time browser login.
+    or opens a one-time browser login. token_file / scopes: another inbox
+    (second_token_file(), SECOND_SCOPES).
     """
+    token_file = token_file or TOKEN_FILE
+    scopes = scopes or SCOPES
     creds = None
 
     # Load existing access & refresh token
-    if TOKEN_FILE.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+    if token_file.exists():
+        creds = Credentials.from_authorized_user_file(str(token_file), scopes)
 
     # If tokens are missing or invalid, authenticate
     if not creds or not creds.valid:
@@ -68,17 +82,18 @@ def get_gmail_service():
             import sys
             if not (sys.stdin and sys.stdin.isatty()) and os.getenv("GMAIL_INTERACTIVE_AUTH") != "1":
                 raise GmailAuthRequired(
-                    "Gmail token is missing or can't be refreshed. Run "
-                    "`python -m scripts.authenticate_gmail` once in a terminal.")
+                    f"Gmail token {token_file.name} is missing or can't be refreshed. Run "
+                    "`python -m scripts.authenticate_gmail" + (" --second" if token_file != TOKEN_FILE else "")
+                    + "` once in a terminal.")
             logger.info("Opening browser window for one-time Google Workspace authentication...")
-            flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), scopes)
             creds = flow.run_local_server(port=0)
 
         # Write the token readable by this user only.
-        fd = os.open(str(TOKEN_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = os.open(str(token_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w") as token:
             token.write(creds.to_json())
-        logger.info(f"Saved authenticated credentials to {TOKEN_FILE}")
+        logger.info(f"Saved authenticated credentials to {token_file}")
 
     return build("gmail", "v1", credentials=creds)
 

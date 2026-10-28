@@ -405,6 +405,8 @@ class InboundMessage(Base):
     csp_id = Column(Integer, ForeignKey("csp.id"), nullable=True, index=True)
     # [{filename, sha256, decision: READABLE|UNREADABLE|NOT_ALLOWED|DUPLICATE, document_id, reason}]
     attachment_decisions = Column(JSONB, nullable=True)
+    # None = the main inbox; "second" = GMAIL_SECOND_TOKEN (its ids are stored as "m2:<id>").
+    mailbox = Column(String, nullable=True)
 
 
 class AgreementEvent(Base):

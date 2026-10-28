@@ -50,6 +50,7 @@ MIGRATIONS = [
     "ALTER TABLE csp ADD COLUMN IF NOT EXISTS active_override BOOLEAN DEFAULT FALSE;",
     "ALTER TABLE csp ADD COLUMN IF NOT EXISTS active_override_by VARCHAR;",
     "ALTER TABLE csp ADD COLUMN IF NOT EXISTS active_override_at TIMESTAMP;",
+    "ALTER TABLE inbound_messages ADD COLUMN IF NOT EXISTS mailbox VARCHAR;",
 ]
 
 

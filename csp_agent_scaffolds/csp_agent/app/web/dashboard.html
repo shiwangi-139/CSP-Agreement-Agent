@@ -815,7 +815,7 @@
 
     async ingestion() {
       const s = state.summary.ingestion;
-      const st = s.state || {};
+      const st = s.state || {}, sec = s.second || {}, s2 = sec.state || {};
       const d = await api("/api/hub/inbound?size=100");
       const u = await api("/api/hub/unmatched");
       const unmatchedCard = `<div class="card" style="margin-top:14px"><h2>Emails not matched to a CSP (${u.total})</h2>
@@ -840,6 +840,12 @@
           <p class="small muted">Each email is read once. Later scans fetch only mail added since the last check.</p>
           <button class="btn" data-run="gmail">Scan now</button></div>
         <div class="card"><h2>Emails by outcome</h2><div class="kv">${Object.entries(s.messages_by_status || {}).map(([k, v]) => `<dt>${badge(k)}</dt><dd class="num">${v}</dd>`).join("") || "<dt>none yet</dt><dd></dd>"}</div></div>
+        ${sec.on ? `<div class="card"><h2>Second inbox (read-only)</h2><div class="kv">
+          <dt>First look-back (${sec.backfill_days} days)</dt><dd>${s2.backfill_complete ? badge("DONE", "complete") : (s2.backfill_started_at ? badge("PENDING", "in progress") : badge("PENDING", "not started"))}</dd>
+          <dt>Messages listed</dt><dd class="num">${s2.backfill_seen ?? 0}</dd>
+          <dt>Last new-mail check</dt><dd>${when(s2.last_incremental_at)}</dd>
+          ${Object.entries(sec.messages_by_status || {}).map(([k, v]) => `<dt>${badge(k)}</dt><dd class="num">${v}</dd>`).join("")}</div>
+          <p class="small muted">Read the same way as the main inbox; the agent never sends from it or changes it. Switched off by removing GMAIL_SECOND_TOKEN from .env.</p></div>` : ""}
         <div class="card"><h2>Decisions per attachment</h2><p class="small muted">Readable → stored as current · Unreadable → kept in archive/, counts as missing · Not allowed → not stored (e.g. Aadhaar) · Duplicate → already on file.</p></div>
       </div>
       <div class="card tablewrap" style="margin-top:14px"><table><thead><tr><th>Received</th><th>Subject / sender</th><th>Outcome</th><th>Attachments</th></tr></thead><tbody>

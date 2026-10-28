@@ -2,6 +2,7 @@
 .env
 credentials.json
 gmail_token.json
+gmail_token_*.json
 *.pem
 
 # Data

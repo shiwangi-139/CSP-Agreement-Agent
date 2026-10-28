@@ -205,6 +205,11 @@ FOCUSED_REREAD = os.getenv("FOCUSED_REREAD", "on").strip().lower() not in ("0", 
 # Gmail
 GMAIL_BACKFILL_DAYS = int(os.getenv("GMAIL_BACKFILL_DAYS", "730"))
 GMAIL_SCAN_INTERVAL_MINUTES = int(os.getenv("GMAIL_SCAN_INTERVAL_MINUTES", str(EMAIL_INGESTION_INTERVAL_MINUTES)))
+# A second Gmail inbox, read the same way (read-only), while CSPs still send
+# documents there. Its token file (scripts/authenticate_gmail.py --second);
+# empty = switched off. First look-back in days.
+GMAIL_SECOND_TOKEN = os.getenv("GMAIL_SECOND_TOKEN", "").strip()
+GMAIL_SECOND_BACKFILL_DAYS = int(os.getenv("GMAIL_SECOND_BACKFILL_DAYS", "183"))
 INTERNAL_EMAIL_DOMAIN = os.getenv("INTERNAL_EMAIL_DOMAIN", "eko.co.in").lower()
 
 # The document vault (app/vault.py). A relative value is resolved against the

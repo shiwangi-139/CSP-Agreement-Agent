@@ -34,7 +34,8 @@ from typing import Callable, Optional
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .config import GMAIL_BACKFILL_DAYS, INTERNAL_EMAIL_DOMAIN, MAX_UPLOAD_SIZE_BYTES, MODEL_AUTO_FALLBACK
+from .config import (GMAIL_BACKFILL_DAYS, GMAIL_SECOND_BACKFILL_DAYS, INTERNAL_EMAIL_DOMAIN, MAX_UPLOAD_SIZE_BYTES,
+                     MODEL_AUTO_FALLBACK)
 from .db import SessionLocal
 from .models import CSP, Document, ExtractionCorrection, IngestState, InboundMessage, InternalUser, EmailCategory
 from .validation import normalize_csp_code
@@ -47,6 +48,9 @@ from .compliance import refresh_category
 logger = logging.getLogger(__name__)
 
 STATE_KEY = "gmail"
+SECOND = "second"                 # the second inbox (GMAIL_SECOND_TOKEN), read the same way
+SECOND_STATE_KEY = "gmail_2"
+ID_PREFIX = {None: "", SECOND: "m2:"}
 CODE = r"\d[A-Z]\d{6}"
 BODY_CODE = re.compile(r"CSP\s*(?:Code|ID|Id|No\.?)\s*[-:–]*\s*[\"']?(" + CODE + r")", re.I)
 BODY_NAME = re.compile(r"CSP\s*Name\s*[-:–]+\s*([^\n\r]{2,60})", re.I)
@@ -88,10 +92,10 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _state(db: Session) -> IngestState:
-    st = db.get(IngestState, STATE_KEY)
+def _state(db: Session, key: str = STATE_KEY) -> IngestState:
+    st = db.get(IngestState, key)
     if st is None:
-        st = IngestState(key=STATE_KEY, value={})
+        st = IngestState(key=key, value={})
         db.add(st)
         db.flush()
     return st
@@ -272,23 +276,25 @@ def _category(subject: str, body: str) -> EmailCategory:
     return EmailCategory.UNKNOWN
 
 
-def process_message(db: Session, service, msg_id: str, known_anywhere: bool = False) -> str:
+def process_message(db: Session, service, msg_id: str, known_anywhere: bool = False, mailbox: Optional[str] = None) -> str:
     """Process one Gmail message end to end. Returns the final status.
     known_anywhere=True (scripts/reprocess_emails.py): a file already stored
     for ANY CSP is left as it is, so reading an email again only adds the
-    attachments that were never stored."""
+    attachments that were never stored. mailbox=SECOND: from the second
+    inbox, whose ids are stored with a prefix (Gmail ids are per inbox)."""
     from .comms.gmail_oauth import get_message, fetch_attachment_bytes
 
-    if db.query(InboundMessage.id).filter(InboundMessage.external_message_id == msg_id).first():
+    ext_id = ID_PREFIX[mailbox] + msg_id
+    if db.query(InboundMessage.id).filter(InboundMessage.external_message_id == ext_id).first():
         return "ALREADY_PROCESSED"
 
     item = get_message(service, msg_id)
     sender_email = parseaddr(item["sender"])[1].lower()
     received = _email_date(item)
     if not is_relevant(db, item["subject"], sender_email):
-        if db.query(InboundMessage.id).filter(InboundMessage.external_message_id == msg_id).first():
+        if db.query(InboundMessage.id).filter(InboundMessage.external_message_id == ext_id).first():
             return "ALREADY_PROCESSED"
-        db.add(InboundMessage(external_message_id=msg_id, thread_id=item.get("thread_id"),
+        db.add(InboundMessage(external_message_id=ext_id, thread_id=item.get("thread_id"), mailbox=mailbox,
                               sender=item["sender"][:300], subject=(item["subject"] or "")[:500],
                               received_at=received, status="IGNORED_NOT_RELEVANT", processed_at=_now(),
                               sender_on_sheet=sender_is_known(db, sender_email),
@@ -296,7 +302,7 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
         return "IGNORED_NOT_RELEVANT"
     attachments = [a for a in item["attachments"] if a["filename"].lower().endswith(ATTACHMENT_EXTS)]
     inbound = InboundMessage(
-        external_message_id=msg_id, thread_id=item.get("thread_id"), sender=item["sender"][:300],
+        external_message_id=ext_id, thread_id=item.get("thread_id"), mailbox=mailbox, sender=item["sender"][:300],
         subject=(item["subject"] or "")[:500], email_category=_category(item["subject"], item["body"]),
         received_at=received, status="PROCESSING", sender_on_sheet=sender_is_known(db, sender_email),
     )
@@ -421,7 +427,7 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
             with db.begin_nested():
                 out = store_extracted_document(
                     db, owner, data, att["filename"], detect_mime(data), ex, channel="GMAIL_INBOUND",
-                    source_message_id=msg_id, source_date=received, sender_on_sheet=inbound.sender_on_sheet)
+                    source_message_id=ext_id, source_date=received, sender_on_sheet=inbound.sender_on_sheet)
             known = out.document if out.decision == "DUPLICATE" else None
             entry.update(decision=out.decision, reason=review or out.reason,
                          document_id=out.document.id if out.document else None,
@@ -443,10 +449,10 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
     return inbound.status
 
 
-def _process_ids(db: Session, service, ids: list[str], summary: dict) -> None:
+def _process_ids(db: Session, service, ids: list[str], summary: dict, mailbox: Optional[str] = None) -> None:
     for mid in ids:
         try:
-            status = process_message(db, service, mid)
+            status = process_message(db, service, mid, mailbox=mailbox)
             db.commit()
             summary[status] = summary.get(status, 0) + 1
         except Exception as e:
@@ -467,69 +473,93 @@ def run_scan(max_messages: int = 200) -> dict:
 
 
 def _run_scan(max_messages: int = 200) -> dict:
-    """Continue the backfill if unfinished, otherwise fetch only new mail."""
-    from .comms.gmail_oauth import (get_gmail_service, list_message_ids, current_history_id,
-                                    new_message_ids_since, HistoryTooOld)
+    """The main inbox, then the second one if it is switched on. A problem
+    with the second inbox never stops the main one."""
+    from .comms.gmail_oauth import SECOND_SCOPES, get_gmail_service, second_token_file
 
     db = SessionLocal()
-    summary: dict = {"mode": None}
     try:
-        service = get_gmail_service()
-        st = _state(db)
-        state = dict(st.value or {})
-        if not state.get("backfill_complete"):
-            summary["mode"] = "BACKFILL"
-            if not state.get("history_id"):
-                cutoff = (_now() - timedelta(days=GMAIL_BACKFILL_DAYS)).strftime("%Y/%m/%d")
-                _save_state(db, st, history_id=current_history_id(service), backfill_cutoff=cutoff,
-                            backfill_query_index=0, backfill_started_at=_now().isoformat(), backfill_seen=0)
-                db.commit()
-                state = dict(st.value)
-            queries = backfill_queries(db, state["backfill_cutoff"])
-            done = 0
-            while done < max_messages:
-                qi = int(st.value.get("backfill_query_index", 0))
-                if qi >= len(queries):
-                    _save_state(db, st, backfill_complete=True, backfill_finished_at=_now().isoformat(), page_token=None)
-                    db.commit()
-                    break
-                ids, token = list_message_ids(service, queries[qi], st.value.get("page_token"))
-                _process_ids(db, service, ids, summary)
-                done += len(ids)
-                changes = {"page_token": token, "backfill_seen": int(st.value.get("backfill_seen", 0)) + len(ids),
-                           "backfill_queries_total": len(queries)}
-                if not token:
-                    changes["backfill_query_index"] = qi + 1
-                _save_state(db, st, **changes)
-                db.commit()
-        else:
-            summary["mode"] = "INCREMENTAL"
+        summary = _scan_inbox(db, get_gmail_service(), STATE_KEY, GMAIL_BACKFILL_DAYS, None, max_messages)
+        token = second_token_file()
+        if token is not None:
             try:
-                ids, newest = new_message_ids_since(service, state["history_id"])
-            except HistoryTooOld:
-                # Worker was down for over a week: re-list recent mail by date.
-                # Already-processed ids are skipped, so this can't duplicate.
-                since = (_now() - timedelta(days=14)).strftime("%Y/%m/%d")
-                ids, token = [], None
-                while True:
-                    page, token = list_message_ids(service, f"{BASE_FILTER} after:{since}", token)
-                    ids += page
-                    if not token:
-                        break
-                newest = current_history_id(service)
-            _process_ids(db, service, ids[:max_messages * 5], summary)
-            _save_state(db, st, history_id=newest, last_incremental_at=_now().isoformat())
-            db.commit()
-        summary["state"] = {k: v for k, v in (st.value or {}).items() if k != "page_token"}
+                summary[SECOND] = _scan_inbox(db, get_gmail_service(token, SECOND_SCOPES), SECOND_STATE_KEY,
+                                              GMAIL_SECOND_BACKFILL_DAYS, SECOND, max_messages)
+            except Exception as e:
+                db.rollback()
+                logger.exception("gmail_second_inbox_failed")
+                summary[SECOND] = {"error": f"{type(e).__name__}: {e}"[:300]}
         return summary
     finally:
         db.close()
 
 
+def _scan_inbox(db: Session, service, key: str, backfill_days: int, mailbox: Optional[str], max_messages: int) -> dict:
+    """Continue the backfill if unfinished, otherwise fetch only new mail."""
+    from .comms.gmail_oauth import list_message_ids, current_history_id, new_message_ids_since, HistoryTooOld
+
+    summary: dict = {"mode": None}
+    st = _state(db, key)
+    state = dict(st.value or {})
+    if not state.get("backfill_complete"):
+        summary["mode"] = "BACKFILL"
+        if not state.get("history_id"):
+            cutoff = (_now() - timedelta(days=backfill_days)).strftime("%Y/%m/%d")
+            _save_state(db, st, history_id=current_history_id(service), backfill_cutoff=cutoff,
+                        backfill_query_index=0, backfill_started_at=_now().isoformat(), backfill_seen=0)
+            db.commit()
+            state = dict(st.value)
+        queries = backfill_queries(db, state["backfill_cutoff"])
+        done = 0
+        while done < max_messages:
+            qi = int(st.value.get("backfill_query_index", 0))
+            if qi >= len(queries):
+                _save_state(db, st, backfill_complete=True, backfill_finished_at=_now().isoformat(), page_token=None)
+                db.commit()
+                break
+            ids, token = list_message_ids(service, queries[qi], st.value.get("page_token"))
+            _process_ids(db, service, ids, summary, mailbox)
+            done += len(ids)
+            changes = {"page_token": token, "backfill_seen": int(st.value.get("backfill_seen", 0)) + len(ids),
+                       "backfill_queries_total": len(queries)}
+            if not token:
+                changes["backfill_query_index"] = qi + 1
+            _save_state(db, st, **changes)
+            db.commit()
+    else:
+        summary["mode"] = "INCREMENTAL"
+        try:
+            ids, newest = new_message_ids_since(service, state["history_id"])
+        except HistoryTooOld:
+            # Worker was down for over a week: re-list recent mail by date.
+            # Already-processed ids are skipped, so this can't duplicate.
+            since = (_now() - timedelta(days=14)).strftime("%Y/%m/%d")
+            ids, token = [], None
+            while True:
+                page, token = list_message_ids(service, f"{BASE_FILTER} after:{since}", token)
+                ids += page
+                if not token:
+                    break
+            newest = current_history_id(service)
+        _process_ids(db, service, ids[:max_messages * 5], summary, mailbox)
+        _save_state(db, st, history_id=newest, last_incremental_at=_now().isoformat())
+        db.commit()
+    summary["state"] = {k: v for k, v in (st.value or {}).items() if k != "page_token"}
+    return summary
+
+
 def ingestion_status(db: Session) -> dict:
-    st = db.get(IngestState, STATE_KEY)
-    value = dict(st.value) if st and st.value else {}
-    value.pop("page_token", None)
+    from .comms.gmail_oauth import second_token_file
+
+    def state(key):
+        st = db.get(IngestState, key)
+        value = dict(st.value) if st and st.value else {}
+        value.pop("page_token", None)
+        return value
     counts = dict(db.query(InboundMessage.status, __import__("sqlalchemy").func.count())
                   .group_by(InboundMessage.status).all())
-    return {"state": value, "messages_by_status": counts}
+    second = (dict(db.query(InboundMessage.status, __import__("sqlalchemy").func.count())
+                   .filter(InboundMessage.mailbox == SECOND).group_by(InboundMessage.status).all()))
+    return {"state": state(STATE_KEY), "messages_by_status": counts,
+            "second": {"on": second_token_file() is not None, "state": state(SECOND_STATE_KEY),
+                       "messages_by_status": second, "backfill_days": GMAIL_SECOND_BACKFILL_DAYS}}
