@@ -44,6 +44,7 @@ from .accuracy import how_read
 from .compliance import canonical_type
 from .models import (AgentSignal, AgreementEvent, CSP, CspQuestion, Document, DocumentStatus, ExtractionCorrection,
                      InboundMessage, InternalUser, ManualReviewQueue, ReviewStatus)
+from .safety_gate import impossible
 
 TYPES = ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE")
 LOOKBACK_DAYS = 30
@@ -78,6 +79,8 @@ def _now() -> datetime:
 def review_cause(reason: Optional[str], doc: Optional[Document] = None) -> str:
     """The cause of a Review item (its reason) or of an unreadable file."""
     r = (reason or "").lower()
+    if r.startswith("safety check"):
+        return "held: impossible dates"
     method = ((doc.extraction_method if doc is not None else None) or "").upper()
     if r.startswith(("spot check", "reference check")):
         return "deliberate check"
@@ -214,13 +217,7 @@ def collect(db: Session, now: Optional[datetime] = None, days: int = LOOKBACK_DA
             continue
         t, ex = canonical_type(d.document_type), d.extracted_fields or {}
         arrived = (d.source_date or d.uploaded_at).date()
-        problems = []
-        if d.issue_date and d.expiry_date and d.expiry_date < d.issue_date:
-            problems.append(("expiry_before_issue", f"expiry {_fmt(d.expiry_date)} is before issue {_fmt(d.issue_date)}"))
-        if d.issue_date and d.issue_date > arrived + timedelta(days=1):
-            problems.append(("issue_after_arrival", f"issue date {_fmt(d.issue_date)} is after it arrived ({_fmt(arrived)})"))
-        if d.issue_date and d.expiry_date and (d.expiry_date - d.issue_date).days > 6 * 366:
-            problems.append(("over_6_years", f"valid for over 6 years ({_fmt(d.issue_date)} → {_fmt(d.expiry_date)})"))
+        problems = impossible(d.issue_date, d.expiry_date, arrived)
         if t == "AGREEMENT" and d.status in ACCEPTED and ex.get("page_count") and ex["page_count"] < 10:
             problems.append(("short_agreement", f"accepted agreement with only {ex['page_count']} page(s)"))
         if t == "IIBF_CERTIFICATE" and d.status in ACCEPTED and not d.iibf_reg_number:
@@ -429,6 +426,8 @@ CAUSE_FIX = {
     "dates conflict": "The typed or printed dates disagree with what was read: check the examples to see which rule "
                       "reads the wrong date.",
     "file not readable": "Mostly {how}: ask CSPs for clearer scans, or improve reading of this kind of file.",
+    "held: impossible dates": "The safety gate held these because the dates cannot be right: see which rule read "
+                              "them (the 'impossible reading' finding) and fix it.",
     "other": "Look at the examples: these reasons are not sorted yet.",
 }
 IMPOSSIBLE_FIX = {

@@ -1,6 +1,7 @@
 """Read-once Gmail processing with a fake Gmail service (no network)."""
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from email.utils import format_datetime
 
 import pytest
 
@@ -33,7 +34,7 @@ def _mail(mailbox, msg_id, code, name, files, sender="Ganesh Kumar <ganesh.kumar
     mailbox[msg_id] = {
         "id": msg_id, "thread_id": "t" + msg_id, "label_ids": ["INBOX"], "message_id": f"<{msg_id}@mail>",
         "sender": sender, "subject": f'Request to terminal extension for KO "{code}"',
-        "date": "Tue, 26 May 2026 13:43:00 +0530", "internal_date_ms": 0,
+        "date": format_datetime(datetime.now(timezone.utc)), "internal_date_ms": 0,
         "body": f"Dear Sir,\n\nKindly extend the terminal for Below address.\n\nCSP Code- {code}\nCSP Name- {name}\n",
         "attachments": [{"filename": fn, "mime_type": "application/pdf", "attachment_id": fn, "size": len(b)}
                         for fn, b in files.items()],

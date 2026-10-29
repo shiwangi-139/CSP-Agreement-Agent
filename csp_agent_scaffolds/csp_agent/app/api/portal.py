@@ -793,16 +793,18 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         doc = out.document
         if ex.get("typed_issue_date"):
             doc.extracted_fields = {**(doc.extracted_fields or {}), "typed_issue_date": ex["typed_issue_date"]}
-        if needs_review:
+        if needs_review and not (doc.extracted_fields or {}).get("safety_check"):
             doc.status = DocumentStatus.NEEDS_REVIEW
             db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
                                      reason=f"Typed issue date {typed} differs from date read by model {read_date}."))
         if via_dc:
             db.flush()
             _list_for_review(db, doc, section, owner_note)
-        said = "received_check" if ex.get("type_review") else ("review" if needs_review else "accepted")
-        res.update(ok=True, message=_msg(said), reason=said, document_id=doc.id,
-                   issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))
+        held = (doc.extracted_fields or {}).get("safety_check")
+        said = "received_check" if ex.get("type_review") or held else ("review" if needs_review else "accepted")
+        res.update(ok=True, message=_msg(said), reason=said, document_id=doc.id)
+        if not held:     # dates that cannot be right are not shown to the CSP
+            res.update(issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))
 
     if not results:
         raise HTTPException(422, detail={"hi": "कम से कम एक डॉक्यूमेंट चुनें।", "en": "Please choose at least one document."})

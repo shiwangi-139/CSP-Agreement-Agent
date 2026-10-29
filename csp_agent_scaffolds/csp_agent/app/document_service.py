@@ -144,6 +144,13 @@ def store_extracted_document(
         status = DocumentStatus.NEEDS_REVIEW
     else:
         status = _status_for(extraction)
+    held = None
+    if status in (DocumentStatus.VALID, DocumentStatus.EXPIRED):
+        # Safety gate: dates that cannot be right are not accepted (app/safety_gate.py).
+        from .safety_gate import check
+        held = check(db, csp.id, doc_type, issue, expiry, (source_date or now).date())
+        if held:
+            status, fields["safety_check"] = DocumentStatus.NEEDS_REVIEW, held
     doc = Document(
         csp_id=csp.id, document_type=doc_type, sha256=sha, file_size_bytes=len(data),
         mime_type=mime_type, storage_path=path, status=status,
@@ -163,6 +170,8 @@ def store_extracted_document(
     if owner_review or type_review:
         db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
                                  reason=" ".join(r for r in (owner_review, type_review) if r)[:500]))
+    elif held:
+        db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=held[:500]))
     elif status == DocumentStatus.NEEDS_APPROVAL:
         # Dates read by the AI model: "being checked" until a person looks, so
         # it must be in the Review queue (it wasn't before 2026-10-24).
@@ -193,11 +202,13 @@ def recompute_current(db: Session, csp: CSP, doc_type: str) -> Optional[Document
     t = canonical_type(doc_type)
     same = [d for d in db.query(Document).filter(Document.csp_id == csp.id)
             if canonical_type(d.document_type) == t]
-    # A copy that may belong to another CSP counts only once a reviewer accepts it.
+    # A copy that may belong to another CSP, or held by the safety gate, counts
+    # only once a reviewer accepts it.
     usable = [d for d in same if d.status in USABLE and d.readability != "UNREADABLE"
               and not (d.status == DocumentStatus.NEEDS_REVIEW
                        and ((d.extracted_fields or {}).get("owner_check")
-                            or (d.extracted_fields or {}).get("needs_confirmation")))]
+                            or (d.extracted_fields or {}).get("needs_confirmation")
+                            or (d.extracted_fields or {}).get("safety_check")))]
     today = date.today()
 
     def rank(d: Document) -> int:
