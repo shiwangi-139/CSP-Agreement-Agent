@@ -1224,7 +1224,11 @@
     try {
       if (t.id === "closedrawer") return closeDrawer();
       if (t.id === "refresh") return render();
-      if (ds.view || ds.go) { e.preventDefault(); if (t.closest("#nav")) t.blur(); closeNav(); closeCoach(); closeDrawer(); state.view = ds.view || ds.go; state.page = 1; return render(); }
+      if (ds.view || ds.go) {
+        e.preventDefault(); if (t.closest("#nav")) t.blur(); closeNav(); closeCoach(); closeDrawer();
+        const [view, tab] = (ds.view || ds.go).split(":");        // "monitoring:signals" also picks the tab
+        state.view = view; if (tab) state.mtab = tab; state.page = 1; return render();
+      }
       if (ds.attfilter !== undefined) {
         // Today's worklist: filter the rows already on the page.
         state.attFilter = ds.attfilter;
@@ -1452,7 +1456,9 @@
       $("#n-coach").textContent = d.findings.filter((f) => f.level === "critical" || f.level === "warn").length || "";
       $(".coach-body", c).innerHTML = `<div class="overline">Findings, most urgent first</div>
         ${d.findings.map((f) => `<div class="finding ${esc(f.level)}"><div class="kind">${chip(LEVEL[f.level][0], LEVEL[f.level][1])}</div>
-          <h3>${esc(f.title)}</h3><p>${esc(f.detail)}</p>${f.action ? coachAct(f.action) : ""}</div>`).join("") || `<div class="finding good"><h3>Nothing to improve right now. ✓</h3></div>`}
+          <h3>${esc(f.title)}</h3><p>${esc(f.detail)}</p>${f.fix ? `<p class="small"><b>Suggested fix:</b> ${esc(f.fix)}</p>` : ""}
+          ${(f.examples || []).length ? `<p class="small muted">Examples: ${f.examples.map((x) => `<a href="#" data-csp="${x.csp_id}" title="${esc(x.detail || "")}">${esc(x.code || x.name)}</a>`).join(", ")}</p>` : ""}
+          ${f.action ? coachAct(f.action) : ""}</div>`).join("") || `<div class="finding good"><h3>Nothing to improve right now. ✓</h3></div>`}
         <div class="overline" style="margin-top:18px">Ask the Coach</div>
         <div class="quick">${d.questions.map((q) => `<button class="btn" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>
         <div id="coachchat"></div>

@@ -22,12 +22,13 @@ def made(db_session):
     yield rows
     db = db_session
     db.rollback()
-    ids = [r.id for r in rows if isinstance(r, Document)]
+    keys = [(type(r), r.id) for r in rows]
+    ids = [i for t, i in keys if t is Document]
     db.query(AgentSignal).filter(AgentSignal.happened_at >= datetime(2998, 1, 1)).delete()
     db.query(ManualReviewQueue).filter(ManualReviewQueue.document_id.in_(ids)).delete()
-    for r in reversed(rows):
-        if not isinstance(r, ManualReviewQueue):
-            db.query(type(r)).filter(type(r).id == r.id).delete()
+    for t, i in reversed(keys):
+        if t is not ManualReviewQueue:
+            db.query(t).filter(t.id == i).delete()
     db.commit()
 
 
@@ -186,3 +187,58 @@ def test_signals_tab_and_excel_are_admins_only(client, monkeypatch):
     r = c.get("/api/hub/signals.xlsx", headers=hdr)
     assert r.status_code == 200 and r.content[:2] == b"PK"
     assert c.get("/api/hub/signals.xlsx").status_code in (401, 403)
+
+
+# ------------------------------------------------------------ step 2: findings
+def _sign(db, made, kind, csp=None, rule=None, facts=None, at=None, key=None):
+    at = at or NOW - timedelta(days=2)
+    s = AgentSignal(kind=kind, key=key or uuid.uuid4().hex, strength="medium", csp_id=csp.id if csp else None, rule=rule,
+                    detail=f"{kind} example", facts=facts or {}, happened_at=at, first_seen=at, last_seen=at)
+    db.add(s)
+    db.flush()
+    made.append(s)
+    return s
+
+
+def test_the_weeks_signs_become_coach_findings_with_a_fix_and_examples(db_session, made):
+    db = db_session
+    cs = [_csp(db, made) for _ in range(6)]
+    _sign(db, made, "S4_IMPOSSIBLE_RESULT", cs[0], facts={"problem": "expiry_before_issue", "type": "AGREEMENT"})
+    for c in cs[:3]:
+        _sign(db, made, "S5_GUESSED_VALIDITY_WORDS", c, facts={"type": "AGREEMENT"})
+    for c in cs:
+        _sign(db, made, "S10_REVIEW_CAUSE", c, facts={"cause": "issue date not found", "fixable": True,
+                                                       "how_read": "photo (OCR)", "type": "POLICE_VERIFICATION", "state": "Bihar"})
+    for c in cs[:2]:
+        _sign(db, made, "S10_REVIEW_CAUSE", c, facts={"cause": "deliberate check", "fixable": False})
+    _sign(db, made, "S5_GUESSED_VALIDITY_WORDS", cs[0], at=NOW - timedelta(days=20))    # weeks ago: not this week
+    db.commit()
+    f = signals.findings(db, now=NOW)
+    titles = [x["title"] for x in f]
+    assert f[0]["level"] == "critical" and "impossible" in f[0]["title"] and "wrong date" in f[0]["fix"]
+    assert "3 agreements got the 1-year default although they mention validity" in titles
+    cause = next(x for x in f if "issue date not found" in x["title"])
+    assert cause["title"].startswith("75%") and "photo (ocr)" in cause["fix"] and "Bihar" in cause["detail"]
+    assert len(cause["examples"]) == 3 and cause["action"]["arg"] == "monitoring:signals"
+    assert any("could have decided 75% itself" in t for t in titles)
+
+
+def test_too_few_signs_make_no_finding(db_session, made):
+    db = db_session
+    c = _csp(db, made)
+    _sign(db, made, "S5_GUESSED_VALIDITY_WORDS", c)
+    _sign(db, made, "S6_PERSON_CORRECTED", c, rule="AGREEMENT_DEFAULT_1_YEAR")
+    db.commit()
+    assert signals.findings(db, now=NOW) == []
+
+
+def test_the_coach_shows_the_findings_and_survives_a_failure(db_session, made, monkeypatch):
+    from app import insights
+    db = db_session
+    c = _csp(db, made)
+    now = signals._now()
+    _sign(db, made, "S4_IMPOSSIBLE_RESULT", c, facts={"problem": "over_6_years"}, at=now - timedelta(hours=2))
+    db.commit()
+    assert any("impossible" in f["title"] for f in insights.coach(db))
+    monkeypatch.setattr(signals, "findings", lambda db: 1 / 0)
+    assert isinstance(insights.coach(db), list)                          # the other findings still come

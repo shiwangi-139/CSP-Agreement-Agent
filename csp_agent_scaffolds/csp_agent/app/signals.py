@@ -407,3 +407,147 @@ def rows_for_excel(db: Session, days: int = 30, now: Optional[datetime] = None) 
                     r.document_id, f.get("type") or "", f.get("cause") or "", f.get("how_read") or "",
                     f.get("channel") or "", f.get("state") or "", f.get("dc") or "", r.rule or "", r.detail or ""])
     return out
+
+
+# ------------------------------------------------------------ step 2: findings
+# The week's signs grouped into findings for the Agent Coach: what is wrong,
+# the numbers, a few examples and a suggested fix. Plain counting on the
+# agent's own records (no AI model); a person decides the fix.
+WEEK_DAYS = 7
+OPEN_SIGNS = {"label": "See the warning signs", "do": "view", "arg": "monitoring:signals"}
+CAUSE_FIX = {
+    "issue date not found": "Most of these are {how}: improve reading for that kind of file, or ask CSPs for a clear "
+                            "scanned PDF (the upload page tips).",
+    "dates only from the AI model": "The rules found no date in these; look at the examples and add the wording they use "
+                                    "to the reading rules, so the AI model is not needed.",
+    "validity guessed": "Find the validity wording these agreements use (e.g. 'valid for …', 'ending on …') and add it "
+                        "to the agreement rules.",
+    "type unclear": "Check what was uploaded: if it is a valid document, teach the type rules its wording; if it is "
+                    "the wrong paper, the upload page message can say so more clearly.",
+    "name or CSP not confirmed": "The name on the document is spelled differently from the calling sheet: check the "
+                                 "examples and correct the sheet or the name match.",
+    "dates conflict": "The typed or printed dates disagree with what was read: check the examples to see which rule "
+                      "reads the wrong date.",
+    "file not readable": "Mostly {how}: ask CSPs for clearer scans, or improve reading of this kind of file.",
+    "other": "Look at the examples: these reasons are not sorted yet.",
+}
+IMPOSSIBLE_FIX = {
+    "expiry_before_issue": "a rule took the wrong date as the issue or the expiry date",
+    "issue_after_arrival": "the issue date was read from a later date on the page (an end date or a stamp)",
+    "over_6_years": "a validity rule gave a period that is too long",
+    "short_agreement": "accepted agreements have pages missing: ask these CSPs for the full agreement",
+    "iibf_no_number": "the IIBF registration number was not read",
+}
+
+
+def _top(rows, field: str) -> Optional[str]:
+    c = Counter((r.facts or {}).get(field) for r in rows if (r.facts or {}).get(field))
+    return c.most_common(1)[0][0] if c else None
+
+
+def _examples(rows, csps: dict, n: int = 3) -> list[dict]:
+    out, seen = [], set()
+    for r in sorted(rows, key=lambda x: x.happened_at, reverse=True):
+        c = csps.get(r.csp_id)
+        if c is None or c.id in seen:
+            continue
+        seen.add(c.id)
+        out.append({"csp_id": c.id, "code": c.current_code, "name": c.name, "detail": r.detail})
+        if len(out) == n:
+            break
+    return out
+
+
+def findings(db: Session, now: Optional[datetime] = None) -> list[dict]:
+    """This week's warning signs as Coach findings, most urgent first."""
+    now = now or _now()
+    rows = (db.query(AgentSignal).filter(AgentSignal.happened_at >= now - timedelta(days=WEEK_DAYS),
+                                         AgentSignal.happened_at <= now).all())
+    csps = {c.id: c for c in db.query(CSP).filter(CSP.id.in_({r.csp_id for r in rows if r.csp_id}))}
+    by_kind = defaultdict(list)
+    for r in rows:
+        by_kind[r.kind].append(r)
+    out: list[dict] = []
+
+    def add(level, title, detail, fix, mine):
+        out.append({"level": level, "title": title, "detail": detail, "fix": fix,
+                    "examples": _examples(mine, csps), "action": OPEN_SIGNS})
+
+    def human(x):
+        return (x or "unknown").replace("_", " ").lower()
+
+    impossible = defaultdict(list)
+    for r in by_kind["S4_IMPOSSIBLE_RESULT"]:
+        impossible[(r.facts or {}).get("problem", "?")].append(r)
+    for problem, mine in sorted(impossible.items(), key=lambda kv: -len(kv[1])):
+        add("critical", f"{len(mine)} impossible reading(s) this week: {human(problem)}",
+            f"Mostly {human(_top(mine, 'type'))} read from {human(_top(mine, 'how_read'))}.",
+            f"Likely cause: {IMPOSSIBLE_FIX.get(problem, 'a rule read the wrong date')}.", mine)
+
+    corrected = defaultdict(list)
+    for r in by_kind["S6_PERSON_CORRECTED"]:
+        corrected[r.rule or "unknown rule"].append(r)
+    for rule, mine in sorted(corrected.items(), key=lambda kv: -len(kv[1])):
+        if len(mine) >= 2:
+            add("warn", f"People corrected the agent {len(mine)} times on {human(rule)}",
+                f"Mostly {human(_top(mine, 'type'))}, read from {human(_top(mine, 'how_read'))}.",
+                f"The rule '{human(rule)}' gave answers a person had to change: compare the examples and adjust it.", mine)
+
+    refused = defaultdict(list)
+    for r in by_kind["S1_REFUSED_THEN_ACCEPTED"] + by_kind["S2_SAME_FILE_AGAIN"]:
+        refused[r.rule or "unknown"].append(r)
+    for rule, mine in sorted(refused.items(), key=lambda kv: -len(kv[1])):
+        again = sum(1 for r in mine if r.kind == "S2_SAME_FILE_AGAIN")
+        if len(mine) >= 3 or again:
+            add("warn", f"{len({r.csp_id for r in mine})} CSP(s) were refused, then sent it again or got it accepted",
+                f"Refused by {human(rule)}; {again} sent the very same file again." if again else
+                f"Refused by {human(rule)}; an accepted copy came later.",
+                f"The refusal '{human(rule)}' may be too strict: open the refused files and check whether they were readable.",
+                mine)
+
+    for kind, threshold, title, fix in (
+            ("S3_READINGS_DISAGREE", 2, "{n} documents were read with different dates than another copy",
+             "The same document gave two readings: the rule is unstable on these scans; compare the two copies."),
+            ("S5_GUESSED_VALIDITY_WORDS", 3, "{n} agreements got the 1-year default although they mention validity",
+             "Their validity wording is not recognised (or a stamp hides it): add the wording to the agreement rules."),
+            ("S7_QUESTION_AFTER_REFUSAL", 3, "{n} CSPs asked a question right after a refusal",
+             "The refusal message may be unclear: check what they asked and improve the message for that reason.")):
+        mine = by_kind[kind]
+        if len(mine) >= threshold:
+            add("warn", title.format(n=len(mine)), f"Mostly {human(_top(mine, 'type'))}.", fix, mine)
+
+    stuck = defaultdict(list)
+    for r in by_kind["S8_REPEATED_UPLOAD_FAILURES"]:
+        stuck[r.rule or "?"].append(r)
+    for reason, mine in sorted(stuck.items(), key=lambda kv: -len(kv[1])):
+        if len(mine) >= 2:
+            add("warn", f"{len(mine)} CSPs keep failing on the upload page: {human(reason)}",
+                "Each tried 3 or more times in a week with the same refusal.",
+                "Call them, or make the upload page message for this reason clearer.", mine)
+
+    for r in by_kind["S9_RULE_DRIFT"]:
+        add("warn", f"Rule drift: {r.detail}", "A rule or channel behaves differently from the 4 weeks before.",
+            "Check what changed this week (a new code change, a new document format, a channel problem).", [r])
+
+    causes = by_kind["S10_REVIEW_CAUSE"]
+    if causes:
+        fixable = [r for r in causes if (r.facts or {}).get("fixable")]
+        by_cause = Counter((r.facts or {}).get("cause", "other") for r in fixable)
+        if by_cause:
+            cause, n = by_cause.most_common(1)[0]
+            mine = [r for r in fixable if (r.facts or {}).get("cause", "other") == cause]
+            how = human(_top(mine, "how_read"))
+            if n >= 5 and n >= 0.25 * len(causes):
+                state = _top(mine, "state")
+                add("warn", f"{round(100 * n / len(causes))}% of this week's documents for a person: {cause}",
+                    f"{n} of {len(causes)}; mostly {human(_top(mine, 'type'))} read from {how}"
+                    + (f", from {state}" if state else "") + ".",
+                    CAUSE_FIX.get(cause, CAUSE_FIX["other"]).format(how=how), mine)
+        add("info", f"{len(causes)} documents went to a person this week; the agent could have decided "
+                    f"{round(100 * len(fixable) / len(causes))}% itself",
+            "The rest are policy checks (spot checks, DC link uploads).",
+            "Fix the biggest cause first; the next night's reading check shows whether it helped.", fixable)
+
+    order = {"critical": 0, "warn": 1, "info": 2, "good": 3}
+    out.sort(key=lambda f: order[f["level"]])
+    return out

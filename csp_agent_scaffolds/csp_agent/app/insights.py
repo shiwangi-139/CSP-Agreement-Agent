@@ -442,6 +442,13 @@ def coach(db: Session) -> list[dict]:
             add("good", f"{g['pct']}% of working CSPs are fully compliant",
                 f"{g['pace_per_day']} more CSPs a day this week; at this pace all {g['total']} by "
                 f"{date.fromisoformat(g['eta']):%d-%m-%Y}." if g["eta"] else "", None)
+    # The agent's own warning signs of the week, grouped (app/signals.py). A
+    # problem there must never hide the other findings.
+    try:
+        from .signals import findings
+        out += findings(db)
+    except Exception:
+        db.rollback()
     order = {"critical": 0, "warn": 1, "info": 2, "good": 3}
     out.sort(key=lambda f: order[f["level"]])
     return out
