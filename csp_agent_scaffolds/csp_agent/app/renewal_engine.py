@@ -31,6 +31,7 @@ from sqlalchemy.orm import Session
 
 from .compliance import INACTIVE_LABEL, ComplianceState, DOC_LABELS, is_inactive, refresh_category
 from .models import CSP, InternalUser, OutboundMessage, OutboundStatus, OutreachCycle
+from .comms import outbound as _outbound
 from .comms.outbound import cancel_superseded, draft
 from .portal_tokens import current_upload_link, issue_upload_link
 from . import policy
@@ -84,15 +85,28 @@ def _stages(db: Session, cycle: OutreachCycle) -> list[dict]:
         st["rows"] = [m for m in st["rows"] if not superseded(m)]
     out = {k: st for k, st in out.items()
            if st["rows"] and not all(m.status == OutboundStatus.BLOCKED for m in st["rows"])}
+    # Auto mode: when the WhatsApp the agent sends by itself FAILED, an email
+    # of the same stage that only a person can send (not an auto channel)
+    # doesn't hold the cycle: the stage is finished and the next reminder
+    # follows after its gap. (Before 30-10, 67 CSPs whose WhatsApp failed on
+    # 23/24-10 got nothing more because their email waited for review.)
+    auto = _outbound.OUTBOUND_COMMUNICATION_MODE == "auto"
+    auto_channels = set(_outbound.AUTO_SEND_CHANNELS)
     for st in out.values():
         sent = [m.sent_at for m in st["rows"] if m.status == OutboundStatus.SENT and m.sent_at]
+        waiting = [m for m in st["rows"] if m.status in PENDING]
+        auto_failed = any(m.channel in auto_channels and m.status == OutboundStatus.FAILED for m in st["rows"])
+        st["left_waiting"] = []
+        if auto and auto_failed and waiting and all(m.channel not in auto_channels for m in waiting):
+            st["left_waiting"], waiting = waiting, []
         if sent:
             st["state"], st["at"] = "SENT", min(sent)
-        elif any(m.status in PENDING for m in st["rows"]):
+        elif waiting:
             st["state"], st["at"] = "PENDING", None
         else:
             st["state"] = "DONE"
-            st["at"] = max((m.reviewed_at or m.created_at or _now()) for m in st["rows"])
+            st["at"] = max((m.reviewed_at or m.created_at or _now()) for m in st["rows"]
+                           if m not in st["left_waiting"])
     return list(out.values())
 
 
@@ -288,6 +302,9 @@ def _run_upload_cycle(db: Session, csp: CSP, state: ComplianceState, today: date
     link = issue_upload_link(db, csp, needed) if step["to"] == "CSP" else current_upload_link(db, csp)
     ctx = _ctx(db, csp, state, link, stage=step["stage"], attempt=cycle.csp_messages,
                doc_label_en=labels[0], doc_label_hi=labels[1])
+    # The emails left waiting behind a failed WhatsApp are replaced by this
+    # reminder's own, so only one waits for review per CSP.
+    _supersede([st for st in stages if st["left_waiting"]], None, "its WhatsApp failed; a newer reminder replaces it")
     draft(db, csp=csp, role=step["to"], template_key=template, ctx=ctx,
           key_base=f"C{cycle.id}:{step['stage']}", cycle_id=cycle.id,
           document_type=",".join(needed), stage=step["stage"])

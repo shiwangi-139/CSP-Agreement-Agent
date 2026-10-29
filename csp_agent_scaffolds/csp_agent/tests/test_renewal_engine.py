@@ -450,3 +450,57 @@ def test_daily_push_does_not_pile_up_unsent_messages(db_session, monkeypatch):
     monkeypatch.setattr(config, "DAILY_PUSH_UNTIL", date(2026, 10, 20))
     _run_days(db, csp, date(2026, 10, 14), 7)                         # nothing sent all week
     assert len({m.stage for m in _msgs(db, csp)}) == 1
+
+
+# ------------------------------------- a failed WhatsApp, its email waiting
+def _fail_whatsapp(db, csp, day, status=OutboundStatus.FAILED):
+    wa = next(m for m in _msgs(db, csp) if m.channel == "WHATSAPP" and m.status in renewal_engine.PENDING)
+    wa.status, wa.reviewed_at = status, datetime.combine(day, datetime.min.time()).replace(hour=10)
+    wa.error_log = "Bulk Sender: There is already Hindi content for this template"
+    db.flush()
+
+
+def _auto(monkeypatch, mode="auto"):
+    monkeypatch.setattr(outbound, "OUTBOUND_COMMUNICATION_MODE", mode)
+    monkeypatch.setattr(outbound, "AUTO_SEND_CHANNELS", ["WHATSAPP"])
+
+
+def test_auto_mode_failed_whatsapp_doesnt_stop_the_reminders(db_session, monkeypatch):
+    # 23/24-10: the WhatsApp failed at Meta, the email waited for review, and
+    # the CSP got nothing more. Now the next reminder follows after its gap.
+    _auto(monkeypatch)
+    db = db_session
+    csp = _csp(db)                                                   # nothing on file, has an email
+    renewal_engine.run_for_csp(db, csp, TODAY)
+    _fail_whatsapp(db, csp, TODAY)
+    _run_days(db, csp, TODAY + timedelta(days=1), 3)                 # days 1-3: the 4-day gap
+    assert {m.stage for m in _msgs(db, csp)} == {"U-1"}
+    renewal_engine.run_for_csp(db, csp, TODAY + timedelta(days=4))
+    msgs = _msgs(db, csp)
+    assert {m.stage for m in msgs} == {"U-1", "U-2"}
+    old_email = next(m for m in msgs if m.stage == "U-1" and m.channel == "EMAIL")
+    assert old_email.status == OutboundStatus.REJECTED and "WhatsApp failed" in old_email.error_log
+    waiting = [m for m in msgs if m.status in renewal_engine.PENDING]
+    assert sorted((m.stage, m.channel) for m in waiting) == [("U-2", "EMAIL"), ("U-2", "WHATSAPP")]
+
+
+def test_review_mode_failed_whatsapp_still_waits_for_its_email(db_session, monkeypatch):
+    _auto(monkeypatch, "review")                                     # a person sends emails there
+    db = db_session
+    csp = _csp(db)
+    renewal_engine.run_for_csp(db, csp, TODAY)
+    _fail_whatsapp(db, csp, TODAY)
+    _run_days(db, csp, TODAY + timedelta(days=1), 10)
+    assert {m.stage for m in _msgs(db, csp)} == {"U-1"}
+
+
+def test_auto_mode_blocked_whatsapp_still_waits_for_its_email(db_session, monkeypatch):
+    # No WhatsApp number on the sheet: the email is the only way to reach the
+    # CSP, so it keeps waiting for a person, as before.
+    _auto(monkeypatch)
+    db = db_session
+    csp = _csp(db)
+    renewal_engine.run_for_csp(db, csp, TODAY)
+    _fail_whatsapp(db, csp, TODAY, status=OutboundStatus.BLOCKED)
+    _run_days(db, csp, TODAY + timedelta(days=1), 10)
+    assert {m.stage for m in _msgs(db, csp)} == {"U-1"}
