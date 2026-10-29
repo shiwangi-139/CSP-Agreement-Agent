@@ -87,7 +87,8 @@ def _doc_json(d: Document) -> dict:
             "source_date": _iso(d.source_date), "sender_on_sheet": d.sender_on_sheet,
             "holder_name": d.holder_name, "registration_number": d.iibf_reg_number,
             "typed_issue_date": f.get("typed_issue_date"),
-            "why": f.get("why"), "decided_by_person": d.date_source == "MANUAL_REVIEW" or d.status == DocumentStatus.MANUAL_VERIFIED,
+            "why": f.get("why"), "risk": f.get("risk"),
+            "evidence_dates": ((f.get("evidence") or {}).get("document") or {}).get("dates"), "decided_by_person": d.date_source == "MANUAL_REVIEW" or d.status == DocumentStatus.MANUAL_VERIFIED,
             "reason": f.get("readability_reason") or f.get("rejection_reason")}
 
 
@@ -919,6 +920,40 @@ def monitor(tab: str, days: int = 0, db: Session = Depends(get_db)):
     return fn(db, days=min(max(days, 1), 90)) if days and "days" in fn.__code__.co_varnames else fn(db)
 
 
+@router.post("/rules/{rule}/state")
+def rule_state(rule: str, state: str = Body(..., embed=True), note: str = Body("", embed=True),
+               me: str = Depends(require_admin), db: Session = Depends(get_db)):
+    """Release a rule from probation (ok), put it on probation, or let the
+    agent decide again (auto) (app/rule_health.py)."""
+    from .. import rule_health
+    try:
+        h = rule_health.set_state(db, rule, state, me, note)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"rule": h.rule, "state": h.state, "manual": bool(h.manual)}
+
+
+@router.post("/sending/pause")
+def sending_pause(on: bool = Body(..., embed=True), reason: str = Body("", embed=True),
+                  me: str = Depends(require_admin), db: Session = Depends(get_db)):
+    """Pause all sending (every message waits), or resume (app/comms/send_gate.py)."""
+    from ..comms.send_gate import set_pause
+    return set_pause(db, on, me, reason)
+
+
+@router.post("/findings/fixed")
+def finding_fixed(key: str = Body(..., embed=True), note: str = Body("", embed=True),
+                  me: str = Depends(require_admin), db: Session = Depends(get_db)):
+    """A person applied the fix for a Coach finding: it is verified (or
+    reopened) by the following nights (app/finding_tracker.py)."""
+    from .. import finding_tracker
+    try:
+        r = finding_tracker.mark_fixed(db, key, me, note)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return {"key": r.key, "status": r.status}
+
+
 @router.get("/signals.xlsx", dependencies=[Depends(require_admin)])
 def signals_xlsx(days: int = 30, db: Session = Depends(get_db)):
     """The agent's own warning signs of the last `days` days, one row each
@@ -1299,7 +1334,7 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
     # changes nothing for the CSP, so no second message.)
     dc_listing = (q.reason or "").startswith("DC upload") and "already counted" in (q.reason or "")[:80]
     if d.upload_channel in ("CSP_UPLOAD_PORTAL", "DC_MASTER_LINK") \
-            and not (q.reason or "").startswith(("Spot check", "Reference check")) and not (dc_listing and accept):
+            and not (q.reason or "").startswith(("Spot check", "Reference check", "Risk check")) and not (dc_listing and accept):
         from ..comms.upload_receipt import send_upload_receipt
         from sqlalchemy.orm import sessionmaker
         send_upload_receipt(c.id, [{"type": canonical_type(d.document_type), "ok": accept,
@@ -1348,7 +1383,8 @@ def _run_job(name: str, fn):
 def run_job(job: str):
     from .. import worker
     jobs = {"sheet": worker.job_sheet, "engine": worker.job_engine, "gmail": worker.job_gmail,
-            "outbox": worker.job_outbox, "vault": worker.job_vault, "reports": worker.job_reports}
+            "outbox": worker.job_outbox, "vault": worker.job_vault, "reports": worker.job_reports,
+            "rule_health": worker.job_rule_health, "findings": worker.job_findings}
     if job not in jobs:
         raise HTTPException(404, "unknown job")
     _run_job(job, jobs[job])

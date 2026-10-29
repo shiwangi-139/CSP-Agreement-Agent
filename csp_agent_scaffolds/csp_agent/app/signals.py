@@ -80,7 +80,9 @@ def review_cause(reason: Optional[str], doc: Optional[Document] = None) -> str:
     """The cause of a Review item (its reason) or of an unreadable file."""
     r = (reason or "").lower()
     if r.startswith("safety check"):
-        return "held: impossible dates"
+        return "held: risky reading"
+    if r.startswith("risk check"):
+        return "risk check (counted meanwhile)"
     method = ((doc.extraction_method if doc is not None else None) or "").upper()
     if r.startswith(("spot check", "reference check")):
         return "deliberate check"
@@ -246,7 +248,7 @@ def collect(db: Session, now: Optional[datetime] = None, days: int = LOOKBACK_DA
     docs_by_id = {d.id: d for d in docs}
     for q in db.query(ManualReviewQueue).filter(ManualReviewQueue.resolved_at >= since, ManualReviewQueue.resolved_at <= now,
                                                 ManualReviewQueue.status.in_([ReviewStatus.CORRECTED, ReviewStatus.REJECTED])):
-        agent_had_accepted = (q.reason or "").lower().startswith(("spot check", "reference check", "validity check"))
+        agent_had_accepted = (q.reason or "").lower().startswith(("spot check", "reference check", "validity check", "risk check"))
         if q.status == ReviewStatus.REJECTED and not agent_had_accepted:
             continue
         d = docs_by_id.get(q.document_id) or db.get(Document, q.document_id)
@@ -426,8 +428,11 @@ CAUSE_FIX = {
     "dates conflict": "The typed or printed dates disagree with what was read: check the examples to see which rule "
                       "reads the wrong date.",
     "file not readable": "Mostly {how}: ask CSPs for clearer scans, or improve reading of this kind of file.",
-    "held: impossible dates": "The safety gate held these because the dates cannot be right: see which rule read "
-                              "them (the 'impossible reading' finding) and fix it.",
+    "held: risky reading": "The safety gate held these (impossible dates, a rule on probation, or a disagreeing "
+                           "copy): see the reasons on the examples and fix the rule that read them.",
+    "risk check (counted meanwhile)": "Medium-risk readings (another date printed, a weak scan, a rule on watch): if "
+                                      "people mostly accept them unchanged, raise RISK_CHECK_AT; if they correct "
+                                      "them, fix the rule.",
     "other": "Look at the examples: these reasons are not sorted yet.",
 }
 IMPOSSIBLE_FIX = {
@@ -469,7 +474,8 @@ def findings(db: Session, now: Optional[datetime] = None) -> list[dict]:
     out: list[dict] = []
 
     def add(level, title, detail, fix, mine):
-        out.append({"level": level, "title": title, "detail": detail, "fix": fix,
+        # key: the title without its numbers, the same from week to week (app/finding_tracker.py)
+        out.append({"key": "S:" + re.sub(r"\d+", "#", title)[:200], "level": level, "title": title, "detail": detail, "fix": fix,
                     "examples": _examples(mine, csps), "action": OPEN_SIGNS})
 
     def human(x):

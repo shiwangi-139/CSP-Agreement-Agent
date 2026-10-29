@@ -23,7 +23,7 @@ def test_every_monitoring_tab_renders_and_is_admin_only(client, monkeypatch):
     ctx = quickjs.Context()
     ctx.eval("""const esc=(s)=>String(s??'').replace(/[&<>"]/g,'');const when=(x)=>x?'W':'-';const fmt=(x)=>x||'-';""")
     ctx.eval(helpers)
-    for tab in ["status","documents","accuracy","review","experience","messaging","network","quality","use","signals"]:
+    for tab in ["status","documents","accuracy","review","experience","messaging","network","quality","use","signals","rules"]:
         r = c.get(f"/api/hub/monitor/{tab}", headers={"X-API-Key": "k"})
         assert r.status_code == 200, (tab, r.text)
         ctx.set("data", json.dumps(r.json()))

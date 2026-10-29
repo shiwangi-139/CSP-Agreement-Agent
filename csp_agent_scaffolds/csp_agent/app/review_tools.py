@@ -5,7 +5,8 @@ the reviewer sees what the agent reads today (rules improve; a waiting item
 keeps the reading it had when it arrived). Nothing is accepted or rejected
 here and no message is sent: the person still decides.
 """
-from datetime import date
+import logging
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -14,6 +15,8 @@ from . import vault
 from .ai.extraction.deterministic_extractor import extract_document_fields_deterministic
 from .document_service import _d
 from .models import Document, ManualReviewQueue
+
+logger = logging.getLogger(__name__)
 
 
 def reread_waiting(db: Session, q: ManualReviewQueue, d: Document) -> dict:
@@ -45,6 +48,15 @@ def reread_waiting(db: Session, q: ManualReviewQueue, d: Document) -> dict:
                                      f"{fmt(after['expiry'])} ({after['rule']}). Check it on the document and accept.")
     if typed:
         note += f" The CSP typed issue date {typed:%d-%m-%Y}."
+    try:
+        # The evidence pack again, with the dates the current rules used (app/evidence.py).
+        from .compliance import canonical_type
+        from .evidence import build
+        arrived = (d.source_date or d.uploaded_at or datetime.now()).date()
+        d.extracted_fields = {**d.extracted_fields, "evidence": build(db, d.csp_id, canonical_type(d.document_type), ex,
+                                                                      after["issue"], after["expiry"], arrived)}
+    except Exception:
+        logger.exception("evidence_on_reread_failed doc=%s", d.id)
     q.reason = note[:500]
     db.flush()
     return {"changed": changed, "before": before, "after": after, "note": note}
@@ -57,4 +69,4 @@ def waiting_items(db: Session, code: Optional[str] = None):
     if code:
         q = q.filter(CSP.current_code == code.strip().upper())
     return [(r, d, c) for r, d, c in q.order_by(ManualReviewQueue.created_at).all()
-            if not (r.reason or "").startswith(("Spot check", "Reference check"))]
+            if not (r.reason or "").startswith(("Spot check", "Reference check", "Risk check"))]

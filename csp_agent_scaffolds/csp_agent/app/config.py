@@ -116,6 +116,26 @@ try:
     AUTO_SEND_HOURS = tuple(int(h) for h in os.getenv("AUTO_SEND_HOURS", "10-18").split("-", 1))
 except ValueError:
     AUTO_SEND_HOURS = (10, 18)
+# Send-time check (app/comms/send_gate.py): reminders and staff lists are not
+# sent in the quiet hours (local time, start-end; replies to a CSP's own
+# upload still go), and the same reminder is not sent to the same number
+# twice within REPEAT_HOURS.
+try:
+    QUIET_HOURS = tuple(int(h) for h in os.getenv("QUIET_HOURS", "21-8").split("-", 1))
+except ValueError:
+    QUIET_HOURS = (21, 8)
+REPEAT_HOURS = int(os.getenv("REPEAT_HOURS", "20") or 20)
+
+# Harness (app/rule_health.py, app/safety_gate.py): RULE_BREAKER=on puts a
+# rule that reads wrongly on probation (its readings wait for a person);
+# "watch" only shows it. A reading's risk score at or over RISK_HOLD_AT waits
+# for a person; at or over RISK_CHECK_AT it counts and a person checks it.
+RULE_BREAKER = os.getenv("RULE_BREAKER", "on").strip().lower()
+RISK_HOLD_AT = int(os.getenv("RISK_HOLD_AT", "60") or 60)
+RISK_CHECK_AT = int(os.getenv("RISK_CHECK_AT", "30") or 30)
+# Documents a person is asked to confirm each night (most useful first), so
+# the reading check's answer set grows by itself (app/active_learning.py).
+REFERENCE_DAILY = int(os.getenv("REFERENCE_DAILY", "8") or 0)
 
 # Daily push: from DAILY_PUSH_FROM to DAILY_PUSH_UNTIL (YYYY-MM-DD, both
 # days included) every CSP who still has documents to upload gets one

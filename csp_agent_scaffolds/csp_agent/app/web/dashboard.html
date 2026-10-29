@@ -499,6 +499,63 @@
             <th>Channel</th><th>State</th><th>Examples</th></tr></thead><tbody>${c.by_cause.map(cause).join("")}</tbody></table></div>`
           : `<p class="mx-hint">Nothing yet: the first collection runs at 03:00.</p>`);
     },
+    rules(d) {
+      const STATE = {probation: ["bad", "on probation"], watch: ["warn", "watch"], ok: ["ok", "healthy"]};
+      const TRACK = {open: ["warn", "open"], reopened: ["bad", "reopened"], fixing: ["", "fix applied, verifying"],
+                     verified: ["ok", "verified"], gone: ["ok", "gone by itself"]};
+      const sd = d.sending, p = sd.pause, rc = d.release_check, sh = d.shadow;
+      const nProb = d.rules.filter((r) => r.state === "probation").length, nWatch = d.rules.filter((r) => r.state === "watch").length;
+      const btn = (r) => r.state === "probation" ? `<button class="btn" data-rulestate="${esc(r.rule)}|ok">Release</button>`
+        : r.can_hold ? `<button class="btn" data-rulestate="${esc(r.rule)}|probation">Hold its readings</button>` : "";
+      const pct = (v) => v == null ? "—" : Math.round(100 * v) + "%";
+      const rule = (r) => `<tr><td><b>${esc(r.about)}</b><div class="small muted mono">${esc(r.rule)}</div></td><td>${esc(T3[r.type] || r.type || "")}</td>
+        <td>${chip(...STATE[r.state] || ["", r.state])}${r.manual ? ` <span class="small muted">(set by a person)</span>` : ""}
+          ${r.reason ? `<div class="small">${esc(r.reason)}</div>` : ""}</td>
+        <td class="num">${r.docs_30d}</td><td class="num">${r.corrected_14d}</td><td class="num">${r.eval_checked}</td>
+        <td class="num">${r.eval_wrong_accepts ? chip("bad", r.eval_wrong_accepts) : "0"}</td><td class="num">${r.eval_wrong_rejects}</td>
+        <td class="num">${pct(r.precision)}</td>
+        <td>${btn(r)}${r.manual ? ` <button class="btn" data-rulestate="${esc(r.rule)}|auto">Let the agent decide</button>` : ""}</td></tr>`;
+      const tracked = (f) => `<tr><td>${esc(f.title)}<div class="small muted">${(f.history || []).map((h) => `${esc(fmt(h.at))} ${esc(h.status)}`).join(" → ")}</div></td>
+        <td>${chip(...TRACK[f.status] || ["", f.status])}</td><td class="small">${ago(f.first_seen)}</td><td class="small">${ago(f.last_seen)}</td>
+        <td class="small">${f.fix_note ? `${esc(f.fix_note)} <span class="muted">(${esc(f.fix_by || "")})</span>` : ""}</td>
+        <td>${["open", "reopened"].includes(f.status) ? `<button class="btn" data-fixed="${esc(f.key)}">Fix applied</button>` : ""}</td></tr>`;
+      const rk = d.risk_7d, rTot = rk.hold + rk.check + rk.low;
+      return band(d.status.level, nProb ? `${nProb} rule(s) on probation` : p.on ? "Sending is paused" : "Rules and safety checks", d.status.text,
+          [p.on ? `<button class="btn primary" data-pause="0">Resume sending</button>` : `<button class="btn" data-pause="1">⏸ Pause all sending</button>`])
+      + strip(
+        metric("Rules on probation", nProb, "", "their readings wait for a person", "", nProb ? "bad" : ""),
+        metric("Rules on watch", nWatch, "", "shown only", "", nWatch ? "warn" : ""),
+        metric("Held readings waiting", d.held_waiting, "", "safety gate → Review queue", "", d.held_waiting ? "warn" : ""),
+        metric("New readings · 7 days", rTot, "", `held ${rk.hold} · checked ${rk.check} · low ${rk.low}`, blocks([...Array(rk.hold).fill("bad"), ...Array(rk.check).fill("warn"), ...Array(Math.min(rk.low, 40)).fill("ok")].slice(0, 60))),
+        metric("Messages stopped · 7 days", sd.cancelled_7d, "", "not needed any more, or a repeat"))
+      + `<div class="mx-cols3">`
+      + panel("Sending", "Checked right before every message (app/comms/send_gate.py)", kv([
+          ["Status", p.on ? chip("bad", `paused by ${p.by} · ${p.reason || "no reason given"}`) : chip("ok", "sending")],
+          ["Quiet hours", sd.quiet_hours.length ? `${sd.quiet_hours[0]}:00 – ${sd.quiet_hours[1]}:00 (reminders wait; replies go)` : "off"],
+          ["Same message again", `not within ${sd.repeat_hours} h`], ["Waiting right now", sd.waiting_now]])
+          + bars(sd.cancelled_by_reason, "No message stopped this week."))
+      + panel("Release check", "The nightly reading check after an update, compared with the code before", rc ? kv([
+          ["Update", `${code(rc.commit)} (was ${code(rc.previous_commit || "?")}) · ${ago(rc.at)}`],
+          ["Verdict", chip(rc.verdict === "worse" ? "bad" : rc.verdict === "better" ? "ok" : "warn", rc.verdict)],
+          ["Fixed", rc.fixed], ["Now accepted wrongly", (rc.broken_wrong_accepts || []).length], ["Now refused wrongly", (rc.broken_wrong_rejects || []).length],
+          ["Score", `${rc.previous_score ?? "?"} → ${rc.score ?? "?"} (lower is better)`]]) : `<p class="mx-hint">After the next update, the nightly check compares it with the code before.</p>`)
+      + panel("Shadow test", "A rule change tried on every decided document before it goes live (scripts/shadow_test.py)", sh ? kv([
+          ["Candidate", `${code(sh.candidate || "?")} vs live ${code(sh.live || "?")} · ${ago(sh.at)}`],
+          ["Verdict", chip((sh.new_wrong_accepts || []).length ? "bad" : (sh.broken || []).length ? "warn" : "ok", sh.verdict)],
+          ["Fixed", `${(sh.fixed || []).length}${(sh.csps_fixed || []).length ? " · " + sh.csps_fixed.slice(0, 6).map(code).join(" ") : ""}`],
+          ["Broken", `${(sh.broken || []).length}${(sh.csps_broken || []).length ? " · " + sh.csps_broken.slice(0, 6).map(code).join(" ") : ""}`],
+          ["Compared", sh.compared]]) : `<p class="mx-hint">Not run yet. On the server: scripts/shadow_prepare.sh, then python -m scripts.shadow_test (see the PDF).</p>`)
+      + `</div>`
+      + panel("Reading rules", "Each date rule and validity rule: 30 days of use, corrections by people, and the latest nightly reading check",
+          d.rules.length ? `<div class="tablewrap"><table><thead><tr><th>Rule</th><th>Document</th><th>State</th><th class="num">Read · 30 d</th>
+            <th class="num">Corrected · 14 d</th><th class="num">Checked</th><th class="num">Wrong accepts</th><th class="num">Wrong rejects</th>
+            <th class="num">Right when accepted</th><th></th></tr></thead><tbody>${d.rules.map(rule).join("")}</tbody></table></div>`
+          : `<p class="mx-hint">Filled in by the first nightly run (03:10).</p>`, "mx-wide")
+      + panel("Coach findings, followed until solved", "open → fix applied → verified; reopened if it comes back",
+          d.tracked.length ? `<div class="tablewrap"><table><thead><tr><th>Finding</th><th>Status</th><th>First seen</th><th>Last seen</th><th>Fix</th><th></th></tr></thead>
+            <tbody>${d.tracked.map(tracked).join("")}</tbody></table></div>` : `<p class="mx-hint">Tracked from the first nightly run (03:20).</p>`, "mx-wide")
+      + panel("Rule history", "", kv(d.events.map((e) => [`${esc(fmt(e.at))} · ${code(e.rule)}`, `${chip(e.event === "probation" ? "bad" : e.event === "watch" ? "warn" : "ok", e.event)} ${esc(e.detail || "")} <span class="small muted">${esc(e.by || "")}</span>`]), "No changes yet."), "mx-wide");
+    },
     experience(d) {
       return band(d.status.level, d.status.level === "ok" ? "No CSP got too many or wrong messages" : d.status.text,
         `Last ${d.days} days · ${d.csps_messaged} CSPs got ${d.messages} messages.`,
@@ -860,7 +917,7 @@
       const TABS = [["status", "Agent status"], ["documents", "Documents in"], ["accuracy", "Reading accuracy"],
                     ["review", "Review queue"], ["experience", "CSP experience"], ["messaging", "Messaging"],
                     ["network", "Network progress"], ["quality", "Data quality"], ["use", "Dashboard use"],
-                    ["signals", "Agent's own warnings"]];
+                    ["signals", "Agent's own warnings"], ["rules", "Rules & safety"]];
       const tab = state.mtab || "status";
       const d = await api(`/api/hub/monitor/${tab}`);
       const nav = `<div class="mx-tabs" role="tablist">${TABS.map(([v, l]) => `<button class="${tab === v ? "on" : ""}" role="tab" aria-selected="${tab === v}" data-mtab="${v}">${l}</button>`).join("")}</div>`;
@@ -1096,7 +1153,24 @@
       <div class="why-sum">${esc(w.summary)}</div>
       ${(w.lines || []).map((l) => `<div class="why-line"><b>${esc(l.what)}: ${esc(l.value)}</b> <span class="muted">from ${esc(l.how)}</span>
         ${l.text ? `<div class="why-text">“${esc(l.text)}”</div>` : ""}</div>`).join("")}
-      ${(w.ignored || []).length ? `<div class="why-ign">${w.ignored.map((i) => `<div>↷ ${esc(i)}</div>`).join("")}</div>` : ""}</details>`;
+      ${(w.ignored || []).length ? `<div class="why-ign">${w.ignored.map((i) => `<div>↷ ${esc(i)}</div>`).join("")}</div>` : ""}
+      ${riskLine(d.risk)}${datesOn(d.evidence_dates)}</details>`;
+  }
+  // The safety gate's risk score (app/safety_gate.py) and every date printed on the document (app/evidence.py).
+  const RISK = {hold: ["bad", "held for a person"], check: ["warn", "counted; a person checks it"], low: ["ok", "low"]};
+  function riskLine(r) {
+    if (!r) return "";
+    const [lev, txt] = RISK[r.level] || ["", r.level];
+    return `<div class="why-line">${chip(lev, `Risk ${r.score}: ${txt}`)}${(r.reasons || []).map((x) =>
+      `<div class="small">+${x.points} ${esc(x.text)}</div>`).join("")}</div>`;
+  }
+  const DATE_KIND = {issue: "issue", signing: "signing", effective: "effective / start", digital_signature: "digital signature",
+                end: "end / valid till", birth: "birth", camera_stamp: "phone camera stamp", other: "other"};
+  function datesOn(list) {
+    if (!list || !list.length) return "";
+    return `<details class="why-dates"><summary class="small">All ${list.length} date(s) printed on it</summary>${list.map((x) =>
+      `<div class="why-line"><span class="mono">${esc(fmt(x.date))}</span> · ${esc(DATE_KIND[x.kind] || x.kind)}${x.used ? ` · <b>used as the ${esc(x.used)} date</b>` : ""}
+        <div class="why-text">“${esc(x.text)}”</div></div>`).join("")}</details>`;
   }
 
   // What the local AI model read (a suggestion only; the reviewer decides).
@@ -1218,7 +1292,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-attfilter],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-attfilter],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -1270,6 +1344,28 @@
         if (!r.ok) return alert("Download failed: " + r.status);
         const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
         a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "signals.xlsx"; a.click(); return;
+      }
+      if (ds.rulestate) {
+        const [rule, st] = ds.rulestate.split("|");
+        const note = st === "auto" ? "" : prompt(st === "ok" ? "Release this rule (its readings count again). Why? e.g. fixed in update abc1234"
+                                                             : "Hold this rule's new readings for a person. Why?");
+        if (note === null) return;
+        t.disabled = true;
+        try { await post(`/api/hub/rules/${encodeURIComponent(rule)}/state`, {state: st, note}); toast("Saved"); } catch (err) { toast(err.message); }
+        return render();
+      }
+      if (ds.pause !== undefined) {
+        const on = ds.pause === "1";
+        const reason = on ? prompt("Pause ALL sending? Reminders and replies wait until you resume. Why?") : "";
+        if (reason === null || (!on && !confirm("Resume sending? Waiting messages go out within a few minutes."))) return;
+        try { await post("/api/hub/sending/pause", {on, reason}); toast(on ? "Sending paused" : "Sending resumed"); } catch (err) { toast(err.message); }
+        return render();
+      }
+      if (ds.fixed) {
+        const note = prompt("What fix was applied? e.g. new wording added in update abc1234");
+        if (note === null) return;
+        try { await post("/api/hub/findings/fixed", {key: ds.fixed, note}); toast("Saved: the next nights check whether it is gone"); } catch (err) { toast(err.message); }
+        return $("#coach").classList.contains("open") ? openCoach() : render();
       }
       if (ds.zip) {
         e.preventDefault();
@@ -1457,8 +1553,9 @@
       $(".coach-body", c).innerHTML = `<div class="overline">Findings, most urgent first</div>
         ${d.findings.map((f) => `<div class="finding ${esc(f.level)}"><div class="kind">${chip(LEVEL[f.level][0], LEVEL[f.level][1])}</div>
           <h3>${esc(f.title)}</h3><p>${esc(f.detail)}</p>${f.fix ? `<p class="small"><b>Suggested fix:</b> ${esc(f.fix)}</p>` : ""}
+          ${f.track ? `<p class="small muted">Followed since ${esc(fmt(f.track.since))} · ${esc(f.track.status === "fixing" ? "fix applied, the next nights verify it" : f.track.status)}${f.track.fix_note ? ` · fix: ${esc(f.track.fix_note)}` : ""}</p>` : ""}
           ${(f.examples || []).length ? `<p class="small muted">Examples: ${f.examples.map((x) => `<a href="#" data-csp="${x.csp_id}" title="${esc(x.detail || "")}">${esc(x.code || x.name)}</a>`).join(", ")}</p>` : ""}
-          ${f.action ? coachAct(f.action) : ""}</div>`).join("") || `<div class="finding good"><h3>Nothing to improve right now. ✓</h3></div>`}
+          ${f.action ? coachAct(f.action) : ""}${f.track && ["open", "reopened"].includes(f.track.status) ? ` <button class="btn" data-fixed="${esc(f.key)}">Fix applied</button>` : ""}</div>`).join("") || `<div class="finding good"><h3>Nothing to improve right now. ✓</h3></div>`}
         <div class="overline" style="margin-top:18px">Ask the Coach</div>
         <div class="quick">${d.questions.map((q) => `<button class="btn" data-ask="${esc(q)}">${esc(q)}</button>`).join("")}</div>
         <div id="coachchat"></div>

@@ -449,6 +449,14 @@ def coach(db: Session) -> list[dict]:
         out += findings(db)
     except Exception:
         db.rollback()
+    # The harness: rules on probation, a worse update, sending paused, held
+    # readings (app/finding_tracker.py), and each finding's tracked status.
+    try:
+        from .finding_tracker import annotate, harness_findings
+        out += harness_findings(db)
+        annotate(db, out)
+    except Exception:
+        db.rollback()
     order = {"critical": 0, "warn": 1, "info": 2, "good": 3}
     out.sort(key=lambda f: order[f["level"]])
     return out

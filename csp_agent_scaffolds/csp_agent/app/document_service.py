@@ -144,13 +144,23 @@ def store_extracted_document(
         status = DocumentStatus.NEEDS_REVIEW
     else:
         status = _status_for(extraction)
-    held = None
-    if status in (DocumentStatus.VALID, DocumentStatus.EXPIRED):
-        # Safety gate: dates that cannot be right are not accepted (app/safety_gate.py).
-        from .safety_gate import check
-        held = check(db, csp.id, doc_type, issue, expiry, (source_date or now).date())
-        if held:
-            status, fields["safety_check"] = DocumentStatus.NEEDS_REVIEW, held
+    held = checked = None
+    if decision == "READABLE":
+        # Safety gate: the evidence pack and its risk score (app/safety_gate.py).
+        from .safety_gate import assess, queue_reason
+        try:
+            risk = assess(db, csp.id, doc_type, extraction, issue, expiry, (source_date or now).date())
+        except Exception:
+            logger.exception("risk_assessment_failed")
+            risk = None
+        if risk is not None:
+            fields["evidence"] = risk.pop("evidence")
+            fields["risk"] = risk
+            if status in (DocumentStatus.VALID, DocumentStatus.EXPIRED) and risk["level"] == "hold":
+                held = queue_reason(risk)
+                status, fields["safety_check"] = DocumentStatus.NEEDS_REVIEW, held
+            elif status in (DocumentStatus.VALID, DocumentStatus.EXPIRED) and risk["level"] == "check":
+                checked = queue_reason(risk)
     doc = Document(
         csp_id=csp.id, document_type=doc_type, sha256=sha, file_size_bytes=len(data),
         mime_type=mime_type, storage_path=path, status=status,
@@ -184,6 +194,8 @@ def store_extracted_document(
         # sets it with "Validity stated" in the queue.
         db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
                                  reason=extraction["validity_check"][:500]))
+    elif checked:
+        db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=checked[:500]))
     else:
         from .accuracy import maybe_spot_check
         maybe_spot_check(db, doc)

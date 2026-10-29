@@ -280,7 +280,7 @@ def _list_for_review(db: Session, doc, section: str, note: Optional[str] = None)
         reason = pending.reason or ""
         if not reason.startswith(master_link.REVIEW_PREFIX):
             # A spot / reference check is of a document that already counts.
-            counted = ": already counted." if reason.startswith(("Spot check", "Reference check")) else "."
+            counted = ": already counted." if reason.startswith(("Spot check", "Reference check", "Risk check")) else "."
             pending.reason = f"{master_link.REVIEW_PREFIX} via the master link ({label}){counted} {reason}"[:500]
         return
     db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=(

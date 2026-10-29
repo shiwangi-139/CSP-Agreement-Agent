@@ -78,3 +78,11 @@ def _audit_to_test_db(test_engine, monkeypatch):
     """The dashboard action log (app/audit.py) writes to the test database."""
     from app import audit
     monkeypatch.setattr(audit, "SESSION", sessionmaker(bind=test_engine))
+
+
+@pytest.fixture(autouse=True)
+def _no_quiet_hours(monkeypatch):
+    """Sending tests must not depend on the time of day they run at
+    (app/comms/send_gate.py); tests of the quiet hours set them themselves."""
+    from app import config
+    monkeypatch.setattr(config, "QUIET_HOURS", ())

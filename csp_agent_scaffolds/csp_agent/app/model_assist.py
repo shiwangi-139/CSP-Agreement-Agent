@@ -183,7 +183,7 @@ def _waiting(db: Session) -> list[tuple[ManualReviewQueue, Document]]:
     rows = (db.query(ManualReviewQueue, Document).join(Document, Document.id == ManualReviewQueue.document_id)
             .filter(ManualReviewQueue.status == ReviewStatus.PENDING, Document.status == DocumentStatus.NEEDS_REVIEW)
             .order_by(ManualReviewQueue.created_at).all())
-    return [(q, d) for q, d in rows if not (q.reason or "").startswith(("Spot check", "Reference check"))
+    return [(q, d) for q, d in rows if not (q.reason or "").startswith(("Spot check", "Reference check", "Risk check"))
             and "model_suggestion" not in (d.extracted_fields or {})]
 
 

@@ -281,6 +281,48 @@ def job_signals():
     return _run("signals", go)
 
 
+def job_rule_health():
+    """Every night after the reading check and the warning signs: each rule's
+    health, probation, and the release check after an update (app/rule_health.py)."""
+    from . import rule_health
+
+    def go():
+        db = SessionLocal()
+        try:
+            return rule_health.refresh(db)
+        finally:
+            db.close()
+    return _run("rule_health", go)
+
+
+def job_findings():
+    """Every night: follow each Coach finding open -> fix applied -> verified
+    or reopened (app/finding_tracker.py)."""
+    from . import finding_tracker
+
+    def go():
+        db = SessionLocal()
+        try:
+            return finding_tracker.track(db)
+        finally:
+            db.close()
+    return _run("findings", go)
+
+
+def job_reference_batch():
+    """Every night: a few accepted documents a person's answer teaches most,
+    to the Review queue as reference checks (app/active_learning.py)."""
+    from . import active_learning
+
+    def go():
+        db = SessionLocal()
+        try:
+            return active_learning.daily_batch(db)
+        finally:
+            db.close()
+    return _run("reference_batch", go)
+
+
 def job_staff_lists():
     from . import escalation
 
@@ -329,6 +371,9 @@ def build_scheduler():
     sched.add_job(job_staff_lists, CronTrigger(hour=11, minute=0), id="staff_lists")
     sched.add_job(job_reading_eval, CronTrigger(hour=2, minute=30), id="reading_eval")
     sched.add_job(job_signals, CronTrigger(hour=3, minute=0), id="signals")
+    sched.add_job(job_rule_health, CronTrigger(hour=3, minute=10), id="rule_health")
+    sched.add_job(job_findings, CronTrigger(hour=3, minute=20), id="findings")
+    sched.add_job(job_reference_batch, CronTrigger(hour=3, minute=30), id="reference_batch")
     sched.add_job(job_nudges, CronTrigger(hour=17, minute=0), id="nudges")
     return sched
 

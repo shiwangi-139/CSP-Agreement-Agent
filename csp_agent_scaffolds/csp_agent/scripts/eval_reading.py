@@ -12,6 +12,7 @@ checked with --holdout, so rules are never tuned to it.
     python -m scripts.eval_reading                 # the tuning set
     python -m scripts.eval_reading --holdout       # the hold-out set
     python -m scripts.eval_reading --type AGREEMENT
+    python -m scripts.eval_reading --shadow        # by scripts/shadow_test.py: candidate code, saved apart
 
 On the shared server, inside tmux:
     nice -n 19 env OCR_WORKERS=1 .venv/bin/python -m scripts.eval_reading
@@ -27,6 +28,9 @@ Writes logs/reading_eval.csv and saves the totals for the Monitoring page
 and the Agent Coach, with one SCORE per document type: 10 x wrong accepts +
 1 x wrong rejects (a wrong acceptance is ten times worse), and which
 documents were fixed or newly broken since the previous run of the same set.
+It also saves the verdict of every document and the results per rule (the
+date rule and the validity rule that read it), for the rule health
+(app/rule_health.py) and the shadow test (scripts/shadow_test.py).
 The worker runs both sets every night at 02:30 (app/worker.py).
 """
 import argparse
@@ -84,18 +88,25 @@ def main():
     ap.add_argument("--holdout", action="store_true", help="check the hold-out set instead")
     ap.add_argument("--type", choices=TYPES)
     ap.add_argument("--timeout", type=int, default=180)
+    ap.add_argument("--shadow", action="store_true",
+                    help="candidate code (scripts/shadow_test.py): tuning + hold-out, saved as the 'shadow' set")
+    ap.add_argument("--commit", help="the code's commit, when it isn't this folder's")
     a = ap.parse_args()
     started = datetime.now(timezone.utc).replace(tzinfo=None)
     db = SessionLocal()
     try:
         items = [(d, c, t) for d, c, t in _truth(db)
-                 if (d.id % 5 == 0) == a.holdout and (not a.type or d.document_type == a.type)]
-        print(f"{len(items)} documents decided by a person ({'hold-out' if a.holdout else 'tuning'} set)")
+                 if (a.shadow or (d.id % 5 == 0) == a.holdout) and (not a.type or d.document_type == a.type)]
+        set_name = "shadow" if a.shadow else "holdout" if a.holdout else "tuning"
+        print(f"{len(items)} documents decided by a person ({set_name} set)")
         Path("logs").mkdir(exist_ok=True)
         totals = defaultdict(Counter)
         field_ok = defaultdict(Counter)
         failures = {}                                  # doc id -> verdict, for "fixed / newly broken"
-        with open("logs/reading_eval.csv", "w", newline="") as out:
+        verdicts = {}                                  # doc id -> verdict, every document
+        failure_rules = {}                             # doc id -> the rules that read it, for failures
+        by_rule = defaultdict(Counter)                 # rule -> verdicts (date rule and validity rule)
+        with open("logs/shadow_eval.csv" if a.shadow else "logs/reading_eval.csv", "w", newline="") as out:
             w = csv.writer(out)
             w.writerow(["csp_code", "type", "doc_id", "truth", "true_issue", "true_expiry", "read_issue", "read_expiry",
                         "rule", "verdict", "note"])
@@ -107,6 +118,9 @@ def main():
                 v = judge(truth, d, ex)
                 totals[d.document_type][v] += 1
                 totals["ALL"][v] += 1
+                verdicts[str(d.id)] = v
+                for rule in {ex.get("date_source"), ex.get("validity_rule_used")} - {None, ""}:
+                    by_rule[rule][v] += 1
                 if truth == "accept" and ex.get("start_date"):
                     field_ok[d.document_type]["issue_found"] += 1
                     field_ok[d.document_type]["issue_right"] += str(ex["start_date"]) == str(d.issue_date)
@@ -117,6 +131,7 @@ def main():
                 out.flush()
                 if v in ("WRONG ACCEPT", "wrong reject"):
                     failures[str(d.id)] = v
+                    failure_rules[str(d.id)] = sorted({ex.get("date_source"), ex.get("validity_rule_used")} - {None, ""})
                     print(f"{c.current_code} {d.document_type[:6]:6} doc {d.id}: {v}  person {d.issue_date} -> "
                           f"{d.expiry_date}   read {ex.get('start_date')} -> {ex.get('expiry_date')}", flush=True)
                 if i % 25 == 0:
@@ -135,13 +150,12 @@ def main():
             print(f"\n{t}: {n} documents  " + ", ".join(f"{k} {cnt[k]}" for k in
                   ("correct", "safe review", "WRONG ACCEPT", "wrong reject", "could not read")))
         try:
-            commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
+            commit = a.commit or subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True,
                                     timeout=5).stdout.strip()
         except Exception:
             commit = None
         from app.models import MonitorRun
         from app.monitoring import record_run
-        set_name = "holdout" if a.holdout else "tuning"
         before = next((r.summary or {} for r in db.query(MonitorRun).filter(MonitorRun.kind == "reading_eval")
                        .order_by(MonitorRun.started_at.desc()).limit(10) if (r.summary or {}).get("set") == set_name), {})
         old = before.get("failures") or {}
@@ -151,6 +165,8 @@ def main():
               f"fixed since last run: {len(fixed)}   newly broken: {len(broken)}")
         record_run(db, "reading_eval", started, "OK", {"set": set_name, "commit": commit, "by_type": summary,
                                                         "failures": failures, "fixed": fixed[:200], "broken": broken[:200],
+                                                        "verdicts": verdicts, "by_rule": {k: dict(v) for k, v in by_rule.items()},
+                                                        "failure_rules": failure_rules,
                                                         "previous_score": (before.get("by_type") or {}).get("ALL", {}).get("score")})
         print("\nFull list: logs/reading_eval.csv   (nothing in the database was changed)")
     finally:

@@ -407,7 +407,7 @@ def csp_experience(db: Session, days: int = 7) -> dict:
     waiting = {}
     for q, d in (db.query(ManualReviewQueue, Document).join(Document, Document.id == ManualReviewQueue.document_id)
                  .filter(ManualReviewQueue.created_at >= since - timedelta(days=30))):
-        if (q.reason or "").startswith(("Spot check", "Reference check")):
+        if (q.reason or "").startswith(("Spot check", "Reference check", "Risk check")):
             continue
         end = q.resolved_at or _now()
         waiting.setdefault(d.csp_id, []).append((q.created_at - off, end))
@@ -568,6 +568,35 @@ def agent_signals(db: Session) -> dict:
     return overview(db)
 
 
+def rules_and_safety(db: Session) -> dict:
+    """Rule health and probation, the release check, the safety gate's held
+    readings, the send-time check and pause, the latest shadow test, and the
+    tracked Coach findings (app/rule_health.py, app/comms/send_gate.py,
+    app/finding_tracker.py, scripts/shadow_test.py)."""
+    from . import finding_tracker, rule_health
+    from .comms import send_gate
+    out = rule_health.overview(db)
+    shadow = db.query(MonitorRun).filter(MonitorRun.kind == "shadow_test").order_by(MonitorRun.started_at.desc()).first()
+    risk = {"hold": 0, "check": 0, "low": 0}
+    for (r,) in db.query(Document.extracted_fields["risk"]["level"].astext).filter(
+            Document.uploaded_at >= _now() - timedelta(days=7), Document.readability == "READABLE"):
+        if r in risk:
+            risk[r] += 1
+    probation = sum(1 for r in out["rules"] if r["state"] == "probation")
+    paused = send_gate.pause_state(db).get("on")
+    rc = out.get("release_check") or {}
+    level = "bad" if probation or paused or rc.get("verdict") == "worse" else \
+        "warn" if any(r["state"] == "watch" for r in out["rules"]) or out["held_waiting"] else "ok"
+    text = ("Sending is paused. " if paused else "") + (f"{probation} rule(s) on probation: their readings wait for a "
+                                                        "person. " if probation else "") \
+        + (f"{out['held_waiting']} held reading(s) wait for a person." if out["held_waiting"] else "")
+    return {**out, "status": {"level": level, "text": text.strip() or "All rules healthy; nothing held."},
+            "sending": send_gate.overview(db), "risk_7d": risk,
+            "shadow": {"at": shadow.started_at, **(shadow.summary or {})} if shadow else None,
+            "tracked": finding_tracker.overview(db)["findings"]}
+
+
 TABS = {"status": agent_status, "documents": documents_in, "accuracy": reading_accuracy, "review": review_queue,
         "experience": csp_experience, "messaging": messaging, "network": network, "quality": data_quality,
-        "use": dashboard_use, "signals": agent_signals}
+        "use": dashboard_use, "signals": agent_signals,
+        "rules": rules_and_safety}

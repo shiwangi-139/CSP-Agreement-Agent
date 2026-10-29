@@ -1,16 +1,33 @@
-"""app/safety_gate.py: a reading that cannot be right is not accepted; it
-goes to the Review queue and the CSP is told our team is checking it."""
+"""app/safety_gate.py and app/evidence.py: every new reading gets an
+evidence pack and a risk score; a risky reading is held for a person (the CSP
+is told our team is checking it), a medium one counts and a person checks it."""
 import uuid
 from datetime import date, timedelta
+
+import pytest
 
 from app import safety_gate
 from app.compliance import evaluate
 from app.document_service import store_extracted_document
-from app.models import CSP, Document, DocumentStatus, ManualReviewQueue
+from app.evidence import dates_on_document
+from app.models import CSP, Document, DocumentStatus, ManualReviewQueue, RuleEvent, RuleHealth
 from app.signals import review_cause
 from tests.test_portal_and_api import _csp as _portal_csp, _form, _pvr_pdf, client  # noqa: F401  (fixture)
 
 TODAY = date.today()
+
+
+@pytest.fixture(autouse=True)
+def _no_rules(db_session):
+    """Rule health is shared by the test database: start and end clean."""
+    def clean():
+        db_session.query(RuleHealth).delete()
+        db_session.query(RuleEvent).delete()
+        db_session.commit()
+    clean()
+    yield
+    db_session.rollback()
+    clean()
 
 
 def _csp(db):
@@ -21,9 +38,11 @@ def _csp(db):
     return c
 
 
-def _store(db, csp, issue, expiry, doc_type="AGREEMENT"):
+def _store(db, csp, issue, expiry, doc_type="AGREEMENT", text="", **kw):
     ex = {"readability": "READABLE", "document_type": doc_type, "start_date": issue.isoformat(),
-          "expiry_date": expiry.isoformat(), "date_source": "AGREEMENT_EXECUTION_DATE"}
+          "expiry_date": expiry.isoformat(), "date_source": "AGREEMENT_THIS_DAY_OF",
+          "validity_rule_used": "AGREEMENT_EXPLICIT_3_YEAR", "confidence": 0.95, "page_count": 13,
+          "pages_readable": 13, "match_text": text, **kw}
     out = store_extracted_document(db, csp, f"%PDF-1.4 {uuid.uuid4().hex}".encode(), "x.pdf", "application/pdf", ex,
                                    channel="TEST")
     db.flush()
@@ -44,23 +63,38 @@ def test_impossible_dates_are_named():
     assert safety_gate.impossible(a + timedelta(days=1), None, a) == []    # one day early: time zones
 
 
-def test_a_good_reading_is_accepted_as_before(db_session):
+def test_every_date_on_the_document_gets_its_kind():
+    text = ("Date of Birth: 01/02/1990\nOn this day of 15.06.2025 (Effective Date)\n"
+            "This agreement is valid upto 14/06/2028\nDigitally signed by OFFICER Date: 16.06.2025\n")
+    found = {x["date"]: x for x in dates_on_document(text, date(2025, 6, 15), date(2028, 6, 14))}
+    assert found["1990-02-01"]["kind"] == "birth"
+    assert found["2025-06-15"]["kind"] == "signing" and found["2025-06-15"]["used"] == "issue"
+    assert found["2028-06-14"]["kind"] == "end" and found["2028-06-14"]["used"] == "expiry"
+    assert found["2025-06-16"]["kind"] == "digital_signature"
+
+
+def test_a_clean_reading_is_accepted_with_its_evidence_and_low_risk(db_session):
     db = db_session
-    d = _store(db, _csp(db), TODAY - timedelta(days=30), TODAY + timedelta(days=3 * 365))
-    assert d.status == DocumentStatus.VALID and "safety_check" not in d.extracted_fields
-    assert not any((r or "").startswith("Safety check") for r in _queue(db, d))
+    issue = TODAY - timedelta(days=30)
+    d = _store(db, _csp(db), issue, issue + timedelta(days=3 * 365),
+               text=f"On this day of {issue:%d.%m.%Y} the agreement is valid for three years")
+    assert d.status == DocumentStatus.VALID
+    f = d.extracted_fields
+    assert f["risk"]["level"] == "low" and f["risk"]["score"] < 30
+    assert f["evidence"]["document"]["dates"][0]["used"] == "issue"
+    assert f["evidence"]["csp"]["copies"] == 0 and f["evidence"]["rules"]["date"] == "AGREEMENT_THIS_DAY_OF"
+    assert not any((r or "").startswith(("Safety check", "Risk check")) for r in _queue(db, d))
 
 
-def test_impossible_readings_are_held_for_a_person(db_session):
+def test_impossible_readings_are_held_and_do_not_count(db_session):
     db = db_session
     c = _csp(db)
     held = _store(db, c, TODAY - timedelta(days=30), TODAY - timedelta(days=60))
     assert held.status == DocumentStatus.NEEDS_REVIEW and not held.is_current
     [reason] = _queue(db, held)
-    assert reason.startswith("Safety check: expiry") and "not told it is accepted" in reason
-    assert held.extracted_fields["safety_check"] == reason
-    assert review_cause(reason) == "held: impossible dates"
-    # It doesn't count until a person accepts it, and no reminder asks for it meanwhile.
+    assert reason.startswith("Safety check: risk 100: expiry") and "not told it is accepted" in reason
+    assert held.extracted_fields["safety_check"] == reason and held.extracted_fields["risk"]["level"] == "hold"
+    assert review_cause(reason) == "held: risky reading"
     state = evaluate(db, c)
     assert state.docs["AGREEMENT"].status == "MISSING" and state.docs["AGREEMENT"].in_review
 
@@ -82,10 +116,46 @@ def test_a_copy_that_disagrees_with_the_one_on_file_is_held(db_session):
     assert pvr.status == DocumentStatus.VALID
 
 
+def test_a_printed_end_date_the_default_missed_is_checked_by_a_person(db_session):
+    db = db_session
+    issue = TODAY - timedelta(days=40)
+    end = issue + timedelta(days=3 * 365)
+    text = f"On this day of {issue:%d.%m.%Y}. This agreement shall remain valid upto {end:%d/%m/%Y}."
+    d = _store(db, _csp(db), issue, issue + timedelta(days=365), text=text,
+               validity_rule_used="AGREEMENT_DEFAULT_1_YEAR", confidence=0.5)
+    risk = d.extracted_fields["risk"]
+    assert {r["code"] for r in risk["reasons"]} >= {"missed_end_date", "weak_reading"}
+    assert risk["level"] == "check" and d.status == DocumentStatus.VALID       # counts meanwhile
+    [reason] = _queue(db, d)
+    assert reason.startswith("Risk check: risk 45") and "printed" in reason
+    assert review_cause(reason) == "risk check (counted meanwhile)"
+
+
+def test_a_rule_on_probation_holds_its_readings(db_session):
+    db = db_session
+    db.add(RuleHealth(rule="AGREEMENT_THIS_DAY_OF", state="probation", state_reason="2 wrong accepts"))
+    db.flush()
+    issue = TODAY - timedelta(days=10)
+    d = _store(db, _csp(db), issue, issue + timedelta(days=3 * 365))
+    assert d.status == DocumentStatus.NEEDS_REVIEW
+    assert "is on probation (2 wrong accepts)" in _queue(db, d)[0]
+    # Policy rules are never held, whatever their row says.
+    db.add(RuleHealth(rule="AGREEMENT_DEFAULT_1_YEAR", state="probation"))
+    db.query(RuleHealth).filter_by(rule="AGREEMENT_THIS_DAY_OF").delete()
+    db.flush()
+    ok = _store(db, _csp(db), issue, issue + timedelta(days=365), validity_rule_used="AGREEMENT_DEFAULT_1_YEAR")
+    assert ok.status == DocumentStatus.VALID
+
+
 def test_the_upload_page_says_our_team_is_checking_not_accepted(client, monkeypatch):
     c, Session = client
     cid, _, token = _portal_csp(Session)
-    monkeypatch.setattr(safety_gate, "check", lambda *a, **k: "Safety check: test.")
+    real = safety_gate.assess
+
+    def risky(*a, **k):
+        r = real(*a, **k)
+        return {**r, "score": 100, "level": "hold", "reasons": [{"code": "test", "points": 100, "text": "test"}]}
+    monkeypatch.setattr(safety_gate, "assess", risky)
     issue = TODAY - timedelta(days=20)
     r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=issue.isoformat()),
                files={"pvr_file": ("pvr.pdf", _pvr_pdf(issue), "application/pdf")})
@@ -96,5 +166,6 @@ def test_the_upload_page_says_our_team_is_checking_not_accepted(client, monkeypa
     s = Session()
     d = s.query(Document).filter_by(csp_id=cid).one()
     assert d.status == DocumentStatus.NEEDS_REVIEW
-    assert [q.reason for q in s.query(ManualReviewQueue).filter_by(document_id=d.id)] == ["Safety check: test."]
+    [q] = s.query(ManualReviewQueue).filter_by(document_id=d.id).all()
+    assert q.reason.startswith("Safety check: risk 100: test.")
     s.close()

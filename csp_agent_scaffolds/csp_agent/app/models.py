@@ -553,3 +553,57 @@ class AgentSignal(Base):
     first_seen = Column(DateTime, nullable=False)           # UTC
     last_seen = Column(DateTime, nullable=False, index=True)
     status = Column(String, default="NEW", nullable=False)  # NEW / GROUPED / CLOSED
+
+
+class RuleHealth(Base):
+    """One row per reading rule (a date source or a validity rule): how it
+    did in the nightly reading check and in people's decisions, and whether
+    it is on probation (app/rule_health.py). While a rule is on probation its
+    new readings wait for a person (app/safety_gate.py)."""
+    __tablename__ = "rule_health"
+    rule = Column(String, primary_key=True)                 # e.g. AGREEMENT_THIS_DAY_OF, PVR_DEFAULT_1_YEAR
+    kind = Column(String)                                   # date / validity
+    doc_type = Column(String)
+    docs_30d = Column(Integer, default=0)                   # new documents read with it, 30 days
+    corrected_14d = Column(Integer, default=0)              # a person changed the dates / rejected it, 14 days
+    eval_checked = Column(Integer, default=0)               # latest nightly reading check
+    eval_correct = Column(Integer, default=0)
+    eval_wrong_accepts = Column(Integer, default=0)
+    eval_wrong_rejects = Column(Integer, default=0)
+    precision = Column(Float)                               # share right when it accepted, nightly check
+    state = Column(String, default="ok", nullable=False)    # ok / watch / probation
+    state_since = Column(DateTime)                          # UTC
+    state_reason = Column(Text)
+    manual = Column(Boolean, default=False)                 # state set by a person (kept until they change it)
+    released_at = Column(DateTime)                          # a person released it: evidence before this is ignored
+    updated_at = Column(DateTime)
+
+
+class RuleEvent(Base):
+    """History of each rule: probation, release, a person's decision, a
+    release check after an update. Never deleted."""
+    __tablename__ = "rule_events"
+    id = Column(Integer, primary_key=True)
+    rule = Column(String, nullable=False, index=True)
+    at = Column(DateTime, nullable=False, index=True)       # UTC
+    event = Column(String, nullable=False)                  # probation / watch / ok / released / held_by_person / release_check
+    detail = Column(Text)
+    by = Column(String)                                     # "agent" or the person
+
+
+class CoachFinding(Base):
+    """A Coach finding followed over time (app/finding_tracker.py):
+    open -> fix applied -> verified (closed), or reopened when the signs come
+    back. One row per finding key."""
+    __tablename__ = "coach_findings"
+    key = Column(String, primary_key=True)                  # stable: kind + group, e.g. S4:expiry_before_issue
+    title = Column(Text)
+    level = Column(String)
+    status = Column(String, default="open", nullable=False) # open / fixing / verified / reopened
+    first_seen = Column(DateTime)                           # UTC
+    last_seen = Column(DateTime)                            # last night it was found
+    fix_at = Column(DateTime)                               # a person said the fix is applied
+    fix_by = Column(String)
+    fix_note = Column(Text)
+    closed_at = Column(DateTime)
+    history = Column(JSONB)                                 # [{"at", "status", "count", "note"}], newest last

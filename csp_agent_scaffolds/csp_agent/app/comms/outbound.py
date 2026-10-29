@@ -198,6 +198,10 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
     """Send one APPROVED message. Re-checks the recipient guard first."""
     if msg.status != OutboundStatus.APPROVED:
         return msg
+    # Paused, quiet hours, no longer needed, or a repeat (app/comms/send_gate.py).
+    from .send_gate import hold_back
+    if hold_back(db, msg):
+        return msg
     if msg.template_name == "STAFF_PENDING_LIST":
         return _send_staff_list(db, msg)
     csp = db.get(CSP, msg.csp_id) if msg.csp_id else None
