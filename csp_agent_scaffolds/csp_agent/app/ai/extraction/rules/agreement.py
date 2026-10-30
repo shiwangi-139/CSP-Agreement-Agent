@@ -258,9 +258,36 @@ def stated_period_end(text: str, issue: date) -> Optional[date]:
     return add_months(issue, months) if months else None
 
 
+# "For a period of 36 months commencing from 24/07/24 And ending on 23/07/27"
+# (Shailendra Pandit): both years in two digits. A two-digit year alone is too
+# ambiguous, but here both dates are labelled as the start and the end, so
+# "24" is 2024 (only 2010 to six years ahead, end after start).
+_SHORT = r"(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{2})(?![\d/.-])"
+SHORT_YEAR_RANGE = re.compile(r"commenc\w*\s*(?:from|on|w\.?e\.?f\.?)?\s*[:\-]?\s*" + _SHORT
+                              + r"[^\n.]{0,20}?\be[a-z|\\/.,']{0,2}ding\s*(?:on|date)?\s*[:\-]?\s*" + _SHORT, re.I)
+
+
+def _short_year_range(flat: str, today: Optional[date]) -> Optional[tuple[date, date]]:
+    latest = ((today or date.today()).year + 6) % 100
+    for m in SHORT_YEAR_RANGE.finditer(flat):
+        d1, m1, y1, d2, m2, y2 = (int(x) for x in m.groups())
+        if not (10 <= y1 <= latest and 10 <= y2 <= latest):
+            continue
+        try:
+            start, end = date(2000 + y1, m1, d1), date(2000 + y2, m2, d2)
+        except ValueError:
+            continue
+        if 30 <= (end - start).days <= 6 * 366:
+            return start, end
+    return None
+
+
 def find_validity_range(text: str, today: Optional[date] = None) -> Optional[tuple[date, date]]:
     """(start, end) of an explicit validity range between 30 days and 6 years."""
     flat = re.sub(r"[ \t]+", " ", normalize(text))
+    short = _short_year_range(flat, today)
+    if short:
+        return short
     for pat in RANGE:
         for m in pat.finditer(flat):
             a = find_dates(m.group("a"))

@@ -836,3 +836,28 @@ def test_the_second_engine_reads_the_page_whole_when_no_line_was_found(monkeypat
     # Nothing new from the second engine either: the first reading stands.
     monkeypatch.setattr(de, "second_engine_pages", lambda scan: "")
     assert de._second_look(scan, "AGREEMENT", tesseract, r0, today)[0] is r0
+
+
+# Shailendra Pandit (term clause, page 1 of 12, OCR exact): two-digit years.
+SHAILENDRA = ("B. Eko hereby appoints SHAILENDRA PANDIT as a Customer Service Point of\n"
+              "Eko at KAMTA PO KAMTA PS HILSA DIST NALANDA, BIHAR-801302\n"
+              "C. Eko and CSP have recorded the terms of their relationship. For a period of 36 months\n"
+              "commencing from 24/07/24 And ending on 23/07/27\n2. ROLE AND oF CSP\n")
+
+
+def test_commencing_and_ending_dates_with_two_digit_years():
+    r = extract_agreement(SHAILENDRA, date(2026, 10, 30))
+    assert r["issue_date"] == date(2024, 7, 24) and r["date_source"] == "AGREEMENT_RANGE_START"
+    assert r["explicit_expiry"] == date(2027, 7, 23) and r["validity_source"] == "AGREEMENT_RANGE_FROM_TO"
+    assert not r.get("validity_conflict")                     # 36 months stated: agrees
+    # The wrong number of months stated is flagged for a person.
+    r = extract_agreement(SHAILENDRA.replace("36 months", "12 months"), date(2026, 10, 30))
+    assert r["validity_conflict"] and "23-07-2027" in r["validity_conflict"]
+
+
+def test_a_lone_two_digit_year_is_still_not_guessed():
+    for t in ("commencing from 24/07/24 for the agreement", "ending on 23/07/27",
+              "commencing from 24/07/99 And ending on 23/07/02",          # outside 2010..
+              "commencing from 24/07/24 And ending on 23/07/24"):         # under 30 days
+        r = extract_agreement(t, date(2026, 10, 30))
+        assert r["issue_date"] is None or r["explicit_expiry"] is None, t
