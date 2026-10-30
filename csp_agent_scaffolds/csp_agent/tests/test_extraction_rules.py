@@ -861,3 +861,22 @@ def test_a_lone_two_digit_year_is_still_not_guessed():
               "commencing from 24/07/24 And ending on 23/07/24"):         # under 30 days
         r = extract_agreement(t, date(2026, 10, 30))
         assert r["issue_date"] is None or r["explicit_expiry"] is None, t
+
+
+# Prity Kumari (OCR exact): a renewal signed in advance, its term starts after today.
+PRITY = ("Eko hereby appoints PRITY KUMARI as a Customer Service Point of Eko at VILL - ENAYATPUR PARBODHI),\n"
+         "and hereby agrees to be a CSP of Eko at the said CSP Location.\n"
+         "—ko and CSP have recorded the terms of their relationship for a Period of 36 months commencing from\n"
+         "01/11/2026 and ending on 30/10/2029.\nROLE AND RESPONSIBILITIES OF CSP\n")
+
+
+def test_the_start_of_the_term_is_the_issue_date_even_a_few_days_ahead():
+    r = extract_agreement(PRITY, date(2026, 10, 30))
+    assert r["issue_date"] == date(2026, 11, 1) and r["date_source"] == "AGREEMENT_COMMENCING_DATE"
+    assert r["explicit_expiry"] == date(2029, 10, 30) and not r.get("validity_conflict")
+    # Over 60 days ahead is not a start date the agent takes.
+    r = extract_agreement(PRITY, date(2026, 8, 15))
+    assert r["issue_date"] is None
+    # A date given by the heading or "On this day of" still comes first.
+    r = extract_agreement("On this day of, 28/10/2026 (Effective Date)\n" + PRITY, date(2026, 10, 30))
+    assert r["issue_date"] == date(2026, 10, 28) and r["date_source"] == "AGREEMENT_THIS_DAY_OF"

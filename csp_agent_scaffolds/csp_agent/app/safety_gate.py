@@ -23,6 +23,8 @@ Points (each reason once):
    15  a person corrected this CSP's dates for this document before
    10  some pages could not be read, or the reading confidence is under 60 %
    10  the expiry is within 7 days of today (one day decides the status)
+   30  the term starts after the document arrived ("commencing from" a
+       date up to 60 days ahead: a renewal signed in advance)
 
 Only new documents pass here (app/document_service.py); nothing stored is
 changed.
@@ -44,12 +46,15 @@ def _fmt(d) -> str:
     return d.strftime("%d-%m-%Y") if d else "?"
 
 
-def impossible(issue: Optional[date], expiry: Optional[date], arrived: date) -> list[tuple[str, str]]:
-    """(code, text) for each date that cannot be right."""
+def impossible(issue: Optional[date], expiry: Optional[date], arrived: date,
+               starts_later: bool = False) -> list[tuple[str, str]]:
+    """(code, text) for each date that cannot be right. starts_later: the
+    issue date is the start of the term ("commencing from"), which a renewal
+    signed in advance may put up to 60 days after the document arrived."""
     out = []
     if issue and expiry and expiry < issue:
         out.append(("expiry_before_issue", f"expiry {_fmt(expiry)} is before issue {_fmt(issue)}"))
-    if issue and issue > arrived + timedelta(days=1):
+    if issue and issue > arrived + timedelta(days=60 if starts_later else 1):
         out.append(("issue_after_arrival", f"issue date {_fmt(issue)} is after it arrived ({_fmt(arrived)})"))
     if issue and expiry and (expiry - issue).days > 6 * 366:
         out.append(("over_6_years", f"valid for over 6 years ({_fmt(issue)} → {_fmt(expiry)})"))
@@ -80,8 +85,12 @@ def assess(db: Session, csp_id: int, doc_type: str, ex: dict, issue: Optional[da
     def add(code, points, text):
         reasons.append({"code": code, "points": points, "text": text})
 
-    for code, text in impossible(issue, expiry, arrived):
+    starts_later = ex.get("date_source") == "AGREEMENT_COMMENCING_DATE"
+    for code, text in impossible(issue, expiry, arrived, starts_later):
         add(code, 100, text)
+    if starts_later and issue and arrived + timedelta(days=1) < issue <= arrived + timedelta(days=60):
+        add("starts_later", 30, f"the term starts on {_fmt(issue)}, after the document arrived ({_fmt(arrived)}): "
+                                "a renewal signed in advance; check the start date")
     rules = [ex.get("date_source"), ex.get("validity_rule_used")]
     h = held_rule(db, rules)
     if h is not None:

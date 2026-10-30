@@ -10,6 +10,8 @@ Issue date, first match wins:
      e.g. "On this day of, 20/04/2024 ("Effective Date")" or
      "On this day of, 13th day of February 2025", printed or handwritten.
   3. A labelled "Effective Date : <date>" anywhere.
+  4. "... commencing from <date>" (a start up to 60 days ahead: renewals are
+     signed in advance).
 
 Validity, first match wins:
   0. A printed end date (30 days to 6 years after the issue date) -> expiry =
@@ -32,7 +34,7 @@ Validity, first match wins:
      the person checking it is told to read the years in the heading.
 """
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from ....expiry_engine import AGREEMENT_DEFAULT_YEARS, add_years
@@ -122,6 +124,20 @@ def _heading_date(text: str, today: Optional[date]) -> Optional[FoundDate]:
             if f.end <= len(head):
                 return FoundDate(m.end() + f.start, m.end() + f.end, f.value, f.raw)
     return None
+
+
+# "for a Period of 36 months commencing from 01/11/2026 and ending on 30/10/2029"
+# (Prity Kumari): the start of the term is the issue date when nothing above
+# gives one. A renewal is often signed in advance, so a start up to
+# STARTS_AHEAD_DAYS ahead is taken (the safety gate asks a person to look).
+COMMENCING = re.compile(r"commenc\w*\s*(?:from|on|w\.?e\.?f\.?)?\s*[:\-]?\s*", re.I)
+STARTS_AHEAD_DAYS = 60
+
+
+def _commencing_date(text: str, today: Optional[date]) -> Optional[FoundDate]:
+    ahead = (today or date.today()) + timedelta(days=STARTS_AHEAD_DAYS)
+    found = dates_after(text, COMMENCING, 25, ahead)
+    return found[0] if found else None
 
 
 def has_three_year_clause(text: str) -> bool:
@@ -332,6 +348,10 @@ def extract_agreement(text: str, today: Optional[date] = None) -> dict:
         labelled = dates_after(text, EFFECTIVE_LABEL, 40, today)
         if labelled:
             out["issue_date"], out["date_source"] = labelled[0].value, "AGREEMENT_EFFECTIVE_DATE_LABEL"
+    if out["issue_date"] is None:
+        start = _commencing_date(text, today)
+        if start:
+            out["issue_date"], out["date_source"] = start.value, "AGREEMENT_COMMENCING_DATE"
 
     end = find_end_date(text, out["issue_date"], today)
     if end and out["issue_date"] is None:

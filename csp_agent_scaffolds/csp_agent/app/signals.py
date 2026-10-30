@@ -219,7 +219,7 @@ def collect(db: Session, now: Optional[datetime] = None, days: int = LOOKBACK_DA
             continue
         t, ex = canonical_type(d.document_type), d.extracted_fields or {}
         arrived = (d.source_date or d.uploaded_at).date()
-        problems = impossible(d.issue_date, d.expiry_date, arrived)
+        problems = impossible(d.issue_date, d.expiry_date, arrived, d.date_source == "AGREEMENT_COMMENCING_DATE")
         if t == "AGREEMENT" and d.status in ACCEPTED and ex.get("page_count") and ex["page_count"] < 10:
             problems.append(("short_agreement", f"accepted agreement with only {ex['page_count']} page(s)"))
         if t == "IIBF_CERTIFICATE" and d.status in ACCEPTED and not d.iibf_reg_number:

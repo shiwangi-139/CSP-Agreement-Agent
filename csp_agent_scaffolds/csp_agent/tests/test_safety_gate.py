@@ -169,3 +169,16 @@ def test_the_upload_page_says_our_team_is_checking_not_accepted(client, monkeypa
     [q] = s.query(ManualReviewQueue).filter_by(document_id=d.id).all()
     assert q.reason.startswith("Safety check: risk 100: test.")
     s.close()
+
+
+def test_a_term_starting_after_arrival_counts_and_a_person_checks_it(db_session):
+    db = db_session
+    soon = _store(db, _csp(db), TODAY + timedelta(days=2), TODAY + timedelta(days=2 + 3 * 365),
+                  date_source="AGREEMENT_COMMENCING_DATE", validity_rule_used="AGREEMENT_RANGE_FROM_TO")
+    risk = soon.extracted_fields["risk"]
+    assert risk["level"] == "check" and [r["code"] for r in risk["reasons"]] == ["starts_later"]
+    assert soon.status == DocumentStatus.VALID and "renewal signed in advance" in _queue(db, soon)[0]
+    # Months ahead is still impossible: held.
+    far = _store(db, _csp(db), TODAY + timedelta(days=90), TODAY + timedelta(days=90 + 3 * 365),
+                 date_source="AGREEMENT_COMMENCING_DATE", validity_rule_used="AGREEMENT_RANGE_FROM_TO")
+    assert far.status == DocumentStatus.NEEDS_REVIEW and "after it arrived" in _queue(db, far)[0]

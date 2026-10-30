@@ -25,6 +25,7 @@ DATE_FROM = {
     "AGREEMENT_THIS_DAY_OF": "\"On this day of …\"",
     "AGREEMENT_EFFECTIVE_DATE_LABEL": "the \"Effective Date\" label",
     "AGREEMENT_RANGE_START": "the start of the \"from … to …\" range",
+    "AGREEMENT_COMMENCING_DATE": "the \"commencing from …\" date (start of the term)",
     "PVR_DIGITAL_SIGNATURE_DATE": "the police officer's digital signature",
     "PVR_TOP_DATE": "the date at the top of the certificate",
     "PVR_FIRST_DATE": "the first date on the certificate",
