@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CSP Document Agent – User Manual</title>
+<style>
+  body { font-family: "DejaVu Sans", Arial, sans-serif; font-size: 10.5pt; line-height: 1.5; color: #1d2621; margin: 0 auto; max-width: 900px; padding: 18px; background: #fff; }
+  h1 { color: #1d5c41; font-size: 22pt; margin: 4px 0 2px; }
+  h2 { color: #1d5c41; font-size: 15pt; border-bottom: 2px solid #1d5c41; padding-bottom: 3px; margin-top: 30px; page-break-before: always; }
+  h2.first { page-break-before: auto; }
+  h3 { font-size: 12pt; margin: 18px 0 6px; color: #12402d; }
+  h4 { font-size: 10.5pt; margin: 12px 0 4px; }
+  p { margin: 5px 0 8px; }
+  ul, ol { margin: 4px 0 8px 0; padding-left: 22px; }
+  li { margin: 2px 0; }
+  table { border-collapse: collapse; width: 100%; margin: 6px 0 12px; font-size: 9.5pt; }
+  th { background: #1d5c41; color: #fff; text-align: left; padding: 4px 6px; }
+  td { border: 1px solid #c9d3cd; padding: 4px 6px; vertical-align: top; }
+  tr:nth-child(even) td { background: #f6f8f7; }
+  code { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; background: #f1f4f2; padding: 0 3px; }
+  pre { font-family: "DejaVu Sans Mono", monospace; font-size: 8.8pt; background: #f1f4f2; padding: 8px; white-space: pre-wrap; border-left: 3px solid #1d5c41; }
+  .sub { color: #5b6670; font-size: 10pt; }
+  .simple { background: #e7f1ec; border-left: 4px solid #1d5c41; padding: 6px 10px; margin: 8px 0; }
+  .tech { background: #e8eef8; border-left: 4px solid #3b5ea8; padding: 6px 10px; margin: 8px 0; }
+  .warn { background: #fdf3d7; border-left: 4px solid #b7791f; padding: 6px 10px; margin: 8px 0; }
+  .plan { background: #f3ecfa; border-left: 4px solid #6b46a3; padding: 6px 10px; margin: 8px 0; }
+  .tag { display: inline-block; font-size: 8.5pt; padding: 0 6px; border-radius: 8px; background: #e7f1ec; color: #1d5c41; }
+  .tag.todo { background: #fdf3d7; color: #8a5a12; }
+  .tag.part { background: #e8eef8; color: #2d4f8f; }
+  .flow td { text-align: center; background: #e7f1ec; font-weight: bold; border: 1px solid #1d5c41; }
+  .flow td.arrow { background: #fff; border: none; color: #1d5c41; font-size: 14pt; width: 18px; }
+  .toc li { margin: 1px 0; }
+  .small { font-size: 9pt; color: #5b6670; }
+</style>
+</head>
+<body>
+
+<h1>CSP Document Agent</h1>
+<p class="sub"><b>User Manual</b> · proposed product name <b>Anupaalan</b> (see section 10) · Eko India Financial Services · SBI Kiosk Banking ·
+version of 30-10-2026 · owner Shiwangi Sinha</p>
+
+<div class="simple"><b>In one line:</b> the agent makes sure every Customer Service Point (CSP) of Eko keeps its three required
+documents valid, so that no working kiosk stops earning because of a missing or expired paper. It collects the documents,
+reads them, decides, reminds the CSP on WhatsApp, tells the RM and DC who is still pending, and learns from its own mistakes.</div>
+
+<h3>How to read this manual</h3>
+<p>Each topic starts with a <span class="tag">simple explanation</span> for anyone, followed by <span class="tag part">technical
+details</span> for developers. Pick the path that fits you:</p>
+<table>
+<tr><th>If you want to…</th><th>Read</th></tr>
+<tr><td>Understand the idea from zero</td><td>1. The idea in five minutes</td></tr>
+<tr><td>Use the dashboard every day (Admin or RM)</td><td>2. Using the dashboard · 3. Daily tasks step by step</td></tr>
+<tr><td>Know how a document is accepted or refused</td><td>4. How the agent decides (rules for each document)</td></tr>
+<tr><td>Know who gets which message and when</td><td>5. Messages, reminders and escalation</td></tr>
+<tr><td>See how it is built</td><td>6. Architecture · 7. Database</td></tr>
+<tr><td>Know how mistakes are prevented and learned from</td><td>8. Safety: context, harness, guardrails and feedback loop</td></tr>
+<tr><td>Know about login, security, DPDP and RBI</td><td>9. Security, access and compliance</td></tr>
+<tr><td>Present, brand or grow it into a product</td><td>10. Product name, positioning and roadmap</td></tr>
+<tr><td>Run or change it on the server</td><td>11. Operating the system · Appendix</td></tr>
+</table>
+
+<h3>Contents</h3>
+<ol class="toc">
+<li>The idea in five minutes</li><li>Using the dashboard</li><li>Daily tasks step by step</li>
+<li>How the agent decides: rules for each document</li><li>Messages, reminders and escalation</li><li>Architecture</li>
+<li>Database</li><li>Safety: context, harness, guardrails and feedback loop</li><li>Security, access and compliance</li>
+<li>Product name, positioning and roadmap</li><li>Operating the system</li><li>Questions people ask</li>
+<li>Appendix: refusal reasons, settings, scripts, glossary</li>
+</ol>
+
+<!-- ======================================================= 1 -->
+<h2>1. The idea in five minutes</h2>
+
+<h3>1.1 The business</h3>
+<p>State Bank of India (SBI) offers banking in villages and small towns through <b>Customer Service Points (CSPs)</b>, also
+called kiosks or Business Correspondent agents. A CSP is a local shopkeeper who opens accounts, takes deposits, pays
+withdrawals and sends money for the bank's customers. Eko India Financial Services is the company that recruits,
+manages and supports about 490 such CSPs for SBI. Every CSP has a unique <b>KO code</b> (for example <code>1A852163</code>).</p>
+<p>Each CSP is looked after by an <b>RM</b> (Relationship Manager, an Eko employee) and a <b>DC</b> (District Coordinator, who
+visits the CSPs in a district).</p>
+
+<h3>1.2 The problem</h3>
+<p>To keep a kiosk working, the bank requires three documents to be <b>on file and valid</b>:</p>
+<table>
+<tr><th>Document</th><th>What it is</th><th>How long it is valid</th></tr>
+<tr><td><b>CSP Agreement</b></td><td>The contract between the CSP and Eko (about 13 pages, often on stamp paper).</td><td>As written in it (often 2 or 3 years); 1 year if nothing is written.</td></tr>
+<tr><td><b>Police Verification</b> (PVR / character certificate)</td><td>Proof from the police that the CSP has no criminal record.</td><td>As written (6 months or 1 year); 1 year if nothing is written.</td></tr>
+<tr><td><b>IIBF certificate</b></td><td>The CSP passed the Indian Institute of Banking &amp; Finance exam for BC agents.</td><td>Does not expire.</td></tr>
+</table>
+<p>When a document expires or is missing, the bank can stop the kiosk. Then the CSP earns no commission, customers lose their
+local bank, and Eko loses revenue. Before this agent, documents came by e-mail and WhatsApp in every possible shape (phone photos,
+scans, Hindi, handwriting), and people had to read each one and chase each CSP by phone.</p>
+
+<h3>1.3 What the agent does</h3>
+<table class="flow"><tr>
+<td>Collect</td><td class="arrow">→</td><td>Read</td><td class="arrow">→</td><td>Decide</td><td class="arrow">→</td>
+<td>Remind</td><td class="arrow">→</td><td>Escalate</td><td class="arrow">→</td><td>Learn</td></tr></table>
+<ol>
+<li><b>Collect:</b> it reads the documents from two Gmail inboxes, from each CSP's personal upload link, and from the DC master
+link (one link a DC uses for all CSPs).</li>
+<li><b>Read:</b> it reads each page (also photos and Hindi) and finds the type of document, the issue date, the validity and
+whose document it is.</li>
+<li><b>Decide:</b> it accepts the document, refuses it with a clear reason, or sends it to a person when it is not sure.</li>
+<li><b>Remind:</b> it sends the CSP a WhatsApp message with their own upload link, on a fixed schedule, until the documents
+arrive.</li>
+<li><b>Escalate:</b> it sends each RM and DC a daily list of their CSPs that are still pending.</li>
+<li><b>Learn:</b> every night it checks its own work, finds its mistakes, and helps people fix the rules.</li>
+</ol>
+<div class="simple"><b>Golden rule:</b> the agent tells a CSP "accepted" or "expired" only when it is sure. Anything uncertain goes to a
+person first. A wrong "accepted" is treated as ten times worse than a wrong refusal.</div>
+
+<h3>1.4 Who uses what</h3>
+<table>
+<tr><th>Person</th><th>Uses</th><th>For</th></tr>
+<tr><td>Admin (Eko operations)</td><td>Dashboard, all pages</td><td>Running the agent, reviewing documents, messages, reports, settings.</td></tr>
+<tr><td>RM</td><td>Dashboard, own CSPs only</td><td>Seeing and helping their CSPs, reviewing their documents, answering questions.</td></tr>
+<tr><td>DC</td><td>DC master link, DC Excel / live Google Sheet, WhatsApp list</td><td>Uploading documents for CSPs, knowing who is pending. (No dashboard login today.)</td></tr>
+<tr><td>CSP</td><td>Personal upload link (on WhatsApp)</td><td>Uploading documents and asking questions; no login needed.</td></tr>
+</table>
+
+<!-- ======================================================= 2 -->
+<h2>2. Using the dashboard</h2>
+
+<h3>2.1 Signing in</h3>
+<div class="simple">Open the dashboard address, type your e-mail and password, and press Sign in. Only people an admin has
+created can sign in; there is no "create account" button on purpose.</div>
+<ul>
+<li>Address: <code>https://indev.eko.in/csp-agreement-agent/</code> (the CSPs' upload page is <code>…/upload</code>).</li>
+<li>Who can sign in today: <b>Admin</b> and <b>RM</b> accounts. DCs and others cannot.</li>
+<li>After 5 wrong passwords the account is locked for 15 minutes. You are signed out after 60 minutes without activity, and
+after 12 hours in any case.</li>
+<li>Forgot your password? An admin sets a new one (section 11.3). Google sign-in is planned (section 9.3).</li>
+</ul>
+
+<h3>2.2 The screen</h3>
+<p>On the left is the <b>menu</b>. It shows only icons until you move the mouse over it; the 📌 pin keeps it open. At the top is
+a <b>search box</b> (press <code>/</code>): type a KO code, a name or a phone number to open that CSP. At the bottom right, admins
+have the <b>Agent Coach</b> button. On a phone, a bar at the bottom gives Today, Find, Review and Messages.</p>
+
+<h3>2.3 Every page</h3>
+<table>
+<tr><th>Menu</th><th>Page</th><th>What it is for</th><th>Who</th></tr>
+<tr><td>Work</td><td>Today</td><td>Your daily worklist: the goal and the pace, CSPs that need a person (urgent / due today), and "Needs attention" with a button for each.</td><td>All</td></tr>
+<tr><td>Work</td><td>Find CSPs</td><td>Pick a state for each document (valid, expired, missing…) and see exactly those CSPs; download the list.</td><td>All</td></tr>
+<tr><td>Work</td><td>Labels</td><td>CSPs by how many of their 3 documents are on file (Label 1–4, Inactive), with sub-groups; CSP report download.</td><td>All</td></tr>
+<tr><td>Work</td><td>Overview</td><td>Document health of the whole network, and the jobs you can run by hand.</td><td>All (jobs: admin)</td></tr>
+<tr><td>Documents</td><td>Review queue</td><td>Documents waiting for a person's decision before the CSP's status changes.</td><td>All (RM: own CSPs)</td></tr>
+<tr><td>Documents</td><td>Form uploads &amp; DC link</td><td>What CSPs and DCs sent through the upload page and the DC master link; the DC master link and DC reports.</td><td>All (DC link: admin)</td></tr>
+<tr><td>Documents</td><td>Latest documents</td><td>Current documents per CSP, and every file uploaded through the links.</td><td>All</td></tr>
+<tr><td>Messages</td><td>Communication Hub</td><td>Drafts, sent and failed messages to CSPs, RMs and DCs; approve, edit or reject.</td><td>All</td></tr>
+<tr><td>Messages</td><td>CSP questions</td><td>Questions CSPs asked on their upload page; mark them answered.</td><td>All</td></tr>
+<tr><td>Admin</td><td>Activity</td><td>What people did on the dashboard, and what CSPs and DCs did on their links.</td><td>Admin</td></tr>
+<tr><td>Admin</td><td>Monitoring</td><td>Is the agent running, reading, sending and keeping records right. 11 tabs, incl. "Agent's own warnings" and "Rules &amp; safety".</td><td>Admin</td></tr>
+<tr><td>Admin</td><td>Accuracy</td><td>How well the agent reads: the nightly reading check and people's checks.</td><td>Admin</td></tr>
+<tr><td>Admin</td><td>Contacts &amp; gaps</td><td>RM and DC numbers, missing contacts, contact changes CSPs typed.</td><td>Admin</td></tr>
+<tr><td>Admin</td><td>Gmail ingestion</td><td>E-mails read for CSP documents, and what was done with each attachment.</td><td>Admin</td></tr>
+<tr><td>Help</td><td>User manual</td><td>This manual.</td><td>All</td></tr>
+</table>
+
+<h3>2.4 The CSP page (drawer)</h3>
+<p>Click any CSP (or search for it) to open its page on the right: the three document cards with days left or overdue, the
+contacts, the history, and buttons: <b>Send reminder now</b>, <b>Create upload link</b>, <b>Download all 3 (zip)</b>, the
+WhatsApp number to use, and for admins <b>Make active</b> (for a CSP the calling sheet marks Inactive). Each file has a folded
+box <b>"How the agent read it"</b>.</p>
+
+<h3>2.5 What an RM sees</h3>
+<p>An RM sees only the CSPs whose RM they are on the calling sheet (one named RM also sees CSPs with no RM). Asking for another
+RM's CSP gives "not found". The Admin pages and the Coach are not shown.</p>
+
+<!-- ======================================================= 3 -->
+<h2>3. Daily tasks step by step</h2>
+
+<h3>3.1 Start of the day (5 minutes)</h3>
+<ol><li>Open <b>Today</b>: look at the goal band (how many CSPs are fully compliant and the pace).</li>
+<li>Work the <b>Needs attention</b> list top-down; each row has its button (call, open, take the file…).</li>
+<li>Open the <b>Review queue</b> and clear it (3.2).</li>
+<li>Admins: open the <b>Agent Coach</b> and read the "Fix now" findings.</li></ol>
+
+<h3>3.2 Decide a document in the Review queue</h3>
+<ol><li>Open the item. Read the reason at the top (why it waits) and the box <b>"How the agent read it"</b>: the dates it found,
+the exact text each came from, what it ignored, its <b>risk</b> and every date printed on the document.</li>
+<li>Click the file to see the document itself.</li>
+<li>If the rules have been improved since it arrived, press <b>Re-read with current rules</b>.</li>
+<li>Check the issue date (and the validity offered) against the document. Change them if needed.</li>
+<li>Press <b>Accept</b> (it counts now; the CSP is told if they uploaded it themselves) or <b>Reject document</b> (it does not
+count; the CSP is asked again).</li></ol>
+<div class="simple">Kinds of items: <b>Safety check</b> (the agent held it: something does not add up) · <b>Risk check</b> (counted, but
+please look) · <b>Validity check</b> (the 1-year default was used; set the years if the document states them) · <b>DC upload</b> (a DC
+sent it through the master link) · <b>Spot check / Reference check</b> (random or chosen checks that measure the agent's accuracy).</div>
+
+<h3>3.3 A CSP says "I uploaded, but it was refused"</h3>
+<ol><li>Open <b>Form uploads &amp; DC link</b>, find the CSP, and press <b>view what they sent</b>.</li>
+<li>If the document is in fact right, an admin presses <b>take this file</b>: it is saved for the CSP and waits in the
+Review queue for your Accept.</li></ol>
+
+<h3>3.4 Send a CSP their link or a reminder</h3>
+<p>Open the CSP and press <b>Send reminder now</b> (WhatsApp with their upload link) or <b>Create upload link</b> (to copy and share yourself).</p>
+
+<h3>3.5 Messages waiting for approval</h3>
+<p>In <b>review mode</b> every message waits in the <b>Communication Hub</b>: <b>Approve</b>, <b>Edit text</b> (e-mail only:
+WhatsApp always uses the Meta-approved layout) or <b>Reject</b>. In <b>auto mode</b> the agent sends by itself within the
+allowed hours and daily limit.</p>
+
+<h3>3.6 The DC master link (admins)</h3>
+<p>On <b>Form uploads &amp; DC link</b>: copy the link to share with DCs, bring back the last shared link, make a new one (the old
+one stops), or switch it off. From the same card: <b>Download DC Excel</b>, <b>Text summary</b>, <b>Daily progress (all DCs)</b>
+with "Received on &lt;day&gt;" per DC, and the key for the DCs' live Google Sheets.</p>
+
+<h3>3.7 CSP questions</h3>
+<p>Open <b>CSP questions</b>, call or message the CSP, then press <b>Mark answered</b>. A CSP who gets no answer often stops trying.</p>
+
+<h3>3.8 Emergency: stop all messages</h3>
+<p>Admins: <b>Monitoring → Rules &amp; safety → Pause all sending</b>, with a reason. Nothing goes out until <b>Resume sending</b>.</p>
+
+<h3>3.9 The Agent Coach and Rules &amp; safety (admins)</h3>
+<ul><li><b>Coach findings</b> say what to improve, with numbers, a suggested fix, example CSPs and a button. When you fixed
+something, press <b>Fix applied</b> and write what you did: the next nights check whether it is really gone.</li>
+<li><b>Rules &amp; safety</b> lists every reading rule with its health. A rule <b>on probation</b> holds its new readings for a
+person; press <b>Release</b> if its "mistakes" were wrong answers, or <b>Hold its readings</b> to stop a rule yourself.</li></ul>
+
+<h3>3.10 For CSPs and DCs: the upload page</h3>
+<p>The CSP opens the link from WhatsApp (no password), sees which documents are still needed, and for each one either takes a
+photo of every page or chooses a PDF, then types the issue date. Photos are checked on the phone (blur, darkness, size) and
+joined into one PDF. The page answers at once: accepted, being checked by our team, or refused with the reason and what to do.
+There is also a "Have a question?" box and a field to correct contact details (a person approves each change). A DC uses the
+same page through the master link, choosing the CSP by KO code.</p>
+
+<!-- ======================================================= 4 -->
+<h2>4. How the agent decides: rules for each document</h2>
+<div class="simple">The agent reads with <b>written rules</b> (like a checklist), not with guesses. Each rule was taught from real
+documents. When no rule fits, a person decides. An AI model may <i>suggest</i> a date for a person, but never decides.</div>
+
+<h3>4.1 Steps for every file</h3>
+<ol><li><b>File check:</b> only PDF, JPG or PNG; at most 10 MB and 25 pages; photos too blurry, dark or small are sent back with what to fix.</li>
+<li><b>Reading the text:</b> digital PDFs are read directly; scans and photos by OCR (Tesseract, English + Hindi). If OCR is
+unsure, a second engine (RapidOCR) reads too. If the key line is still missing, the agent re-reads the area around the
+important words, with stamp ink removed, and finally reads the first pages whole with the second engine.</li>
+<li><b>Which document is it?</b> Only Agreement, PVR and IIBF are allowed. Aadhaar, PAN and others are not stored. PVR
+application receipts and IIBF fee receipts are recognised as "not the certificate".</li>
+<li><b>Whose is it?</b> The CSP name or KO code on the document is checked. A document showing another CSP goes to a person.</li>
+<li><b>Dates:</b> the issue date and the validity, by the rules below.</li>
+<li><b>Safety gate:</b> a risk score decides accept / accept and check / hold for a person (section 8).</li></ol>
+
+<h3>4.2 Dates in general</h3>
+<ul><li>Dates are found in many forms: 20/04/2024, 2024-05-12, 13-Feb-2025, 08th JUL 2022, "13th day of February 2025",
+Hindi digits and Hindi month names. OCR slips are repaired (o→0, S→5, l→1, a slash read as "I" or "1", "9026" read for "2026").</li>
+<li>An issue date cannot be in the future or before 2010.</li>
+<li><b>Phone camera stamps</b> ("Shot on vivo… Oct 24, 2026, 17:13") are ignored, and shown as ignored.</li></ul>
+
+<h3>4.3 CSP Agreement</h3>
+<table><tr><th>Question</th><th>Rule (first that fits wins)</th></tr>
+<tr><td>Issue date</td><td>1. e-stamp "Certificate Issue Date" · 2. the date under the heading "Customer Service Point Agreement" ·
+3. "On this day of …" · 4. "Effective Date: …" · 5. the start of a printed range.</td></tr>
+<tr><td>Valid till</td><td>1. a printed last day ("valid upto 25/10/2027", "ending on", "END AND CLOSE DATE", Hindi "… तक मान्य") ·
+2. "valid for a period of three (3) years" → 3 years · 3. a range "from X to Y" → Y · 4. a stated period ("two years",
+"36 months") → that period · 5. nothing written → <b>1 year</b> (Eko's rule since 30-09-2026; it was 2 years).</td></tr>
+<tr><td>Contradictions</td><td>When a printed last day and a stated period differ by more than a month, a person is asked to check.
+When a stamp hides the number of years, the person is told to read it on the document.</td></tr>
+<tr><td>Pages</td><td>1–4 pages: refused as incomplete (from e-mail: sent to a person). 5–9 pages: a person checks. 10 or more: OK (a full agreement has about 13).</td></tr>
+<tr><td>When validity was only the default</td><td>It counts, and a "Validity check" asks a person to set the years if the document states them.</td></tr></table>
+
+<h3>4.4 Police Verification (PVR / character certificate)</h3>
+<table><tr><th>Question</th><th>Rule</th></tr>
+<tr><td>Issue date</td><td>1. the police officer's digital signature date · 2. a labelled date at the top (Date / दिनांक) · 3. the first date.</td></tr>
+<tr><td>Valid till</td><td>a printed "valid upto" date · "six months" stated (also Hindi, and Bihar BCHC certificates) → 6 months ·
+"one year" stated → 1 year · nothing stated → <b>1 year</b>. Police Clearance Certificates with no validity: 1 year (since 26-10-2026); a reviewer may set "no expiry".</td></tr>
+<tr><td>Application receipt</td><td>A receipt, challan or "status: registered" is the application, not the certificate. On the upload page it is
+noted ("applied on …") and the link stays open for the certificate; it does not count as a PVR.</td></tr></table>
+
+<h3>4.5 IIBF certificate</h3>
+<p>Issue date from "DATED …", else the digital signature, else the first date. The holder's name and registration number are read.
+It <b>never expires</b>. Fee receipts and admit cards are not the certificate. A second copy of the same certificate (same number
+or date) is not stored again.</p>
+
+<h3>4.6 When the CSP types a date on the upload page</h3>
+<ul><li>A date is required and cannot be in the future.</li>
+<li>If the document's own date can be read, the document wins; a difference is shown to the reviewer.</li>
+<li>If the date cannot be read, the typed date is used and a person checks it.</li>
+<li>"Expired" is told to the CSP only when the read date equals the typed date and the validity was not guessed; otherwise a person checks first.</li></ul>
+
+<h3>4.7 Labels: where each CSP stands</h3>
+<table><tr><th>Label</th><th>Meaning</th><th>Sub-groups</th></tr>
+<tr><td>Label 1</td><td>All 3 documents on file</td><td>1.1 fully compliant · 1.2 renewal within 60 days · 1.3 renewal overdue (expired)</td></tr>
+<tr><td>Label 2</td><td>1 document missing</td><td>2.1 Agreement · 2.2 PVR · 2.3 IIBF missing</td></tr>
+<tr><td>Label 3</td><td>2 documents missing</td><td>3.1 only Agreement · 3.2 only PVR · 3.3 only IIBF on file</td></tr>
+<tr><td>Label 4</td><td>No documents</td><td>4.1 never sent anything · 4.2 sent, but unreadable</td></tr>
+<tr><td>Inactive</td><td>Terminal Status on the calling sheet is inactive / closed / suspended…</td><td>Never messaged; an admin can "Make active".</td></tr></table>
+<p>"On file" means valid or expired: an expired document still counts for the label, and its renewal is chased separately. An
+unreadable copy counts as missing.</p>
+
+<h3>4.8 The DC master link</h3>
+<p>One link for all working CSPs. It never expires; only "make a new link" or "switch off" ends it. It refuses a document that is
+still valid for more than 60 days, a file already filed for another CSP, the same document as the one on file, and a document
+showing another CSP's code. Everything stored from it is also listed in the Review queue as "DC upload".</p>
+
+<!-- ======================================================= 5 -->
+<h2>5. Messages, reminders and escalation</h2>
+<div class="simple">The CSP gets a WhatsApp in Hindi and English with their own upload link, again and again on a schedule, until
+the documents arrive. If they still do not respond, their RM and then their DC are told. The moment the documents arrive, the
+reminders stop.</div>
+
+<h3>5.1 Schedules (ladders)</h3>
+<table><tr><th>Situation</th><th>Steps (T-60 = 60 days before expiry)</th></tr>
+<tr><td>Agreement renewal</td><td>CSP: T-60 notice, T-53, T-46, T-39 follow-ups · RM: T-32 · CSP: T-25 · RM: T-18 · DC: T-11 · CSP: T-7, T-3, T-1 final</td></tr>
+<tr><td>PVR (1 year)</td><td>CSP: T-30, T-23, T-16 · RM: T-12 · CSP: T-9 · RM: T-6 · DC: T-3 · CSP: T-1</td></tr>
+<tr><td>PVR (6 months)</td><td>CSP: T-21, T-17, T-13 · RM: T-10 · CSP: T-7 · RM: T-5 · DC: T-3 · CSP: T-1</td></tr>
+<tr><td>Missing / expired / unreadable</td><td>A first message, the next 4 days after it was sent, the next 7 days after that, then one every week until the documents arrive. During the campaign (5.2): one message a day. A new message is prepared only after the previous one was sent, so messages never pile up.</td></tr></table>
+<p>At most 2 messages per cycle go to the RM and 1 to the DC. IIBF has no renewal (it does not expire). Only the latest due step is sent.</p>
+
+<h3>5.2 The renewal campaign (Oct–Nov 2026)</h3>
+<ul><li>From 23-10-2026: every CSP who still needs documents gets one reminder a day.</li>
+<li>From 30-10-2026: each RM gets a daily WhatsApp list (11:00) of their pending CSPs with the missing documents (A = Agreement, P = PVR, I = IIBF); an evening nudge (17:00) goes to CSPs messaged in the last 3 days.</li>
+<li>From 03-11-2026: each DC gets the same daily list.</li>
+<li>Until 13-11-2026; after that the RM/DC lists become weekly (Mondays).</li></ul>
+
+<h3>5.3 Safety limits on every message</h3>
+<table><tr><th>Guard</th><th>What it does</th></tr>
+<tr><td>Recipient guard</td><td>A message can only go to a number or e-mail the calling sheet lists for that CSP, or for their RM/DC. Checked again at sending.</td></tr>
+<tr><td>Review or auto mode</td><td>Review: a person approves each message. Auto: the agent sends WhatsApp itself between 10:00 and 18:00.</td></tr>
+<tr><td>Daily limit</td><td>At most N WhatsApp messages a day (a setting).</td></tr>
+<tr><td>Meta layouts only</td><td>WhatsApp uses layouts approved by Meta; free text is never sent on WhatsApp.</td></tr>
+<tr><td>Send-time check</td><td>Right before sending: paused? quiet hours (21:00–08:00, reminders wait for the morning; replies to an upload still go)? still needed? already sent the same in 20 hours? If not needed or a repeat, it is cancelled with the reason.</td></tr>
+<tr><td>Inactive CSPs</td><td>Never messaged.</td></tr>
+<tr><td>Retries</td><td>A failed message is retried after 5, 15, 60, 180 and 720 minutes, then marked failed.</td></tr></table>
+
+<!-- ======================================================= 6 -->
+<h2>6. Architecture</h2>
+<div class="simple">Think of the agent as an office with five desks: a <b>post room</b> (collects documents), a <b>reader</b>,
+a <b>decision desk</b>, a <b>messenger</b> and a <b>quality inspector</b> who works at night. People see and control everything
+through the dashboard.</div>
+
+<h3>6.1 The big picture</h3>
+<table>
+<tr><th>Inputs</th><th>Agent (on Eko's rack server)</th><th>Outputs</th></tr>
+<tr><td>Gmail inbox (main) and second inbox (read-only)<br>CSP upload links<br>DC master link<br>Calling sheet (Google Sheet: CSPs, RMs, DCs, phones, address, terminal status)</td>
+<td><b>Web app</b> (dashboard + upload page + API)<br><b>Worker</b> (scheduled jobs)<br><b>Reader</b>: OCR (Tesseract, RapidOCR) + rules; local AI model only suggests<br><b>Decision</b>: safety gate, labels, follow-up cycles<br><b>Database</b> (PostgreSQL) + <b>document vault</b> (one folder per CSP)<br><b>Night checks</b>: reading check, warning signs, rule health</td>
+<td>WhatsApp (Eko Bulk Sender, Meta layouts)<br>E-mail<br>RM/DC daily lists<br>DC Excel and live Google Sheets<br>Excel reports<br>Dashboard</td></tr>
+</table>
+
+<h3>6.2 Technology</h3>
+<table><tr><th>Part</th><th>Technology</th></tr>
+<tr><td>Language and web</td><td>Python, FastAPI (web app and API), served behind Nginx at indev.eko.in</td></tr>
+<tr><td>Database</td><td>PostgreSQL (SQLAlchemy); schema changes by <code>scripts/migrate_schema.py</code></td></tr>
+<tr><td>Dashboard and upload page</td><td>Single HTML pages with plain JavaScript (no framework); they work on phones</td></tr>
+<tr><td>Scheduling</td><td>APScheduler in a separate worker process; each job takes a database lock so it never runs twice</td></tr>
+<tr><td>Reading</td><td>PyMuPDF (PDF text and pages), OpenCV (image clean-up), Tesseract OCR (English + Hindi), RapidOCR (second engine), written rules (regular expressions)</td></tr>
+<tr><td>AI model</td><td>Local Qwen2.5-VL 7B through Ollama on the server, only for suggestions on items waiting for a person; Groq online as optional fallback (off by default)</td></tr>
+<tr><td>Integrations</td><td>Gmail API (OAuth), Google Sheets, Eko WhatsApp Bulk Sender (MCP), SMTP e-mail</td></tr>
+<tr><td>Code</td><td>GitHub repository; 450+ automated tests; every real misread becomes a test</td></tr></table>
+
+<h3>6.3 Scheduled jobs (India time)</h3>
+<table><tr><th>When</th><th>Job</th><th>What it does</th></tr>
+<tr><td>every 15 min</td><td>gmail</td><td>Reads new e-mails and their attachments</td></tr>
+<tr><td>every 60 min</td><td>sheet</td><td>Reloads the calling sheet</td></tr>
+<tr><td>every 2 min</td><td>outbox</td><td>Sends approved messages, retries failed ones</td></tr>
+<tr><td>00:10</td><td>vault</td><td>Renames files whose documents expired, writes INDEX.xlsx</td></tr>
+<tr><td>02:30</td><td>reading_eval</td><td>Re-reads every document a person decided and scores the agent</td></tr>
+<tr><td>03:00</td><td>signals</td><td>Records the agent's own warning signs</td></tr>
+<tr><td>03:10</td><td>rule_health</td><td>Scores each reading rule; probation; release check after an update</td></tr>
+<tr><td>03:20</td><td>findings</td><td>Follows Coach findings until verified</td></tr>
+<tr><td>03:30</td><td>reference_batch</td><td>Picks a few documents for a person to confirm</td></tr>
+<tr><td>07:30</td><td>reports</td><td>Excel reports</td></tr>
+<tr><td>09:00</td><td>engine</td><td>Labels, renewal and upload follow-ups for the day</td></tr>
+<tr><td>09:30</td><td>snapshot</td><td>Saves each CSP's label for the history</td></tr>
+<tr><td>11:00</td><td>staff_lists</td><td>RM / DC pending lists</td></tr>
+<tr><td>17:00</td><td>nudges</td><td>Evening nudge during the campaign</td></tr>
+<tr><td>hourly / every min</td><td>model_assist / model_guard</td><td>AI suggestions at night (max 10 a day) / memory guard for the AI model</td></tr></table>
+
+<h3>6.4 Where things live</h3>
+<ul><li>Code and settings: <code>/home/shiwangi/csp_agent_scaffolds/csp_agent</code> on the rack server (settings in the file <code>.env</code>, never in GitHub).</li>
+<li>Documents: the vault, one folder per CSP (<code>KO_NAME/</code>) with sub-folders <code>expired/</code>, <code>unreadable/</code>, <code>rejected/</code>, and an <code>INDEX.xlsx</code>.</li>
+<li>Logs: <code>logs/</code> in the project folder.</li></ul>
+
+<!-- ======================================================= 7 -->
+<h2>7. Database</h2>
+<div class="simple">The database is the agent's memory: who the CSPs are, every document and what was read from it, every
+message, every decision by a person, and what the agent learned. Nothing about messages or decisions is ever deleted, so the
+history can always be checked.</div>
+<table><tr><th>Area</th><th>Tables</th></tr>
+<tr><td>People</td><td><code>csp</code> (each CSP: code, name, phones, RM, DC, state, label, terminal status, address) · <code>internal_users</code> (Admin, RM, DC, LHO; login data) · <code>csp_extra_phones</code> · <code>csp_code_history</code> · <code>admin_sessions</code> (sign-ins; only a fingerprint of the cookie is kept)</td></tr>
+<tr><td>Documents</td><td><code>documents</code> (each file: type, fingerprint, place in the vault, status, dates, rule used, what was read, "why", evidence, risk) · <code>manual_review_queue</code> · <code>extraction_corrections</code> (what a person changed) · <code>agreements</code> · <code>pvr_applications</code></td></tr>
+<tr><td>Messages</td><td><code>outbound_messages</code> (every draft and message) · <code>outreach_cycles</code> (one follow-up run per CSP and document) · <code>reminders</code>, <code>escalations</code> (older records)</td></tr>
+<tr><td>Inputs</td><td><code>inbound_messages</code> (e-mails read) · <code>portal_tokens</code> (upload links) · <code>master_links</code> · <code>csp_questions</code> · <code>contact_change_requests</code> · <code>auto_calling_sheet_entries</code> · <code>agreement_events</code> (event log, e.g. each upload) · <code>dc_sheet_keys</code> · <code>ingest_state</code> (checkpoints, "sending paused")</td></tr>
+<tr><td>Monitoring and learning</td><td><code>monitor_runs</code> (every job and check) · <code>label_snapshots</code> · <code>user_actions</code> (who did what on the dashboard) · <code>agent_signals</code> (warning signs) · <code>rule_health</code>, <code>rule_events</code> · <code>coach_findings</code></td></tr></table>
+<p class="small">A separate "Database guide" PDF (29-10-2026) explains every table with practice queries.</p>
+
+<!-- ======================================================= 8 -->
+<h2>8. Safety: context, harness, guardrails and feedback loop</h2>
+<div class="simple"><b>Context</b> = what the agent looks at before it decides. <b>Harness</b> = the checks and limits around every
+decision and message. <b>Guardrails</b> = things the agent is never allowed to do. <b>Feedback loop</b> = how it learns from its
+mistakes.</div>
+
+<h3>8.1 Context: what each decision sees</h3>
+<ul><li><b>Eko's rules</b> (defaults, page count, what counts as a certificate).</li>
+<li><b>The document's evidence:</b> every date printed on it with its kind (issue, signing, start, digital signature, end,
+birth, camera stamp), the text around it, which one was used, how well the pages were read.</li>
+<li><b>The rules' health:</b> whether the rule that read it is healthy, on watch or on probation.</li>
+<li><b>The CSP's record:</b> other copies of the document, earlier corrections, the calling sheet.</li>
+<li>A plain-words <b>"why"</b> is saved with every reading and shown to the reviewer.</li></ul>
+
+<h3>8.2 Harness: the safety gate (risk score)</h3>
+<table><tr><th>Points</th><th>Reason</th></tr>
+<tr><td>100</td><td>Impossible dates (expiry before issue, issued after it arrived, valid over 6 years) · a rule on probation read it</td></tr>
+<tr><td>70</td><td>Another copy with the same issue date was read with another expiry</td></tr>
+<tr><td>35</td><td>The 1-year default was used but an end date is printed</td></tr>
+<tr><td>15 / 15 / 15</td><td>Another issue date printed · a rule on watch · the CSP's dates were corrected before</td></tr>
+<tr><td>10 / 10</td><td>Pages not read or low confidence · expiry within 7 days of today</td></tr></table>
+<p><b>60 or more: hold</b> (waits for a person, does not count, CSP told "being checked") · <b>30–59: check</b> (counts, a person looks) · <b>below 30: accept</b>.</p>
+
+<h3>8.3 Harness: rules on probation (circuit breaker)</h3>
+<p>Every night each reading rule is scored against the nightly reading check and people's corrections. A rule that accepts wrongly goes
+<b>on probation</b>: its new readings wait for a person until it is fixed (released by itself after a clean check) or an admin
+releases it. After every code update a <b>release check</b> compares the reading with the version before; rules that newly accept
+wrongly are put on probation at once. Policy defaults are never put on probation. The setting <code>RULE_BREAKER=watch</code>
+turns holding off (only shows).</p>
+
+<h3>8.4 Guardrails: what the agent never does</h3>
+<ul><li>Never tells a CSP "expired" unless sure; never accepts on an AI model's word alone.</li>
+<li>Never messages a number that is not on the calling sheet; never messages an Inactive CSP; never sends free text on WhatsApp.</li>
+<li>Never invents a CSP from an e-mail; never stores Aadhaar or PAN; never writes to the calling sheet.</li>
+<li>Never sends from or changes the second Gmail inbox (read-only).</li>
+<li>Every data-fix script runs as a dry run first; nothing changes without <code>--apply</code>.</li>
+<li>A person can stop all sending with one button.</li></ul>
+
+<h3>8.5 Feedback loop: how it learns</h3>
+<table><tr><th>Step</th><th>What happens</th></tr>
+<tr><td>1 Notice</td><td>Every night it finds 10 kinds of warning signs in its own records (e.g. refused then accepted, a person corrected it, readings that disagree, impossible results).</td></tr>
+<tr><td>2 Explain</td><td>The Agent Coach turns them into findings with numbers, a suggested fix and examples.</td></tr>
+<tr><td>3 Fix</td><td>A developer fixes the rule with a test from the real document. Before it goes live, a <b>shadow test</b> reads every decided document with the new code and says "safe to put live" or not.</td></tr>
+<tr><td>4 Prove</td><td>The next night's reading check and release check show what got fixed and whether anything broke.</td></tr>
+<tr><td>5 Follow</td><td>Each finding is followed: open → fix applied → verified, or reopened if it comes back.</td></tr>
+<tr><td>6 Learn</td><td>Each night a few documents whose confirmation teaches the most go to a person; each answer joins the answer set of the reading check.</td></tr></table>
+<p>A <b>file that was unreadable</b> is read again with the current rules whenever it is sent again, so better rules rescue old documents.</p>
+
+<!-- ======================================================= 9 -->
+<h2>9. Security, access and compliance</h2>
+<div class="warn">This section describes how the system works and how it lines up with Indian rules as understood on 30-10-2026. It is
+not legal advice: Eko's compliance and legal team (and SBI, as the bank) must confirm what applies.</div>
+
+<h3>9.1 Security in place today</h3>
+<table><tr><th>Area</th><th>Control</th></tr>
+<tr><td>Passwords</td><td>Stored only as a scrypt hash with a random salt; at least 10 characters with upper, lower case and a digit; 5 wrong tries lock the account for 15 minutes; the same message for every failure.</td></tr>
+<tr><td>Sessions</td><td>Random 32-byte cookie, HttpOnly, SameSite=Strict, Secure on HTTPS; only its fingerprint is in the database; 60 minutes idle, 12 hours maximum.</td></tr>
+<tr><td>Forged requests</td><td>Every change made with the cookie must carry a special header, so another website cannot act for you.</td></tr>
+<tr><td>Who sees what</td><td>RMs see only their own CSPs ("not found" for others); admin pages and jobs are admin-only; the CSP's upload link only shows that CSP.</td></tr>
+<tr><td>Upload links</td><td>Long random links, one per CSP, closed automatically once all documents are accepted; limits on link requests and questions.</td></tr>
+<tr><td>Uploads</td><td>File type judged from the content, 10 MB and 25 pages maximum.</td></tr>
+<tr><td>Messages</td><td>Recipient guard, daily limit, Meta layouts, pause switch (section 5.3).</td></tr>
+<tr><td>Audit</td><td>Every dashboard request by a signed-in person is recorded (who, when, what, which CSP); every message and decision is kept.</td></tr>
+<tr><td>Secrets</td><td>Kept in <code>.env</code> and token files on the server, never in GitHub; the admin API key is refused from the internet.</td></tr></table>
+
+<h3>9.2 Gaps to close for "bank-grade"</h3>
+<table><tr><th>Gap</th><th>Why it matters</th><th>Plan</th></tr>
+<tr><td>Documents and database are not encrypted at rest</td><td>A stolen disk or backup exposes personal data</td><td>Disk/volume encryption on the server; encrypted backups</td></tr>
+<tr><td>No second factor at sign-in</td><td>A leaked password is enough</td><td>Google sign-in with company accounts (9.3) plus 2-step verification for admins</td></tr>
+<tr><td>Log keeping not formalised</td><td>CERT-In expects ICT logs kept 180 days and incidents reported within 6 hours</td><td>Central log retention ≥ 180 days; written incident procedure</td></tr>
+<tr><td>Viewing a document is not logged per file</td><td>Who looked at whose personal data</td><td>Log every file open with user and time</td></tr>
+<tr><td>No written retention rule</td><td>Personal data should not be kept longer than needed (DPDP)</td><td>Decide with Legal how long expired documents are kept, then delete automatically</td></tr>
+<tr><td>CSP notice and consent not shown</td><td>DPDP requires a clear notice of what data is used and why</td><td>Short notice on the upload page (Hindi + English), and a contact for requests</td></tr>
+<tr><td>Shared server, single copy</td><td>Availability and recovery</td><td>Daily off-server backups, tested restore, documented recovery steps</td></tr>
+<tr><td>No external security test yet</td><td>Banks expect a VAPT before go-live</td><td>Vulnerability assessment and penetration test before productising</td></tr></table>
+
+<h3>9.3 Planned: secure sign-in with Google</h3>
+<div class="plan"><b>Status: plan, to be approved.</b></div>
+<ul><li><b>Invite-only:</b> there is no "create account". An admin adds a person (name, e-mail, role) first; only those people can sign in.</li>
+<li><b>"Sign in with Google"</b> button. The agent checks Google's signed answer itself: it must be meant for this dashboard, recent,
+and for a verified e-mail. For Eko staff it must be a company account (the hosted domain <code>eko.co.in</code>, checked with Google's
+<code>hd</code> value, not just the text of the address).</li>
+<li>The person is then tied to their permanent Google ID, so a renamed or recycled address cannot take over the account.</li>
+<li><b>Roles stay the same:</b> Admin sees all; RM sees own CSPs; <b>DC</b> (later) sees only their district's CSPs, read-mostly.</li>
+<li><b>Admins:</b> Google 2-step verification required by the company; optionally an extra one-time code.</li>
+<li>Password sign-in stays only for one emergency admin account, or is switched off.</li>
+<li>Every sign-in and failure is logged; an admin can block a person at once (all their sessions end).</li></ul>
+
+<h3>9.4 How the system lines up with the main rules</h3>
+<table><tr><th>Rule</th><th>What it asks (simplified)</th><th>Status here</th></tr>
+<tr><td>DPDP Act 2023 and DPDP Rules 2025 (Rules notified Nov 2025; main duties of data fiduciaries apply from about May 2027)</td>
+<td>Notice and lawful purpose; use data only for that purpose; reasonable security safeguards; breach notification; retention limits; rights of the person (access, correction, grievance)</td>
+<td><span class="tag part">partly</span> purpose-limited, access control, audit, never stores Aadhaar/PAN. <span class="tag todo">to do</span> notice on the upload page, retention rule, breach procedure, encryption at rest</td></tr>
+<tr><td>RBI Business Correspondent framework (bank's due diligence on BCs; IIBF certification of BC agents; draft 2026 changes to BC categories and certification)</td>
+<td>The bank remains responsible for its BCs; agents must be certified and verified</td>
+<td><span class="tag">supports</span> this is exactly what the agent tracks: agreement, police verification, IIBF, per agent, with history</td></tr>
+<tr><td>RBI Master Direction on IT Governance, Risk, Controls and Assurance (Nov 2023)</td>
+<td>Board-approved IT governance, access control, change management, logging, business continuity</td>
+<td><span class="tag part">partly</span> tests, release check, audit, role-based access. <span class="tag todo">to do</span> DR plan, formal change approval, VAPT</td></tr>
+<tr><td>RBI Master Direction on Outsourcing of IT Services (Apr 2023)</td>
+<td>A bank outsourcing IT must control and audit its service providers</td>
+<td><span class="tag todo">to do</span> SBI may audit Eko as a service provider: keep this manual, logs and controls ready</td></tr>
+<tr><td>CERT-In Directions (Apr 2022)</td><td>Report cyber incidents within 6 hours; keep ICT logs for 180 days</td><td><span class="tag todo">to do</span> log retention and incident procedure</td></tr>
+<tr><td>RBI FREE-AI framework (committee report, Aug 2025)</td><td>Board-approved AI policy, human oversight, explainability, testing, audit of AI</td><td><span class="tag">strong</span> AI only suggests, every decision explained ("why"), nightly testing, human review, rule probation</td></tr></table>
+<p class="small">Sources checked on 30-10-2026 include PIB / MeitY notes on the DPDP Rules, RBI's IT Governance and IT Outsourcing Master Directions,
+RBI's April 2026 draft Branch Authorisation (BC) directions, CERT-In's 28-04-2022 directions, and the RBI FREE-AI committee report. Dates in drafts can change: confirm on rbi.org.in and meity.gov.in.</p>
+
+<!-- ======================================================= 10 -->
+<h2>10. Product name, positioning and roadmap</h2>
+<h3>10.1 A name</h3>
+<table><tr><th>Name</th><th>Meaning</th><th>Why it fits</th></tr>
+<tr><td><b>Anupaalan</b> (अनुपालन) <i>– recommended</i></td><td>"Compliance"</td><td>Says exactly what it does, easy in Hindi and English, works for any bank or BC company. Tagline: <i>"Every agent compliant. Every kiosk earning."</i></td></tr>
+<tr><td>Satyapan (सत्यापन)</td><td>"Verification"</td><td>Strong for the document-checking side.</td></tr>
+<tr><td>KioskKavach</td><td>"Kiosk shield"</td><td>Memorable; stresses protection of the kiosk's income.</td></tr>
+<tr><td>BC Saathi</td><td>"BC companion"</td><td>Friendly for agents; less clear for banks.</td></tr></table>
+<p class="small">Before using a name publicly, check trademarks and domain names.</p>
+
+<h3>10.2 How to explain it to someone new (30 seconds)</h3>
+<p><i>"Banks reach villages through local agents. Each agent must keep a contract, a police verification and a certificate valid,
+or the bank switches the kiosk off and everyone loses income. Anupaalan collects these documents from e-mail and WhatsApp
+links, reads them, even phone photos in Hindi, decides with explainable rules, reminds each agent on WhatsApp and their managers when
+they lag behind, and checks its own accuracy every night. People only look at the uncertain cases."</i></p>
+
+<h3>10.3 Roadmap to a large-scale product</h3>
+<table><tr><th>Stage</th><th>What</th></tr>
+<tr><td>Now (pilot, ~490 CSPs, SBI, Eko)</td><td>Live; renewal campaign until 13-11-2026; advanced safety and feedback loop built</td></tr>
+<tr><td>Next 1–2 months</td><td>Google sign-in + DC access; address check (below); digital agreement generation and e-signing; notice to CSPs; backups and log retention</td></tr>
+<tr><td>Bank-grade</td><td>Encryption at rest, VAPT, DR plan, formal change control, retention and deletion, incident procedure, DPDP readiness before May 2027</td></tr>
+<tr><td>Product</td><td>Many banks and BC companies on one platform (each sees only its own data); configurable rules per bank; revenue view (commission at risk per expiring document); APIs for bank portals</td></tr></table>
+
+<h3>10.4 Planned: address check</h3>
+<div class="plan"><b>Status: plan, to be approved.</b> The calling sheet holds each CSP's full address. The agent will read the address on
+the Agreement ("residing at …") and on the PVR, compare its key parts (PIN code, district, town/village) with the calling sheet, and
+when they differ show it to the reviewer ("Address on the document differs from the calling sheet") and list it for the RM, so the
+right address is confirmed. The agent itself never changes the calling sheet.</div>
+
+<!-- ======================================================= 11 -->
+<h2>11. Operating the system</h2>
+<div class="tech">Commands are run on the rack server as root, in <code>/home/shiwangi/csp_agent_scaffolds/csp_agent</code>.
+Scripts that change data are <b>dry runs</b> until you add <code>--apply</code>. Never edit or share <code>.env</code> casually: it holds the passwords and keys.</div>
+
+<h3>11.1 Put a new version live</h3>
+<pre>/home/shiwangi/csp_agent_scaffolds/csp_agent/scripts/update.sh</pre>
+<p>It gets the code from GitHub, updates the database tables, restarts the web app and the worker, and shows a short check. Check that the
+commit line shows the expected version and that "now running … since" shows today's time. Then press Ctrl+Shift+R in the browser.</p>
+
+<h3>11.2 Restart</h3>
+<pre>/home/shiwangi/csp_agent_scaffolds/csp_agent/scripts/restart.sh all      (or web / worker)</pre>
+<p>A safety net (cron, <code>keep_alive.sh</code>) restarts the web app and worker if they stop.</p>
+
+<h3>11.3 Dashboard accounts</h3>
+<pre>.venv/bin/python -m scripts.manage_users list
+.venv/bin/python -m scripts.manage_users add-admin --email name@eko.co.in --name "Full Name"
+.venv/bin/python -m scripts.manage_users enable-rm --email rm@eko.co.in     (the RM must be on the calling sheet)
+.venv/bin/python -m scripts.manage_users password --email …                 (set or reset)
+.venv/bin/python -m scripts.manage_users disable --email …                  (also ends their sessions)
+.venv/bin/python -m scripts.manage_users unlock --email …</pre>
+
+<h3>11.4 Useful checks and fixes</h3>
+<table><tr><th>Command (<code>.venv/bin/python -m scripts.…</code>)</th><th>Use</th></tr>
+<tr><td><code>reread_document --id N [--apply]</code></td><td>Read one stored document again with the current rules (e.g. once unreadable) and put it in the Review queue</td></tr>
+<tr><td><code>queue_waiting_documents [--apply]</code></td><td>Put documents waiting for a person into the Review queue</td></tr>
+<tr><td><code>retry_unreadable</code></td><td>See which unreadable documents the current rules can read (dry run)</td></tr>
+<tr><td><code>fix_stored_dates [--apply]</code></td><td>Re-read stored agreements and PVRs with current rules</td></tr>
+<tr><td><code>eval_reading</code></td><td>The reading check by hand (read-only)</td></tr>
+<tr><td><code>shadow_test --candidate …</code></td><td>Try a rule change on every decided document before it goes live (after <code>scripts/shadow_prepare.sh</code>)</td></tr>
+<tr><td><code>check_calling_sheet</code></td><td>Which calling sheet the agent reads</td></tr>
+<tr><td><code>whatsapp_test</code>, <code>test_csp</code></td><td>End-to-end tests with your own number / test CSP</td></tr>
+<tr><td><code>authenticate_gmail [--second]</code></td><td>Sign the agent in to a Gmail inbox (once)</td></tr></table>
+
+<h3>11.5 Important settings (names only; values are in <code>.env</code>)</h3>
+<table><tr><th>Setting</th><th>Default</th><th>Meaning</th></tr>
+<tr><td>OUTBOUND_COMMUNICATION_MODE</td><td>review</td><td>review = a person approves each message; auto = the agent sends</td></tr>
+<tr><td>WHATSAPP_MODE / WHATSAPP_DAILY_LIMIT</td><td>stub / 5</td><td>How WhatsApp is sent; maximum per day</td></tr>
+<tr><td>AUTO_SEND_HOURS / QUIET_HOURS / REPEAT_HOURS</td><td>10-18 / 21-8 / 20</td><td>Sending windows and repeat protection</td></tr>
+<tr><td>RULE_BREAKER / RISK_HOLD_AT / RISK_CHECK_AT</td><td>on / 60 / 30</td><td>Rule probation; risk limits</td></tr>
+<tr><td>REFERENCE_DAILY / SPOT_CHECK_RATE</td><td>8 / 0.05</td><td>Documents a person confirms per night; random checks</td></tr>
+<tr><td>CALLING_SHEET_LINK, CALLING_SHEET_TAB</td><td>– / Calling Sheet New</td><td>Where the calling sheet is read</td></tr>
+<tr><td>GMAIL_SECOND_TOKEN</td><td>(empty = off)</td><td>Second, read-only inbox</td></tr>
+<tr><td>INACTIVE_TERMINAL_STATUSES</td><td>inactive, closed, …</td><td>Terminal statuses that make a CSP Inactive</td></tr>
+<tr><td>MODEL_ASSIST / MODEL_ASSIST_DAILY_LIMIT / MODEL_ASSIST_HOURS</td><td>on / 10 / 20-8</td><td>AI suggestions for waiting items</td></tr>
+<tr><td>PUBLIC_BASE_URL, PORTAL_TOKEN_DAYS</td><td>– / 7 (links live at least 365 days)</td><td>Upload links</td></tr></table>
+
+<h3>11.6 When something looks wrong</h3>
+<table><tr><th>You see</th><th>Do</th></tr>
+<tr><td>"The worker is not running" in the Coach</td><td>Run <code>restart.sh all</code>; check <code>logs/</code></td></tr>
+<tr><td>The dashboard shows "undefined" or old pages after an update</td><td>Check the restart in <code>update.sh</code>'s output; press Ctrl+Shift+R</td></tr>
+<tr><td>Many WhatsApp failures</td><td>Monitoring → Messaging shows the reasons; pause sending if a layout is wrong</td></tr>
+<tr><td>Many readings held for a person</td><td>Rules &amp; safety: look at rules on probation; release or fix</td></tr>
+<tr><td>A good document refused</td><td>Form uploads → take this file; or <code>reread_document</code>; tell the developer so the rule learns it</td></tr>
+<tr><td>The site is slow</td><td>Check whether a night job or a long re-read is still running (Monitoring → Agent status)</td></tr></table>
+
+<!-- ======================================================= 12 -->
+<h2>12. Questions people ask</h2>
+<h4>Does an AI decide whether a CSP's document is accepted?</h4>
+<p>No. Written rules decide, and a person decides whenever the rules are not sure. A local AI model may suggest a date for a person to check.</p>
+<h4>Can the agent message the wrong person?</h4>
+<p>Only numbers listed on the calling sheet for that CSP (or their RM/DC) can receive a message, and this is checked again just before sending.</p>
+<h4>What happens when a document expires?</h4>
+<p>Reminders start before expiry (60 days for agreements), the CSP is asked on WhatsApp with their link, then the RM and DC are told. The label shows
+"renewal overdue" until a new document is accepted.</p>
+<h4>A CSP sent the same document again. Why was it accepted this time?</h4>
+<p>A file that was unreadable before is read again with today's rules; the rules may have learned its wording since.</p>
+<h4>Why does a document say "being checked by our team"?</h4>
+<p>The agent was not sure (risk, unknown wording, a typed date that differs, or a DC upload). A person decides in the Review queue.</p>
+<h4>Can I see why the agent decided something?</h4>
+<p>Yes: every document has "How the agent read it", with the text each date came from, what was ignored, and the risk.</p>
+<h4>Who can see CSPs' documents?</h4>
+<p>Admins, and each RM for their own CSPs. CSPs only see their own link. Every dashboard action is recorded.</p>
+
+<!-- ======================================================= A -->
+<h2>Appendix</h2>
+<h3>A. Refusal reasons on the upload page</h3>
+<table><tr><th>Reason</th><th>What the CSP is told (short)</th></tr>
+<tr><td>wrong_doc</td><td>Not the right document</td></tr>
+<tr><td>application_only / iibf_receipt</td><td>This is the application or fee receipt, not the certificate</td></tr>
+<tr><td>expired</td><td>It has expired</td></tr>
+<tr><td>agreement_short</td><td>Agreement incomplete, send all pages</td></tr>
+<tr><td>unreadable / blurry / too_dark / washed_out / too_small</td><td>Could not be read clearly; photo blurry / dark / faint / small</td></tr>
+<tr><td>dup_same / dup_rejected / dup_unreadable</td><td>The same document we already have / was not accepted / could not be read before</td></tr>
+<tr><td>dup_other / dc_other_csp</td><td>This file or document belongs to another CSP</td></tr>
+<tr><td>dc_valid / dc_in_review</td><td>Already on file and valid / already being checked</td></tr>
+<tr><td>no_date / future</td><td>No issue date entered / date in the future</td></tr>
+<tr><td>too_big / file_type / too_many_pages</td><td>File too large / only PDF, JPG, PNG / too many pages</td></tr>
+<tr><td>rejected_by_team</td><td>Our team found it was not correct</td></tr></table>
+
+<h3>B. Glossary</h3>
+<table><tr><th>Word</th><th>Meaning</th></tr>
+<tr><td>CSP / BC agent / kiosk</td><td>A local agent who offers SBI banking services</td></tr>
+<tr><td>KO code</td><td>The CSP's unique code, e.g. 1A852163</td></tr>
+<tr><td>RM / DC / LHO</td><td>Relationship Manager / District Coordinator / Local Head Office</td></tr>
+<tr><td>PVR / PCC</td><td>Police verification report / Police Clearance Certificate</td></tr>
+<tr><td>IIBF</td><td>Indian Institute of Banking &amp; Finance (certifies BC agents)</td></tr>
+<tr><td>Calling sheet</td><td>The Google Sheet seniors keep with every CSP, RM, DC, phone, address and terminal status</td></tr>
+<tr><td>Label</td><td>How many of the 3 documents a CSP has on file (1 = all)</td></tr>
+<tr><td>Review queue</td><td>Documents waiting for a person's decision</td></tr>
+<tr><td>Master link</td><td>One upload link DCs use for all CSPs</td></tr>
+<tr><td>OCR</td><td>Reading text from a picture of a page</td></tr>
+<tr><td>Rule on probation</td><td>A reading rule that made mistakes; its readings wait for a person</td></tr>
+<tr><td>Shadow test</td><td>Trying new code on old, decided documents before it goes live</td></tr>
+<tr><td>Dry run</td><td>A script shows what it would change without changing anything</td></tr></table>
+
+<p class="small" style="margin-top:24px">This manual is kept with the code (<code>app/web/manual.html</code>) and shown on the dashboard under Help → User manual.
+When the agent changes, update this file in the same change.</p>
+</body>
+</html>

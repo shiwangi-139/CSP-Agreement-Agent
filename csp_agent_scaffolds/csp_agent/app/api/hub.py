@@ -981,6 +981,14 @@ def signals_xlsx(days: int = 30, db: Session = Depends(get_db)):
                              headers={"Content-Disposition": f'attachment; filename="Agent_signals_{date.today().isoformat()}.xlsx"'})
 
 
+@router.get("/manual")
+def manual(me: Principal = Depends(require_user)):
+    """The user manual (app/web/manual.html), for every signed-in person
+    (it describes the system, so it is not public)."""
+    from fastapi.responses import HTMLResponse
+    return HTMLResponse((Path(__file__).resolve().parent.parent / "web" / "manual.html").read_text(encoding="utf-8"))
+
+
 @router.get("/reading-check", dependencies=[Depends(require_admin)])
 def reading_check(db: Session = Depends(get_db)):
     """The "Reading check" card (admins): last night's reading score, fixed /

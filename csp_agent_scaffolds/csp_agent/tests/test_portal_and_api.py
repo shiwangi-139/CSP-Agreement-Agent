@@ -849,3 +849,12 @@ def test_csp_form_with_its_dc_name_is_not_taken_for_the_master_link(client):
                files={"pvr_file": ("pvr.pdf", _pvr_pdf(issue), "application/pdf")})
     assert r.status_code == 200, r.text
     assert r.json()["results"][0]["ok"]
+
+
+def test_the_user_manual_is_for_signed_in_people_only(client, monkeypatch):
+    c, _ = client
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    assert c.get("/api/hub/manual").status_code in (401, 403)
+    r = c.get("/api/hub/manual", headers={"X-API-Key": "k"})
+    assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    assert "User Manual" in r.text and "How the agent decides" in r.text

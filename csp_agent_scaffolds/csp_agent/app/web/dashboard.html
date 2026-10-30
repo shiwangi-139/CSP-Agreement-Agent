@@ -81,6 +81,9 @@
       <button class="nav" data-view="contacts" title="Contacts & gaps"><svg><use href="#i-users"/></svg><span class="navtext">Contacts &amp; gaps</span></button>
       <button class="nav" data-view="ingestion" title="Gmail ingestion"><svg><use href="#i-mail"/></svg><span class="navtext">Gmail ingestion</span></button>
     </div>
+    <div class="navgroup"><div class="navlabel">Help</div>
+      <button class="nav" data-view="manual" title="User manual"><svg><use href="#i-help"/></svg><span class="navtext">User manual</span></button>
+    </div>
     <div class="sidefoot">
       <div class="navtext small" id="modes"></div>
       <div class="user"><span class="avatar" id="avatar"></span><span class="navtext" id="whoami"></span></div>
@@ -248,6 +251,7 @@
     accuracy: ["Admin", "Accuracy", "How well the agent reads documents: the nightly reading check and people's checks"],
     contacts: ["Admin", "Contacts & gaps", "RM and DC numbers, missing contacts, and contact changes CSPs typed"],
     ingestion: ["Admin", "Gmail ingestion", "Emails read for CSP documents"],
+    manual: ["Help", "User manual", "How to use the dashboard, how the agent decides, its architecture, database, security and rules"],
   };
 
   // ------------------------------------------------------- reading check
@@ -870,6 +874,21 @@
           <td><button class="btn" data-cc="${r.id}/done">Done</button> <button class="btn" data-cc="${r.id}/dismiss">Dismiss</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">None.</div>`}</div>`;
     },
 
+    // The user manual (app/web/manual.html) in a frame of its own, so its
+    // styles stay apart from the dashboard's; printing it gives the PDF.
+    async manual() {
+      const r = await fetch("api/hub/manual", {credentials: "same-origin", headers: H});
+      if (!r.ok) throw new Error(`Couldn't load the manual (${r.status})`);
+      const html = await r.text();
+      setTimeout(() => {
+        const f = $("#manualframe");
+        if (!f) return;
+        f.srcdoc = html;
+        $("#manualprint").onclick = () => f.contentWindow.print();
+      }, 0);
+      return `<div class="toolbar" style="margin-bottom:10px"><button class="btn" id="manualprint">Print or save as PDF</button></div>
+        <iframe id="manualframe" title="User manual" style="width:100%;height:calc(100vh - 230px);min-height:520px;border:1px solid #d9e0dc;border-radius:10px;background:#fff"></iframe>`;
+    },
     async ingestion() {
       const s = state.summary.ingestion;
       const st = s.state || {}, sec = s.second || {}, s2 = sec.state || {};
