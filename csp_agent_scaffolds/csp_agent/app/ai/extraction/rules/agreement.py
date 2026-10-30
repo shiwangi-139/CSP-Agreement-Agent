@@ -47,8 +47,9 @@ EFFECTIVE_LABEL = re.compile(r"effective\s*date\s*[:\-–]\s*", re.I)
 # garbles the heading (",USTOMER SERVICEINT AGREEMENT"). OCR also reads "day"
 # as "gev" or "dav".
 # The stamp over the first line can also swallow "On t": "nhis day of, 15-04-2026".
-# "of" itself can come out as "ol" / "o1" / "oi" (Mitan Prasad Verma 1A850197).
-THIS_DAY_OF = re.compile(r"(?:on\s+th[il1]s\s+\w{2,4}|\b[tn]?h[il1]s\s+d[aeo][yv])\s+o[fl1i]\s*[,.:]?\s*[_\s]*", re.I)
+# "of" itself can come out as "ol" / "o1" / "oi" (Mitan Prasad Verma 1A850197),
+# and "this" as "tpis" under a stamp (Devendra Kumar Daulat 1A850456).
+THIS_DAY_OF = re.compile(r"(?:on\s+t[hpb][il1]s\s+\w{2,4}|\b[tn]?h[il1]s\s+d[aeo][yv])\s+o[fl1i]\s*[,.:]?\s*[_\s]*", re.I)
 
 # OCR-tolerant: "three (3) years", "three (3) yea.s", "per od oJ three (3)",
 # "Three (3) Years", "3 years", Hindi "तीन वर्ष" / "3 वर्ष" / "तीन साल".
@@ -330,6 +331,12 @@ def extract_agreement(text: str, today: Optional[date] = None) -> dict:
             out["validity_source"] = "AGREEMENT_RANGE_FROM_TO"
             if out["issue_date"] is None:
                 out["issue_date"], out["date_source"] = rng[0], "AGREEMENT_RANGE_START"
+            # "30th December 2023 to 29th December 2026" in the heading, "valid for two
+            # years from the date of signing" in the body (Devendra Kumar Daulat 1A850456).
+            implied = stated_period_end(text, out["issue_date"])
+            if implied and abs((implied - rng[1]).days) > 31:
+                out["validity_conflict"] = (f"The agreement prints {rng[1]:%d-%m-%Y} as its last day, but its stated "
+                                            f"period ends {implied:%d-%m-%Y}: check which is right.")
         elif out["issue_date"] and stated_months(text):
             out["explicit_expiry"] = stated_period_end(text, out["issue_date"])
             out["validity_source"] = "AGREEMENT_RANGE_FROM_TO"       # a known last day, like a range

@@ -1064,6 +1064,53 @@ def focused_reread(scan: "DocumentScan", doc_type: str) -> str:
     return text
 
 
+SECOND_VERSION = "second-v1"
+
+
+def second_engine_pages(scan: "DocumentScan", max_pages: int = FOCUS_MAX_PAGES) -> str:
+    """The second engine (RapidOCR) on the first scanned pages, whole, or ""
+    when it is off. For a key line Tesseract left out altogether (a stamp
+    beside it, a grey lined background): with no line to anchor on, the
+    focused re-read finds nothing to re-read (Devendra Kumar Daulat 1A850456:
+    "On this day of, 30th December 2023 to 29th December 2026" lost by
+    Tesseract, read by RapidOCR). Cached per file."""
+    if _second_engine() is None:
+        return ""
+    sha = hashlib.sha256(scan.source_bytes).hexdigest() if scan.source_bytes else None
+    f = _cache_file(sha).with_suffix(".second.json") if sha and _cache_on else None
+    key = f"{SECOND_VERSION}:{_cache_key()}"
+    if f is not None:
+        try:
+            data = json.loads(f.read_text())
+            if data.get("key") == key:
+                return data["text"]
+        except (OSError, ValueError, KeyError):
+            pass
+    t0 = time.perf_counter()
+    parts = []
+    try:
+        for p in [p for p in scan.pages if p.source == "OCR"][:max_pages]:
+            png = page_png(scan.source_bytes, p.index, dpi=OCR_DPI) if scan.source_bytes else p.image_png
+            gray = _gray_from_png(png) if png else None
+            if gray is None:
+                continue
+            got = _ocr_second(gray)
+            if got:
+                parts.append(f"--- Page {p.index + 1} ---\n{got[0]}")
+    except Exception as e:                       # best effort: the normal read stands
+        logger.warning(f"second engine pages failed: {e}")
+    finally:
+        _timed("second_engine_pages", t0)
+    text = "\n".join(parts)
+    if f is not None:
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(json.dumps({"key": key, "text": text}))
+        except OSError:
+            pass
+    return text
+
+
 def focus_image(scan: "DocumentScan", doc_type: str) -> Optional[bytes]:
     """The region around the first line that matters, a little larger, as
     JPEG: what the review helper shows the AI model (smaller than a page)."""

@@ -30,10 +30,10 @@ from typing import Any, Dict, Optional
 
 from ...config import CSP_CODE_REGEX, FOCUSED_REREAD, MODEL_AUTO_FALLBACK
 from ...expiry_engine import calculate_document_expiry, add_years, ExpiryRule, AGREEMENT_DEFAULT_YEARS  # noqa: F401 (add_years re-exported)
-from ...ocr_service import scan_document, classify_allowlist_gate, focused_reread, DocumentScan
+from ...ocr_service import scan_document, classify_allowlist_gate, focused_reread, second_engine_pages, DocumentScan
 from ...validation import normalize_csp_code
 from .rules import extract_agreement, extract_pvr, extract_iibf
-from .rules.agreement import HEADING, ESTAMP_LABEL
+from .rules.agreement import HEADING, ESTAMP_LABEL, stated_years
 from .rules.dates import find_dates, plausible_issue_date
 
 logger = logging.getLogger(__name__)
@@ -173,17 +173,30 @@ def _uncertain(doc_type: str, r: dict) -> bool:
 
 def _second_look(scan: DocumentScan, doc_type: str, text: str, r: dict, today: date) -> tuple[dict, str, Optional[str]]:
     """When the first reading is uncertain, read the regions around the key
-    words again (ocr_service.focused_reread) and keep the result only if it
-    settles what was missing. A printed last day that the re-read sees
-    differently goes to a person."""
+    words again (ocr_service.focused_reread), and if that doesn't settle it,
+    the first pages whole with the second OCR engine (a key line Tesseract
+    left out has no region to re-read). A result is kept only if it settles
+    what was missing. A printed last day that the re-read sees differently
+    goes to a person."""
     if not FOCUSED_REREAD or not _uncertain(doc_type, r) or not any(p.source == "OCR" for p in scan.pages):
         return r, text, None
+
+    def settles(r_new):
+        return (not r.get("issue_date") and r_new.get("issue_date")) or not _uncertain(doc_type, r_new)
+
     extra = focused_reread(scan, doc_type)
-    if not extra.strip():
-        return r, text, None
-    combined = f"{text}\n--- focused re-read ---\n{extra}"
-    r2 = _rules_for(doc_type, combined, today)
-    if not ((not r.get("issue_date") and r2.get("issue_date")) or not _uncertain(doc_type, r2)):
+    combined, r2 = text, r
+    if extra.strip():
+        combined = f"{text}\n--- focused re-read ---\n{extra}"
+        r2 = _rules_for(doc_type, combined, today)
+    if not settles(r2) or not r2.get("issue_date"):
+        whole = second_engine_pages(scan)
+        if whole.strip():
+            c3 = f"{combined}\n--- second OCR engine ---\n{whole}"
+            r3 = _rules_for(doc_type, c3, today)
+            if settles(r3):
+                combined, r2, extra = c3, r3, f"{extra}\n{whole}"
+    if not extra.strip() or not settles(r2):
         return r, text, None
     note = None
     alone = _rules_for(doc_type, extra, today)
@@ -385,6 +398,7 @@ def extract_document_fields_deterministic(
                        has_explicit_3year_clause=three_year,
                        validity_months=months if doc_type == "POLICE_VERIFICATION" else (36 if three_year else None),
                        explicit_expiry=r.get("explicit_expiry").isoformat() if r.get("explicit_expiry") else None,
+                       stated_years=stated_years(text) if doc_type == "AGREEMENT" else None,
                        confidence=gate_conf, extraction_method="NEEDS_PERSON_" + scan.method,
                        model_provider=(model_ans or {}).get("provider"), **common)
     if issue is None and readable and doc_type == "AGREEMENT" and not AGREEMENT_STRUCTURE.search(text):

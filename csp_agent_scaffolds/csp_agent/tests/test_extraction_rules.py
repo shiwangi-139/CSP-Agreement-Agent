@@ -790,3 +790,49 @@ def test_slashes_read_as_letters(text, expected):
 def test_a_period_number_glued_to_a_stray_letter_is_not_read(wording, months):
     from app.ai.extraction.rules.agreement import stated_months
     assert stated_months(wording) == months
+
+
+# Devendra Kumar Daulat 1A850456 (DC link, 30-10-2026): Tesseract left the whole
+# line out (a round stamp beside it, a grey lined background); the second OCR
+# engine (RapidOCR) read it as below. The body says "two years".
+DEVENDRA_RAPIDOCR = ("8.1000\nRs.1000\nINDIA\n21.2510618024-9000x9=9000=\nCUSTOMER SERVICE POINT AGREEMENT\n2236H1\n"
+                     "DEVENDRA KUMAR DAULAT(1A850456)\n25106|2084\n20\n"
+                     "On tpis day of, 30 December 2023 to 29th December 2026, an Indian national, son/daughter/wife of\n"
+                     "LAtIPRASAD DAULAT, residing at SAMHAR KHURD UNDER DISTT-SAHARSA, BIHAR.\n")
+DEVENDRA_BODY = "SP of Eko at the said CSP Location. This agréement would be valid for two years from the date of signing."
+
+
+def test_range_on_the_this_day_of_line_read_by_the_second_engine():
+    from app.ai.extraction.rules import extract_agreement
+    r = extract_agreement(DEVENDRA_RAPIDOCR, date(2026, 10, 30))
+    assert r["issue_date"] == date(2023, 12, 30) and r["explicit_expiry"] == date(2026, 12, 29)
+    assert r["validity_source"] == "AGREEMENT_RANGE_FROM_TO" and not r.get("validity_conflict")
+    # "tpis" is "this" under the stamp.
+    r = extract_agreement("On tpis day of, 30 December 2023 (Effective Date)", date(2026, 10, 30))
+    assert r["issue_date"] == date(2023, 12, 30) and r["date_source"] == "AGREEMENT_THIS_DAY_OF"
+
+
+def test_a_printed_range_that_disagrees_with_the_stated_years_goes_to_a_person():
+    from app.ai.extraction.rules import extract_agreement
+    r = extract_agreement(DEVENDRA_RAPIDOCR + DEVENDRA_BODY, date(2026, 10, 30))
+    assert r["explicit_expiry"] == date(2026, 12, 29)                      # the printed last day counts
+    assert "prints 29-12-2026 as its last day" in r["validity_conflict"] and "30-12-2025" in r["validity_conflict"]
+
+
+def test_the_second_engine_reads_the_page_whole_when_no_line_was_found(monkeypatch):
+    from types import SimpleNamespace
+    from app.ai.extraction import deterministic_extractor as de
+    tesseract = ("son/dalighterPuareer\n; D \\T, residing at SAMHAR KHURD UNDER DISTT-SAHARSA, BIHAR.\n"
+                 "Eko india Services Pvt. Ltd. a company incorporated under the Companies Act of india, 1956\n")
+    monkeypatch.setattr(de, "focused_reread", lambda scan, t: "")          # no anchor line: nothing to re-read
+    monkeypatch.setattr(de, "second_engine_pages", lambda scan: DEVENDRA_RAPIDOCR)
+    scan = SimpleNamespace(pages=[SimpleNamespace(source="OCR")])
+    today = date(2026, 10, 30)
+    r0 = de._rules_for("AGREEMENT", tesseract, today)
+    assert r0["issue_date"] is None
+    r, text, note = de._second_look(scan, "AGREEMENT", tesseract, r0, today)
+    assert r["issue_date"] == date(2023, 12, 30) and r["explicit_expiry"] == date(2026, 12, 29)
+    assert "--- second OCR engine ---" in text and note is None
+    # Nothing new from the second engine either: the first reading stands.
+    monkeypatch.setattr(de, "second_engine_pages", lambda scan: "")
+    assert de._second_look(scan, "AGREEMENT", tesseract, r0, today)[0] is r0

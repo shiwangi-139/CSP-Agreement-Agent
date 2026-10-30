@@ -728,18 +728,25 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         if typed and not ex.get("start_date"):
             ex["start_date"] = typed.isoformat()
             ex["date_source"] = "CSP_PORTAL_TYPED"
-            from ..expiry_engine import calculate_document_expiry
+            from ..expiry_engine import add_years, calculate_document_expiry
+            explicit, rule = _parse_date(ex.get("explicit_expiry")), None
+            if not explicit and not ex.get("has_explicit_3year_clause") and ex.get("stated_years"):
+                # "valid for two years from the date of signing": from the typed date.
+                explicit, rule = add_years(typed, ex["stated_years"]), "AGREEMENT_RANGE_FROM_TO"
             exp = calculate_document_expiry(
                 doc_type=doc_type,
                 issue_date=typed,
-                explicit_expiry_date=_parse_date(ex.get("explicit_expiry")),
+                explicit_expiry_date=explicit,
                 has_explicit_3year_clause=ex.get("has_explicit_3year_clause", False),
                 today=today,
                 validity_months=ex.get("validity_months"),
+                validity_rule=rule,
             )
             ex["expiry_date"] = exp["calculated_expiry"].isoformat() if exp.get("calculated_expiry") else (
                 "LIFETIME_NO_EXPIRY" if doc_type == "IIBF_CERTIFICATE" else None
             )
+            # Named, so "How the agent read it" says which rule set the expiry.
+            ex["validity_rule_used"] = exp.get("validity_rule_used")
             ex["type_review"] = (ex.get("type_review") or "") + f" Issue date entered as {typed.strftime('%d-%m-%Y')} by CSP; verify on document."
 
         if ex.get("type_review") and typed:
