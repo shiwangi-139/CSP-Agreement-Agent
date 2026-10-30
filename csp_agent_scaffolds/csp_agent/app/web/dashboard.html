@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Eko CSP Renewals</title>
+<title>Eko Anupaalan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
 <link rel="stylesheet" href="static/eko.css?v=8">
@@ -41,7 +41,7 @@
 
 <div id="login" class="login card" style="display:none">
   <img src="static/logo.png?v=2" alt="Eko" class="logo-img" style="height:28px;width:auto;max-width:110px;margin-bottom:8px" onerror="this.remove()">
-  <h2>Eko CSP Renewals</h2>
+  <h2>Eko Anupaalan</h2>
   <p class="muted">Sign in with your Eko email and password.</p>
   <form id="loginf">
     <label>Email <input type="email" id="lemail" autocomplete="username" required style="width:100%"></label>
@@ -55,7 +55,7 @@
   <aside class="side" id="nav" aria-label="Main menu">
     <div class="brand">
       <span class="brandmark"><img src="static/logo.png?v=2" alt="Eko" onerror="this.replaceWith(Object.assign(document.createElement('b'), {textContent: 'eko'}))"></span>
-      <span class="navtext brandtext"><strong>CSP Renewals</strong><small>SBI Kiosk Banking · compliance</small></span>
+      <span class="navtext brandtext"><strong>Anupaalan</strong><small>CSP document compliance</small></span>
       <button class="pin navtext" id="pin" title="Keep the menu open" aria-pressed="false"><svg><use href="#i-pin"/></svg></button>
     </div>
     <div class="navgroup"><div class="navlabel">Work</div>
@@ -1623,7 +1623,7 @@
       document.querySelectorAll("[data-view]").forEach((b) => { if (b.closest("#nav, #mobilebar")) b.classList.toggle("active", b.dataset.view === state.view); });
       const [group, title, sub] = PAGES[state.view];
       $("#crumb").textContent = group; $("#title").textContent = title;
-      document.title = `${title} · Eko CSP Renewals`;
+      document.title = `${title} · Eko Anupaalan`;
       const head = state.view === "today" ? "" : `<div class="greeting"><div><div class="eyebrow">${esc(group)}</div><h1>${esc(title)}</h1><div class="sub">${esc(sub)}</div></div></div>`;
       const body = await views[state.view]();
       $("#view").innerHTML = head + body;

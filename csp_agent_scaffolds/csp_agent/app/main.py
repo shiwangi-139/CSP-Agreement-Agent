@@ -26,7 +26,7 @@ import os
 # The interactive API docs list every endpoint: off unless asked for (API_DOCS=on),
 # because the app is reachable from the internet through Nginx.
 _docs = os.getenv("API_DOCS", "off").strip().lower() in ("1", "on", "true", "yes")
-app = FastAPI(title="Eko CSP Renewal Agent", docs_url="/docs" if _docs else None,
+app = FastAPI(title="Eko Anupaalan", docs_url="/docs" if _docs else None,
               redoc_url="/redoc" if _docs else None, openapi_url="/openapi.json" if _docs else None)
 warn_if_open()
 
