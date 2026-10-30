@@ -374,7 +374,8 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
             continue
         q = db.query(Document).filter(Document.sha256 == hashlib.sha256(data).hexdigest())
         known = (q if known_anywhere else q.filter(Document.csp_id == csp.id)).first()
-        if known is not None:
+        # A file that was unreadable before is read again: the rules may read it now.
+        if known is not None and known.readability != "UNREADABLE":
             duplicate_ids.add(att["attachment_id"])
             known_docs[att["attachment_id"]] = known
     read_all([a for a in attachments if a["attachment_id"] not in duplicate_ids | logos])

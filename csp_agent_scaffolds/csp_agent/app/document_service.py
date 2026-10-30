@@ -104,8 +104,14 @@ def store_extracted_document(
         return StoreOutcome("NOT_ALLOWED", reason=extraction.get("rejection_reason"))
 
     dup = db.query(Document).filter(Document.csp_id == csp.id, Document.sha256 == sha).first()
+    upgrade = None
     if dup is not None:
-        return StoreOutcome("DUPLICATE", dup, "Same file already on record.")
+        if dup.readability != "UNREADABLE" or decision != "READABLE":
+            return StoreOutcome("DUPLICATE", dup, "Same file already on record.")
+        # The same file was unreadable before and reads now (the rules have
+        # improved, or the upload page sends it to a person): it is read again
+        # in place, instead of being turned away on the old verdict.
+        upgrade = dup
 
     doc_type = canonical_type(extraction.get("document_type")) or "UNKNOWN"
     issue, expiry = _d(extraction.get("start_date")), _d(extraction.get("expiry_date"))
@@ -115,8 +121,9 @@ def store_extracted_document(
             # A person has one IIBF certificate: a new photo or scan of it is not a new document.
             return StoreOutcome("DUPLICATE", same, "Same IIBF certificate already on record (same registration no. or date).")
     now = datetime.now(timezone.utc).replace(tzinfo=None)
+    arrived = (upgrade.source_date or upgrade.uploaded_at or now) if upgrade is not None else (source_date or now)
 
-    path = vault.stage(data, sha, mime_type or "application/pdf")
+    path = upgrade.storage_path if upgrade is not None else vault.stage(data, sha, mime_type or "application/pdf")
     fields = {k: extraction.get(k) for k in (
         "start_date", "expiry_date", "explicit_expiry", "date_source", "validity_rule_used",
         "validity_months", "iibf_registration_number", "holder_name", "csp_code", "ocr_method",
@@ -149,7 +156,7 @@ def store_extracted_document(
         # Safety gate: the evidence pack and its risk score (app/safety_gate.py).
         from .safety_gate import assess, queue_reason
         try:
-            risk = assess(db, csp.id, doc_type, extraction, issue, expiry, (source_date or now).date())
+            risk = assess(db, csp.id, doc_type, extraction, issue, expiry, arrived.date())
         except Exception:
             logger.exception("risk_assessment_failed")
             risk = None
@@ -161,21 +168,28 @@ def store_extracted_document(
                 status, fields["safety_check"] = DocumentStatus.NEEDS_REVIEW, held
             elif status in (DocumentStatus.VALID, DocumentStatus.EXPIRED) and risk["level"] == "check":
                 checked = queue_reason(risk)
-    doc = Document(
-        csp_id=csp.id, document_type=doc_type, sha256=sha, file_size_bytes=len(data),
-        mime_type=mime_type, storage_path=path, status=status,
-        extracted_fields=fields, overall_confidence=extraction.get("confidence"),
-        extraction_method=extraction.get("extraction_method"), uploaded_at=now,
-        is_current=False, upload_channel=channel, original_filename=(filename or "")[:250],
+    reading = dict(
+        document_type=doc_type, status=status, extracted_fields=fields, overall_confidence=extraction.get("confidence"),
+        extraction_method=extraction.get("extraction_method"),
         issue_date=issue, expiry_date=expiry, validity_rule_used=extraction.get("validity_rule_used"),
         has_explicit_3year_clause=bool(extraction.get("has_explicit_3year_clause")),
         iibf_reg_number=extraction.get("iibf_registration_number"),
         field_confidences=extraction.get("field_confidences"),
         holder_name=extraction.get("holder_name"), validity_months=extraction.get("validity_months"),
         date_source=extraction.get("date_source"), readability=decision,
-        source_message_id=source_message_id, source_date=source_date, sender_on_sheet=sender_on_sheet,
     )
-    db.add(doc)
+    if upgrade is None:
+        doc = Document(
+            csp_id=csp.id, sha256=sha, file_size_bytes=len(data), mime_type=mime_type, storage_path=path,
+            uploaded_at=now, is_current=False, upload_channel=channel, original_filename=(filename or "")[:250],
+            source_message_id=source_message_id, source_date=source_date, sender_on_sheet=sender_on_sheet, **reading)
+        db.add(doc)
+    else:
+        doc = upgrade        # keeps its id, file, arrival time and channel
+        fields["read_again"] = (f"Unreadable when it arrived; read again with the current rules on {now:%d-%m-%Y} "
+                                f"when the same file came again ({channel}).")
+        for k, v in reading.items():
+            setattr(doc, k, v)
     db.flush()
     if owner_review or type_review:
         db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
