@@ -1083,66 +1083,19 @@ def send_reminder_now(csp_id: int, me: Principal = Depends(require_user), db: Se
     return {"status": m.status.value, "template": m.template_name, "to": m.destination, "error": m.error_log}
 
 
-# Upload problems (Activity): sends the upload pages could not complete
-# (UPLOAD_FAILED, app/api/portal.py: _page_failure) and links turned away
-# (LINK_REFUSED), in plain words, with whose side the fault is on. The CSP
-# and DC are told only what they can act on; the full cause is here.
-FAILED_WHAT = {
-    "offline": "Phone had no internet",
-    "dropped": "Connection broke while sending (usually the mobile network)",
-    "too_big": "Web server refused the file size (check its upload limit)",
-    "slow": "Server too slow: the page stopped waiting",
-    "server": "Server error or down",
-    "page_error": "Error in the upload page itself",
-}
-REFUSED_WHAT = {
-    "UNKNOWN": "Link not recognised (cut short when copied?)", "EXPIRED": "Link expired",
-    "TOO_LONG": "Link damaged", "NO_TOKEN": "No link in the address", "CLOSED": "Link closed",
-}
-PLACE = {"page": "opening the page", "upload": "sending", "context": "loading", "question": "asking a question",
-         "dc_lookup": "looking up a KO code"}
+# Links (dashboard: Links, app/link_health.py): an RM sees their own CSPs;
+# an admin sees everyone, the DC master link and problems with no CSP.
+@router.get("/links")
+def links(days: int = 7, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from .. import link_health
+    ids = {i for (i,) in _mine(db.query(CSP.id), me)}
+    return link_health.overview(db, ids, days, admin=me.is_admin)
 
 
-def _device(ua: str) -> str:
-    os_ = next((n for k, n in (("Android", "Android"), ("iPhone", "iPhone"), ("Windows", "Windows"),
-                               ("Mac OS", "Mac")) if k in ua), "")
-    br = next((n for k, n in (("SamsungBrowser", "Samsung"), ("Firefox", "Firefox"), ("Edg", "Edge"),
-                              ("Chrome", "Chrome"), ("Safari", "Safari")) if k in ua), "")
-    return " · ".join(x for x in (os_, br) if x)
-
-
-def _upload_problems(db: Session, local_since: datetime, limit: int = 60) -> tuple[list, dict]:
-    events = (db.query(AgreementEvent).filter(AgreementEvent.event_type.in_(["UPLOAD_FAILED", "LINK_REFUSED"]),
-                                              AgreementEvent.sent_at >= local_since)
-              .order_by(AgreementEvent.sent_at.desc()).limit(2000).all())
-    names = {c.id: (c.current_code, c.name) for c in db.query(CSP).filter(
-        CSP.id.in_({e.csp_id for e in events if e.csp_id} or {-1}))}
-    by_side, rows = Counter(), []
-    for e in events:
-        p = e.payload or {}
-        if e.event_type == "UPLOAD_FAILED":
-            side, what = p.get("side", "OUR"), FAILED_WHAT.get(p.get("kind"), p.get("kind") or "?")
-            details = [PLACE.get(p.get("where"), p.get("where") or ""), ", ".join(p.get("sections") or []),
-                       f"{p['mb']} MB" if p.get("mb") else "", f"after {p['seconds']} s" if p.get("seconds") else "",
-                       f"HTTP {p['status']}" if p.get("status") else "",
-                       f"reported {p['late_min']} min later" if p.get("late_min") else "", _device(p.get("browser") or "")]
-        else:
-            side = "LINK"
-            what = REFUSED_WHAT.get(p.get("reason"), p.get("reason") or "?")
-            if p.get("closed_because") == "ALL_REQUESTED_DOCUMENTS_ACCEPTED":
-                what = "Link closed: all its documents were accepted"
-            elif e.source == "DC_MASTER_LINK" and p.get("reason") == "CLOSED":
-                what = "DC link replaced or switched off"
-            details = [f"while {PLACE[p['where']]}" if p.get("where") in PLACE else "",
-                       f"link {p['link']}…" if p.get("link") else ""]
-        by_side[side] += 1
-        if len(rows) < limit:
-            code, name = names.get(e.csp_id, (None, None))
-            rows.append({"at": _iso(e.sent_at), "side": side, "what": what,
-                         "via": "DC link" if e.source == "DC_MASTER_LINK" else "CSP's link",
-                         "details": " · ".join(d for d in details if d),
-                         "csp": {"id": e.csp_id, "code": code, "name": name} if code else None})
-    return rows, dict(by_side)
+@router.get("/links/csp/{csp_id}")
+def links_csp(csp_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from .. import link_health
+    return link_health.csp_links(db, _own_csp(db, csp_id, me))
 
 
 @router.get("/activity", dependencies=[Depends(require_admin)])
@@ -1163,7 +1116,8 @@ def activity(user_id: Optional[int] = None, days: int = 7, db: Session = Depends
     csp_events = Counter(t for (t,) in db.query(AgreementEvent.event_type).filter(
         AgreementEvent.sent_at >= local_since,
         AgreementEvent.event_type.in_(["LINK_OPENED", "DC_LINK_VIEW", "PORTAL_UPLOAD", "LINK_REQUEST", "LINK_REFUSED"])))
-    problems, by_side = _upload_problems(db, local_since)
+    from .. import link_health
+    problems, by_side = link_health.problems(db, local_since)
     return {"people": [{"id": u, "name": n, "role": r, "actions": k, "last": _iso(t)} for u, n, r, k, t in people],
             "csp_events": dict(csp_events),
             "upload_problems": problems, "upload_problems_by_side": by_side,

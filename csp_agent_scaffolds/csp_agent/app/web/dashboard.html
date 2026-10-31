@@ -16,6 +16,7 @@
   <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 15v2M11 11v6M15 7v10M19 12v5"/></symbol>
   <symbol id="i-inbox" viewBox="0 0 24 24"><path d="M4 4h16l2 11v5H2v-5z"/><path d="M2 15h6l2 3h4l2-3h6"/></symbol>
+  <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></symbol>
   <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></symbol>
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></symbol>
   <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-12.3 7.6L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5z"/></symbol>
@@ -67,6 +68,7 @@
     <div class="navgroup"><div class="navlabel">Documents</div>
       <button class="nav" data-view="review" title="Review queue"><svg><use href="#i-inbox"/></svg><span class="navtext">Review queue</span><span class="count" id="n-review"></span></button>
       <button class="nav" data-view="formuploads" title="Form uploads & DC link"><svg><use href="#i-upload"/></svg><span class="navtext">Form uploads &amp; DC link</span><span class="count" id="n-form"></span></button>
+      <button class="nav" data-view="links" title="Links"><svg><use href="#i-link"/></svg><span class="navtext">Links</span></button>
       <button class="nav" data-view="documents" title="Latest documents"><svg><use href="#i-file"/></svg><span class="navtext">Latest documents</span></button>
     </div>
     <div class="navgroup"><div class="navlabel">Messages</div>
@@ -242,6 +244,7 @@
     overview: ["Work", "Overview", "Document health across the whole network, and the jobs you can run by hand"],
     review: ["Documents", "Review queue", "Documents waiting for a person's decision before the CSP's status changes"],
     formuploads: ["Documents", "Form uploads & DC link", "What CSPs and DCs sent through the upload page, the DC master link and DC reports"],
+    links: ["Documents", "Links", "Every upload link: sent, opened, used, refused, and where CSPs get stuck"],
     documents: ["Documents", "Latest documents", "Current documents per CSP, and every file uploaded through the links"],
     comms: ["Messages", "Communication Hub", "Drafts, sent and failed messages to CSPs, RMs and DCs"],
     questions: ["Messages", "CSP questions", "Questions CSPs asked on their upload page"],
@@ -734,6 +737,81 @@
           <p><b>${esc(r.who)}</b> ${r.ok ? "" : "⚠ "}${esc(r.what)}</p>${r.csp ? `<a href="#" data-csp="${r.csp.id}" class="ko">KO ${esc(r.csp.code)} · ${esc(r.csp.name)}</a>` : ""}</div>`).join("")}</div>`
           : `<div class="empty">Nothing yet.</div>`}</div>
       </div>`;
+    },
+
+    // Links (app/link_health.py, GET /api/hub/links): every upload link, how
+    // it is used and where CSPs get stuck. An RM sees their own CSPs; an
+    // admin everyone, the DC master link and problems with no CSP. One CSP's
+    // links and timeline open in place (data-linkcsp).
+    async links() {
+      const SIDE = {OUR: ["REJECTED", "our side"], CSP: ["MISSING", "CSP side"], LINK: ["APPROVAL", "link"], DONE: ["VALID", "done"]};
+      const side = (s) => SIDE[s] ? badge(SIDE[s][0], SIDE[s][1]) : "";
+      const cspLink = (c) => c ? `<a href="#" data-linkcsp="${c.id}" class="ko">KO ${esc(c.code)} · ${esc(c.name)}</a>` : `<span class="muted">—</span>`;
+      if (state.linkCsp) {
+        const c = await api(`/api/hub/links/csp/${state.linkCsp}`);
+        return `<div class="toolbar"><button class="btn" data-linkcsp="">← All links</button>
+          <a href="#" data-csp="${c.csp.id}" class="ko">KO ${esc(c.csp.code)} · ${esc(c.csp.name)}</a>
+          <button class="btn primary" data-remind="${c.csp.id}"><svg><use href="#i-send"/></svg>Send link now</button></div>
+        ${c.last_problem ? `<div class="card" style="margin-top:12px"><div class="meta"><b>Last problem</b> ${side(c.last_problem.side)} <span class="small muted">${when(c.last_problem.at)}</span></div>
+          <p>${esc(c.last_problem.what)}</p>${c.last_problem.details ? `<p class="small muted">${esc(c.last_problem.details)}</p>` : ""}</div>` : ""}
+        <div class="mx-cols" style="margin-top:12px">
+          ${panel(`Links given to this CSP · ${c.links.length}`, "Newest first. Clicks and uploads belong to the link that was live then.",
+            c.links.length ? `<table class="mx-table"><thead><tr><th>Link</th><th>State</th><th class="r">Sent</th><th class="r">Clicks</th><th class="r">Uploads</th><th class="r">Failed</th><th class="r">Refused</th></tr></thead><tbody>
+            ${c.links.map((l) => `<tr><td><span class="mono">${esc(l.ref)}…</span><div class="mx-when">made ${when(l.made_at)}</div></td>
+              <td>${badge(l.active ? "VALID" : "EXPIRED", l.active ? "working" : "not working")}<div class="small">${esc(l.state)}</div>
+                <div class="mx-when">${l.active ? "until " + when(l.expires_at) : when(l.closed_at || l.expires_at)}</div></td>
+              <td class="r">${l.sent}</td><td class="r">${l.clicks}</td><td class="r">${l.uploads}</td><td class="r">${l.failed}</td><td class="r">${l.refused}</td></tr>`).join("")}</tbody></table>`
+            : `<p class="mx-hint">No upload link was ever made for this CSP.</p>`)}
+          ${panel("What happened", "Link messages, opens, sends, failures and refusals, newest first.",
+            c.timeline.length ? `<div class="timeline">${c.timeline.map((r) => `<div class="tl"><time>${when(r.at)}</time>
+              <p>${side(r.side)} ${esc(r.what)}</p>${r.details ? `<p class="small muted">${esc(r.details)}</p>` : ""}</div>`).join("")}</div>`
+            : `<p class="mx-hint">Nothing recorded yet.</p>`)}
+        </div>`;
+      }
+      const days = state.linkDays || 7;
+      const d = await api(`/api/hub/links?days=${days}`);
+      const t = d.tiles;
+      const kpi = (label, v, hint) => `<article class="card kpi" title="${esc(hint)}"><div class="kpilabel">${esc(label)}</div><div class="kpival">${v ?? "—"}</div></article>`;
+      const first = d.journey[0][1] || 0;
+      const journey = bars(d.journey.map(([l, n], i) => [`${l}${first && i ? ` (${Math.round(100 * n / first)}%)` : ""}`, n, i === d.journey.length - 1 ? "ok" : ""]), "No link activity in this period.");
+      const dc = d.dc_link ? panel("DC master link", `One link for all DCs. Make or switch it off on <a href="#" data-view="formuploads">Form uploads &amp; DC link</a>.`,
+        d.dc_link.links.length ? `<table class="mx-table"><thead><tr><th>Made</th><th>State</th><th class="r">KO looked up</th><th class="r">Uploads</th><th class="r">Failed</th><th class="r">Refused</th></tr></thead><tbody>
+          ${d.dc_link.links.map((m) => `<tr><td>${when(m.made_at)}<div class="mx-when">${esc(m.made_by || "")}</div></td>
+            <td>${m.active ? badge("VALID", "working") : badge("EXPIRED", "replaced / off")}${m.closed_at ? `<div class="mx-when">${when(m.closed_at)}</div>` : ""}</td>
+            <td class="r">${m.lookups}</td><td class="r">${m.uploads}</td><td class="r">${m.failed}</td><td class="r">${m.refused}</td></tr>`).join("")}</tbody></table>`
+        : `<p class="mx-hint">No DC master link made yet.</p>`) : "";
+      return `<div class="tabs">${[[1, "Today"], [7, "7 days"], [30, "30 days"]].map(([v, l]) => `<button class="${days === v ? "active" : ""}" data-ldays="${v}">${l}</button>`).join("")}</div>
+      <div class="kpis">
+        ${kpi("Working CSP links", t.active_links, "Links that work right now: one per CSP at most")}
+        ${kpi("Messages with a link", t.messages_with_link, `WhatsApp and e-mails sent in the period carrying an upload link (${t.links_made} new links made)`)}
+        ${kpi("Link clicks", t.clicks, `Every click, by ${t.csps_opened} CSPs`)}
+        ${kpi("Link success rate", t.success_rate == null ? "—" : t.success_rate + "%", "CSPs who opened their link and had a document accepted, out of all who opened it")}
+      </div>
+      <div class="mx-cols">
+        ${panel("Link journey", "CSPs who did each step in the period (% of those sent a link).", journey)}
+        <div class="mx-stack">
+          ${panel(`Failed sends · ${(d.by_side.OUR || 0) + (d.by_side.CSP || 0)}`, `Our side ${d.by_side.OUR || 0} · CSP side ${d.by_side.CSP || 0}. The CSP is told only what they can act on.`, bars(d.failed_kinds, "No failed sends."))}
+          ${panel(`Links refused · ${d.by_side.LINK || 0}`, "Links opened that did not work, by reason.", bars(d.refused_reasons, "No link was refused."))}
+        </div>
+      </div>
+      <div class="mx-cols" style="margin-top:16px">
+        ${panel("Patterns the agent found", "What several problems have in common.", d.patterns.length ? d.patterns.map((x) => `<div style="padding:8px 0;border-bottom:1px solid var(--border)">
+          <div>${side(x.side)} <b>${esc(x.title)}</b></div><p class="small muted" style="margin:4px 0 0">${esc(x.body)}</p></div>`).join("") : `<p class="mx-hint">No pattern found in this period.</p>`)}
+        ${dc || panel("Where to act", "", `<p class="small muted">Open a CSP below to see every link they were given and what happened on it. "Send link now" sends a working link on WhatsApp.</p>`)}
+      </div>
+      <div class="card tablewrap" style="margin-top:16px"><h2>Needs attention · ${d.attention.length}</h2>
+        <p class="small muted">CSPs still missing a document whose last link event was a problem with no upload since, or who opened their link ${3}+ times without sending.</p>
+        <table><thead><tr><th>CSP</th><th>What happened</th><th>Side</th><th>When</th><th>Next step</th><th></th></tr></thead><tbody>
+        ${d.attention.map((r) => `<tr><td>${cspLink(r.csp)}<div class="small muted">Label ${r.label ?? "—"}</div></td><td>${esc(r.what)}</td><td>${side(r.side)}</td>
+          <td class="small">${when(r.at)}</td><td class="small">${esc(r.next)}</td>
+          <td><button class="btn" data-remind="${r.csp.id}">Send link</button></td></tr>`).join("") || `<tr><td colspan="6" class="empty">No one is stuck on a link in this period.</td></tr>`}
+        </tbody></table></div>
+      <div class="card tablewrap" style="margin-top:16px"><h2>Upload problems</h2>
+        <p class="small muted">Failed sends and refused links, newest first, with the cause the CSP was not shown.</p>
+        <table><thead><tr><th>When</th><th>CSP</th><th>Via</th><th>What happened</th><th>Side</th><th>Details</th></tr></thead><tbody>
+        ${d.problems.map((p) => `<tr><td class="small">${when(p.at)}</td><td>${cspLink(p.csp)}</td><td class="small">${esc(p.via)}</td>
+          <td>${esc(p.what)}</td><td>${side(p.side)}</td><td class="small">${esc(p.details)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No upload problems in this period.</td></tr>`}
+        </tbody></table></div>`;
     },
 
     async overview() {
@@ -1323,7 +1401,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-attfilter],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-attfilter],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -1332,7 +1410,7 @@
       if (ds.view || ds.go) {
         e.preventDefault(); if (t.closest("#nav")) t.blur(); closeNav(); closeCoach(); closeDrawer();
         const [view, tab] = (ds.view || ds.go).split(":");        // "monitoring:signals" also picks the tab
-        state.view = view; if (tab) state.mtab = tab; state.page = 1; return render();
+        state.view = view; if (tab) state.mtab = tab; state.page = 1; state.linkCsp = null; return render();
       }
       if (ds.attfilter !== undefined) {
         // Today's worklist: filter the rows already on the page.
@@ -1350,6 +1428,8 @@
       }
       if (ds.ask !== undefined) return coachAsk(ds.ask);
       if (ds.actdays) { state.actDays = +ds.actdays; return render(); }
+      if (ds.ldays) { state.linkDays = +ds.ldays; return render(); }
+      if (ds.linkcsp !== undefined) { e.preventDefault(); state.linkCsp = ds.linkcsp ? +ds.linkcsp : null; return render(); }
       if (ds.actuser !== undefined) { state.actUser = ds.actuser ? +ds.actuser : null; return render(); }
       if (ds.cat) { state.view = "categories"; state.cat = +ds.cat; state.expiredOnly = false; state.sub = ""; state.tag = ""; state.page = 1; return render(); }
       if (ds.sub !== undefined) { state.sub = ds.sub; state.page = 1; return render(); }

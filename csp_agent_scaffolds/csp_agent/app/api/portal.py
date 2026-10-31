@@ -201,8 +201,12 @@ def _context(db: Session, csp: CSP, requested: list[str]) -> dict:
                      "requested": not lock and (t in requested or (s.status != "VALID" and not s.in_review)),
                      "last_problem": problems.get(key) if s.status != "VALID" and not s.in_review else None,
                      "max_validity_years": MAX_VALIDITY_YEARS[t]})
+    # Help on the page (top right): the DC's number, else the RM's.
+    from ..comms.outbound import _phone10
+    helper = next(((role, u) for role, u in (("DC", dc), ("RM", rm)) if u and _phone10(u.phone or "")), None)
     return {"csp": {"code": csp.current_code, "name": csp.name, "email": csp.email or "",
                     "mobile": csp.phone or "", "rm": rm.name if rm else "", "dc": dc.name if dc else ""},
+            "help": {"role": helper[0], "name": helper[1].name, "phone": _phone10(helper[1].phone)} if helper else None,
             "docs": docs, "today": date.today().isoformat(),
             "max_upload_mb": round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)}
 
@@ -307,10 +311,14 @@ def _get_link_page(notice: str = "", result: str = "") -> HTMLResponse:
 def _record_link_open(db: Session, csp_id: int, kind: str = "LINK_OPENED", source: str = "CSP_UPLOAD_PORTAL") -> None:
     """The CSP opened their link (LINK_OPENED), or a DC opened this CSP on the
     master link (DC_LINK_VIEW): for the CSP journey on the dashboard (Today,
-    Agent Coach). At most one record per CSP per hour, so reloads don't count."""
+    Agent Coach). At most one record per CSP per hour, so reloads don't count
+    as visits; each click is still counted in it ("clicks", for the Links page)."""
     since = local_now() - timedelta(hours=1)               # sent_at is in local time (database clock)
-    if db.query(AgreementEvent.id).filter(AgreementEvent.csp_id == csp_id, AgreementEvent.event_type == kind,
-                                          AgreementEvent.sent_at >= since).first():
+    seen = db.query(AgreementEvent).filter(AgreementEvent.csp_id == csp_id, AgreementEvent.event_type == kind,
+                                           AgreementEvent.sent_at >= since).order_by(AgreementEvent.sent_at.desc()).first()
+    if seen is not None:
+        seen.payload = {**(seen.payload or {}), "clicks": int((seen.payload or {}).get("clicks") or 1) + 1}
+        db.commit()
         return
     db.add(AgreementEvent(csp_id=csp_id, event_type=kind, source=source, channel="WEB"))
     db.commit()
