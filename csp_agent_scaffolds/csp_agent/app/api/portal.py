@@ -52,7 +52,7 @@ from ..models import (AgreementEvent, ContactChangeRequest, CSP, CspQuestion, Do
                       ManualReviewQueue, OutboundMessage, OutboundStatus, ReviewStatus)
 from .. import master_link, pages, vault
 from ..ocr_service import detect_mime, photo_problem
-from ..portal_tokens import issue_upload_link, resolve_token, revoke_if_complete
+from ..portal_tokens import issue_upload_link, refusal, resolve_token, revoke_if_complete
 from ..validation import normalize_csp_code
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,10 @@ MAX_VALIDITY_YEARS = {"AGREEMENT": 3, "POLICE_VERIFICATION": 1, "IIBF_CERTIFICAT
 MSG = {
     "bad_link": ("यह लिंक अब नहीं चल रहा है। नए लिंक के लिए अपने RM से बात करें।",
                  "This link is invalid or has expired. Please contact your RM for a new link."),
+    "link_done": ("इस लिंक से माँगे गए सारे डॉक्यूमेंट हमें मिल चुके हैं, इसलिए यह लिंक बंद हो गया है। नया डॉक्यूमेंट भेजना "
+                  "हो तो KO कोड और मोबाइल नंबर से नया लिंक मँगाएँ, या अपने RM से बात करें।",
+                  "We already have every document this link asked for, so it is closed. To send a new document, "
+                  "ask for a new link with your KO code and mobile number, or talk to your RM."),
     "file_type": ("सिर्फ़ PDF, JPG या PNG फ़ाइल अपलोड करें।", "Please upload a PDF, JPG or PNG file only."),
     "too_many_pages": ("एक डॉक्यूमेंट में ज़्यादा से ज़्यादा 25 पेज हो सकते हैं।",
                        "A document can have at most 25 pages."),
@@ -85,7 +89,10 @@ MSG = {
                         "This agreement is incomplete. Please upload all pages together."),
     "pdf_or_photos": ("या तो एक PDF चुनें, या पेजों की फोटो। दोनों एक साथ नहीं।",
                       "Choose either one PDF or photos of the pages, not both."),
-    "too_big": ("फ़ाइल बहुत बड़ी है।", "The file is too large."),
+    "too_big": (f"फ़ाइल {round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)} MB से बड़ी है। स्कैन ऐप में कम क्वालिटी "
+                "(या ब्लैक-एंड-व्हाइट) चुनकर PDF दोबारा बनाएँ।",
+                f"The file is larger than {round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)} MB. Make the PDF again in "
+                "your scan app with lower quality or black-and-white."),
     "no_date": ("कृपया डॉक्यूमेंट बनने की तारीख (issue date) भरें।", "Please enter the document's issue date."),
     "future": ("यह तारीख आज के बाद की नहीं हो सकती।", "The issue date cannot be in the future."),
     "expired": ("इस डॉक्यूमेंट की तारीख निकल चुकी है (expired)। कृपया इसे रिन्यू करवाकर नया डॉक्यूमेंट अपलोड करें।",
@@ -309,18 +316,108 @@ def _record_link_open(db: Session, csp_id: int, kind: str = "LINK_OPENED", sourc
     db.commit()
 
 
+# Refused links (LINK_REFUSED). A link can be turned away before its date runs
+# out: closed when every document it asked for was accepted, replaced by a
+# newer DC master link, cut short when copied. Each refusal is kept with its
+# reason and where it happened (page, context, upload, question, dc_lookup),
+# so the dashboard and Agent Coach can see why someone was stuck. Never the
+# token itself: only the first 6 characters of a known link's id (of the hash
+# of an unknown one). At most one record per link and place per hour
+# (reloads), and REFUSALS_PER_HOUR in all (a bot trying addresses).
+REFUSALS_PER_HOUR = 200
+
+
+def _refused(db: Session, where: str, token: str = "", dc: str = "") -> str:
+    """Record why this link was turned away; returns the MSG key to show."""
+    if dc:
+        reason, ml = master_link.refusal(db, dc)
+        source, csp_id = master_link.CHANNEL, None
+        ref = (ml.token_hash if ml else hashlib.sha256(dc.encode()).hexdigest())[:6]
+        info = {"made_at": ml.created_at, "closed_at": ml.revoked_at} if ml else {}
+    else:
+        reason, row = refusal(db, token)
+        source, csp_id = "CSP_UPLOAD_PORTAL", (row.csp_id if row else None)
+        ref = row.jti[:6] if row else hashlib.sha256(token.encode()).hexdigest()[:6]
+        info = {"made_at": row.created_at, "closed_at": row.revoked_at, "closed_because": row.revoke_reason,
+                "expires_at": row.expires_at} if row else {}
+    try:
+        since = local_now() - timedelta(hours=1)           # sent_at is in local time (database clock)
+        recent = db.query(AgreementEvent.id).filter(AgreementEvent.event_type == "LINK_REFUSED",
+                                                    AgreementEvent.sent_at >= since)
+        if recent.filter(AgreementEvent.payload["link"].astext == ref,
+                         AgreementEvent.payload["where"].astext == where).first() is None \
+                and recent.count() < REFUSALS_PER_HOUR:
+            payload = {"where": where, "reason": reason, "link": ref,
+                       **{k: v.isoformat() if isinstance(v, datetime) else v for k, v in info.items() if v}}
+            db.add(AgreementEvent(csp_id=csp_id, event_type="LINK_REFUSED", source=source, channel="WEB",
+                                  payload=payload))
+            db.commit()
+    except Exception:                                      # the record must never break the page
+        db.rollback()
+        logger.exception("link_refusal_not_recorded where=%s", where)
+    return "link_done" if info.get("closed_because") == "ALL_REQUESTED_DOCUMENTS_ACCEPTED" else "bad_link"
+
+
+# Failed sends reported by the upload pages (UPLOAD_FAILED): what the page saw
+# when a send did not go through. No internet or a broken connection (the CSP
+# side), or an answer from the web server in front of the app that the app
+# itself never logged (file too large for it, too slow, down) or a fault in
+# the page (our side). The CSP is told only what they can act on; the cause
+# goes to the dashboard (Activity: Upload problems). A report the page could
+# not send waits on the phone and comes later ("late_min").
+FAILURE_SIDE = {"offline": "CSP", "dropped": "CSP", "too_big": "OUR", "slow": "OUR", "server": "OUR",
+                "page_error": "OUR"}
+FAILURE_PLACES = {"upload", "question", "dc_lookup"}
+FAILURES_PER_CSP_HOUR = 20
+FAILURES_PER_HOUR = 300
+
+
+def _page_failure(db: Session, request: Request, token: str, dc: str, code: str, **f: str) -> JSONResponse:
+    def num(v: str, hi: float) -> Optional[float]:
+        return min(float(v), hi) if re.fullmatch(r"\d{1,9}(\.\d+)?", v or "") else None
+
+    if f["kind"] not in FAILURE_SIDE:
+        return JSONResponse({"ok": False})
+    if dc:
+        if master_link.resolve(db, dc) is None:
+            return JSONResponse({"ok": False})                 # the dead link is already kept as LINK_REFUSED
+        csp, source = master_link.find(db, code), master_link.CHANNEL
+    else:
+        row = resolve_token(db, token)
+        if row is None:
+            return JSONResponse({"ok": False})
+        csp, source = db.get(CSP, row.csp_id), "CSP_UPLOAD_PORTAL"
+    recent = db.query(AgreementEvent.id).filter(AgreementEvent.event_type == "UPLOAD_FAILED",
+                                                AgreementEvent.sent_at >= local_now() - timedelta(hours=1))
+    if recent.count() >= FAILURES_PER_HOUR or (csp and recent.filter(
+            AgreementEvent.csp_id == csp.id).count() >= FAILURES_PER_CSP_HOUR):
+        return JSONResponse({"ok": True})                      # enough of these for now
+    ms, mb, status, late = num(f["ms"], 3.6e6), num(f["mb"], 1000), num(f["status"], 999), num(f["late_s"], 9e6)
+    payload = {"kind": f["kind"], "side": FAILURE_SIDE[f["kind"]],
+               "where": f["where"] if f["where"] in FAILURE_PLACES else "upload",
+               "status": int(status) if status else None, "seconds": round(ms / 1000) if ms is not None else None,
+               "mb": round(mb, 1) if mb else None,
+               "sections": [s for s in (f["sections"] or "").split(",") if s in SECTIONS] or None,
+               "late_min": round(late / 60) if late and late >= 120 else None,
+               "browser": (request.headers.get("user-agent") or "")[:160] or None}
+    db.add(AgreementEvent(csp_id=csp.id if csp else None, event_type="UPLOAD_FAILED", source=source, channel="WEB",
+                          payload={k: v for k, v in payload.items() if v is not None}))
+    db.commit()
+    return JSONResponse({"ok": True})
+
+
 @router.get("/upload", response_class=HTMLResponse)
 def upload_page(token: str = Query(""), dc: str = Query(""), db: Session = Depends(get_db)):
     if dc:
         # The DC master link (app/master_link.py).
         if master_link.resolve(db, dc) is None:
-            return _get_link_page(notice="bad_link")
+            return _get_link_page(notice=_refused(db, "page", dc=dc))
         return _dc_page(dc, db)
     row = resolve_token(db, token)
     if row is None:
         # No token (someone typed the address) or a dead one: let the CSP ask
         # for a fresh link instead of a dead end.
-        return _get_link_page(notice="bad_link" if token else "")
+        return _get_link_page(notice=_refused(db, "page", token=token) if token else "")
     csp = db.get(CSP, row.csp_id)
     _record_link_open(db, csp.id)
     ctx = _context(db, csp, row.requested_types or [])
@@ -410,7 +507,7 @@ QUESTIONS_PER_CSP_DAY = 5
 def _ask_question(db: Session, token: str, category: str, text: str, phone: str) -> JSONResponse:
     row = resolve_token(db, token)
     if row is None:
-        return JSONResponse({"ok": False, "message": _msg("bad_link")}, status_code=403)
+        return JSONResponse({"ok": False, "message": _msg(_refused(db, "question", token=token))}, status_code=403)
     text = (text or "").strip()[:1000]
     if len(text) < 3:
         return JSONResponse({"ok": False, "message": _msg("question_empty")}, status_code=422)
@@ -429,8 +526,14 @@ def _ask_question(db: Session, token: str, category: str, text: str, phone: str)
 @router.post("/upload", response_class=HTMLResponse)
 def request_link(request: Request, background: BackgroundTasks, code: str = Form(""), mobile: str = Form(""),
                  action: str = Form(""), token: str = Form(""), category: str = Form(""), text: str = Form(""),
-                 dc: str = Form(""), key: str = Form(""), dc_name: str = Form(""), db: Session = Depends(get_db)):
+                 dc: str = Form(""), key: str = Form(""), dc_name: str = Form(""), kind: str = Form(""),
+                 status: str = Form(""), ms: str = Form(""), mb: str = Form(""), sections: str = Form(""),
+                 where: str = Form(""), late_s: str = Form(""), db: Session = Depends(get_db)):
     ip = request.headers.get("x-real-ip") or (request.client.host if request.client else "?")
+    if action == "page_failure":
+        # The upload pages report their failed sends (see _page_failure).
+        return _page_failure(db, request, token, dc, code, kind=kind, status=status, ms=ms, mb=mb,
+                             sections=sections, where=where, late_s=late_s)
     if action == "dc_sheet":
         # The DCs' live Google Sheets (app/dc_sheets.py): one DC's table, only with the sheet key.
         from .. import dc_sheets, reports
@@ -444,7 +547,7 @@ def request_link(request: Request, background: BackgroundTasks, code: str = Form
     if action == "dc_context":
         # The DC master link: only the upload routes are public, so it uses this one.
         if master_link.resolve(db, dc) is None:
-            return JSONResponse({"ok": False, "message": _msg("bad_link")}, status_code=403)
+            return JSONResponse({"ok": False, "message": _msg(_refused(db, "dc_lookup", dc=dc))}, status_code=403)
         csp = master_link.find(db, code)
         if csp is None:
             return JSONResponse({"ok": False, "message": _msg("dc_unknown_csp")}, status_code=404)
@@ -483,7 +586,7 @@ def request_link(request: Request, background: BackgroundTasks, code: str = Form
 def portal_context(token: str = Query(""), db: Session = Depends(get_db)):
     row = resolve_token(db, token)
     if row is None:
-        raise HTTPException(403, detail=_msg("bad_link"))
+        raise HTTPException(403, detail=_msg(_refused(db, "context", token=token)))
     return _context(db, db.get(CSP, row.csp_id), row.requested_types or [])
 
 
@@ -554,7 +657,7 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
     if via_dc:
         # The DC master link: any working CSP, chosen by KO code.
         if master_link.resolve(db, str(form.get("dc") or "")) is None:
-            raise HTTPException(403, detail=_msg("bad_link"))
+            raise HTTPException(403, detail=_msg(_refused(db, "upload", dc=str(form.get("dc") or ""))))
         csp = master_link.find(db, str(form.get("code") or ""))
         if csp is None:
             raise HTTPException(404, detail=_msg("dc_unknown_csp"))
@@ -562,7 +665,7 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
     else:
         row = resolve_token(db, str(form.get("token") or ""))
         if row is None:
-            raise HTTPException(403, detail=_msg("bad_link"))
+            raise HTTPException(403, detail=_msg(_refused(db, "upload", token=str(form.get("token") or ""))))
         csp = db.get(CSP, row.csp_id)
     channel = master_link.CHANNEL if via_dc else "CSP_UPLOAD_PORTAL"
     today = date.today()

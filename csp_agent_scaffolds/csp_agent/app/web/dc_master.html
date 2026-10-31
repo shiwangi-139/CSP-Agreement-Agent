@@ -127,7 +127,56 @@
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const STATUS = {VALID:["ठीक है","Valid"], EXPIRED:["रिन्यू करना है","Expired"], MISSING:["अभी जमा नहीं हुआ","Not received"], UNREADABLE:["फोटो साफ़ नहीं है","Not readable"], IN_REVIEW:["जाँच हो रही है","Being checked"]};
   const fmt = (iso) => iso ? iso.split("-").reverse().join("-") : "";
-  const netErr = "नेटवर्क समस्या, दोबारा कोशिश करें / Network problem, please try again.";
+  // A send that did not go through. The DC is told only what they can act
+  // on: their internet, or (when the fault is ours: a web-server limit, too
+  // slow, down, a page error) a short "not your fault, try again" with no
+  // technical cause. The cause goes to the dashboard (report() below). These
+  // answers come from the web server in front of the app (Nginx) or from no
+  // answer at all, so they are not JSON (all once shown as "Network problem").
+  const FAIL = {
+    offline: "आपका इंटरनेट बंद है। इंटरनेट चालू करके फिर से भेजें, आपकी चुनी हुई फ़ाइलें इसी पेज पर हैं। / Your internet is off. Turn it on and send again; your chosen files are still on this page.",
+    dropped: "भेजते समय कनेक्शन टूट गया। अपना इंटरनेट देखें और फिर से भेजें, आपकी फ़ाइलें इसी पेज पर हैं। / The connection broke while sending. Check your internet and send again; your files are still on this page.",
+    slow: "अभी पूरा नहीं हो सका, इसमें आपकी कोई गलती नहीं है। हो सकता है डॉक्यूमेंट पहुँच गया हो: 10 मिनट बाद यही KO कोड फिर खोलकर स्थिति देखें, ज़रूरत हो तभी दोबारा भेजें। / It did not finish just now. This is not your fault. The document may have arrived: open this KO code again in 10 minutes to see its status, and send again only if needed.",
+    ours: "अभी भेजा नहीं जा सका, इसमें आपकी कोई गलती नहीं है। 10 मिनट बाद फिर कोशिश करें, आपकी फ़ाइलें इसी पेज पर हैं। / It could not be sent just now. This is not your fault. Please try again in 10 minutes; your files are still on this page.",
+  };
+  const noAnswer = () => navigator.onLine === false ? "offline" : "dropped";
+  const notJson = (status) => status === 413 ? "too_big" : status === 504 || status === 408 ? "slow" : "server";
+  const SAY = { offline: FAIL.offline, dropped: FAIL.dropped, too_big: FAIL.ours, slow: FAIL.slow, server: FAIL.ours, page_error: FAIL.ours };
+
+  // Every failed send is reported for the dashboard (Activity: Upload
+  // problems): at once if the server answers, else kept on this phone and
+  // sent when the page is next open with internet.
+  const QKEY = "eko_dc_failed_sends";
+  const readQ = () => { try { return JSON.parse(localStorage.getItem(QKEY) || "[]"); } catch (e) { return []; } };
+  const writeQ = (q) => { try { localStorage.setItem(QKEY, JSON.stringify(q.slice(-10))); } catch (e) { /* not kept */ } };
+  let flushing = false;
+  async function flushReports() {
+    if (flushing) return;
+    flushing = true;
+    const left = [];
+    for (const rep of readQ()) {
+      const fields = { action: "page_failure", late_s: String(Math.round((Date.now() - rep.at) / 1000)) };
+      for (const [k, v] of Object.entries(rep)) if (k !== "at") fields[k] = String(v);
+      const r = await post(fields).catch(() => null);
+      if (!r || !r.ok) left.push(rep);
+    }
+    writeQ(left);
+    flushing = false;
+  }
+  function report(kind, status, started, where, code, fd) {
+    let bytes = 0;
+    const secs = [];
+    for (const [k, v] of fd ? fd.entries() : []) if (v instanceof File && v.size) { bytes += v.size; secs.push(k.replace(/_file$/, "")); }
+    writeQ([...readQ(), { kind, status: status || 0, ms: Date.now() - started, mb: (bytes / 1048576).toFixed(1),
+                          sections: secs.join(","), where, code: code || "", at: Date.now() }]);
+    flushReports();
+  }
+  function failed(el, kind, status, started, where, code, fd) {
+    el.textContent = SAY[kind];
+    report(kind, status, started, where, code, fd);
+  }
+  window.addEventListener("online", flushReports);
+  flushReports();
   let ctx = null;
 
   async function post(fields) {
@@ -139,13 +188,16 @@
 
   async function load(code) {
     $("pickerr").textContent = "";
+    const started = Date.now();
     try {
-      const r = await post({ action: "dc_context", code });
-      const j = await r.json();
+      const r = await post({ action: "dc_context", code }).catch(() => null);
+      if (!r) return failed($("pickerr"), noAnswer(), 0, started, "dc_lookup", code);
+      const j = await r.json().catch(() => null);
+      if (!j) return failed($("pickerr"), notJson(r.status), r.status, started, "dc_lookup", code);
       if (!j.ok) { $("pickerr").textContent = (j.message?.hi || "") + " / " + (j.message?.en || "Not found."); $("csp").style.display = "none"; return; }
       ctx = j.context;
       show();
-    } catch (e) { $("pickerr").textContent = netErr; }
+    } catch (e) { failed($("pickerr"), "page_error", 0, started, "dc_lookup", code); }
   }
   function showCsp() {
     const code = $("pick").value.trim().toUpperCase();
@@ -222,6 +274,17 @@
   }
   $("docs").addEventListener("change", checkDates);
 
+  // Over the size limit: said at once, before sending (such a file used to
+  // travel all the way and come back as "Network problem").
+  $("docs").addEventListener("change", (e) => {
+    const input = e.target, f = input.files && input.files[0];
+    if (input.type !== "file" || !f || f.size <= page.max_upload_mb * 1024 * 1024) return;
+    const mb = (f.size / 1024 / 1024).toFixed(1);
+    $(input.id.replace(/_file$/, "_err")).textContent =
+      `यह फ़ाइल ${mb} MB की है, सीमा ${page.max_upload_mb} MB है। स्कैन ऐप में कम क्वालिटी (या ब्लैक-एंड-व्हाइट) चुनकर PDF दोबारा बनाएँ। / This file is ${mb} MB; the limit is ${page.max_upload_mb} MB. Make the PDF again in your scan app with lower quality or black-and-white.`;
+    input.value = "";                                          // cleared: not sent
+  });
+
   $("f").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("formerr").textContent = "";
@@ -236,9 +299,12 @@
     fd.append("code", ctx.csp.code);
     $("send").disabled = true;
     $("send").textContent = "चेक हो रहा है… / Checking… (1–2 min)";
+    const started = Date.now(), koCode = ctx.csp.code;
     try {
-      const r = await fetch("api/portal/upload", { method: "POST", body: fd });
-      const j = await r.json();
+      const r = await fetch("api/portal/upload", { method: "POST", body: fd }).catch(() => null);
+      if (!r) return failed($("formerr"), noAnswer(), 0, started, "upload", koCode, fd);
+      const j = await r.json().catch(() => null);
+      if (!j) return failed($("formerr"), notJson(r.status), r.status, started, "upload", koCode, fd);
       if (!r.ok) { const m = j.detail || {}; $("formerr").textContent = (m.hi || "") + " / " + (m.en || "Upload failed."); return; }
       const lines = skipped.map(({ d, msg }) => `<div class="err">⏭️ <b>${esc(d.label_hi)}</b> <span class="en">/ ${esc(d.label_en)}</span>: नहीं भेजा गया / not sent — ${esc(msg)}</div>`).concat(j.results.map((res) => {
         const d = ctx.docs.find((x) => x.section === res.section) || { label_hi: res.section, label_en: res.section };
@@ -251,7 +317,7 @@
         (j.still_needed.length ? `<p class="hint">अभी भी चाहिए / Still needed: ${esc(j.still_needed.join(", "))}</p>` : `<p class="ok">सारे डॉक्यूमेंट मिल गए / All documents received.</p>`);
       $("result").scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (err) {
-      $("formerr").textContent = netErr;
+      failed($("formerr"), "page_error", 0, started, "upload", koCode, fd);
     } finally {
       $("send").disabled = false;
       $("send").textContent = "जमा करें / Submit";

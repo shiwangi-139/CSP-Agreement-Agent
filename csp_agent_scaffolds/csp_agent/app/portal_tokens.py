@@ -96,6 +96,25 @@ def resolve_token(db: Session, token: str) -> Optional[PortalToken]:
     return row
 
 
+def refusal(db: Session, token: str) -> tuple[str, Optional[PortalToken]]:
+    """Why resolve_token turns `token` away, for the record: NO_TOKEN,
+    TOO_LONG, UNKNOWN (never made, or cut short when copied), CLOSED (the
+    row's revoke_reason says why) or EXPIRED; OK if it works. With the row
+    when there is one."""
+    if not token:
+        return "NO_TOKEN", None
+    if len(token) > 100:
+        return "TOO_LONG", None
+    row = db.get(PortalToken, token)
+    if row is None:
+        return "UNKNOWN", None
+    if row.revoked_at is not None:
+        return "CLOSED", row
+    if row.expires_at < _now():
+        return "EXPIRED", row
+    return "OK", row
+
+
 def revoke_if_complete(db: Session, row: PortalToken, still_needed: list[str]) -> None:
     requested = set(row.requested_types or [])
     if requested and not (requested & set(still_needed)):

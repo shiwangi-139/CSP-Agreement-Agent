@@ -98,6 +98,21 @@ def resolve(db: Session, token: str) -> Optional[MasterLink]:
     return r
 
 
+def refusal(db: Session, token: str) -> tuple[str, Optional[MasterLink]]:
+    """Why resolve() turns `token` away, for the record: NO_TOKEN, TOO_LONG,
+    UNKNOWN (never made here, or cut short when copied) or CLOSED (a newer
+    link replaced it, or it was switched off); OK if it works. With the row
+    when there is one."""
+    if not token:
+        return "NO_TOKEN", None
+    if len(token) > 100:
+        return "TOO_LONG", None
+    r = db.query(MasterLink).filter(MasterLink.token_hash == _hash(token)).first()
+    if r is None:
+        return "UNKNOWN", None
+    return ("CLOSED" if r.revoked_at is not None else "OK"), r
+
+
 def status(db: Session) -> dict:
     r = (db.query(MasterLink).filter(MasterLink.revoked_at.is_(None))
          .order_by(MasterLink.created_at.desc()).first())

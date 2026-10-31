@@ -712,7 +712,19 @@
         <article class="card kpi"><div class="kpilabel">Upload page submissions</div><div class="kpival">${ev.PORTAL_UPLOAD || 0}</div></article>
         <article class="card kpi"><div class="kpilabel">DC master link: CSPs looked up</div><div class="kpival">${ev.DC_LINK_VIEW || 0}</div></article>
         <article class="card kpi"><div class="kpilabel">"Get my link" requests</div><div class="kpival">${ev.LINK_REQUEST || 0}</div></article>
+        <article class="card kpi" title="A link that was opened but did not work: closed after its documents were accepted, replaced, expired or cut short when copied. Each refusal is kept with its reason."><div class="kpilabel">Links refused</div><div class="kpival">${ev.LINK_REFUSED || 0}</div></article>
+        <article class="card kpi" title="Sends that failed because of us: web-server limit, too slow, down, or a fault in the upload page. The CSP was only told it is not their fault and to try again."><div class="kpilabel">Failed sends · our side</div><div class="kpival">${(d.upload_problems_by_side || {}).OUR || 0}</div></article>
+        <article class="card kpi" title="Sends that failed on the CSP's or DC's side: no internet, or the connection broke. They were told to check their internet."><div class="kpilabel">Failed sends · CSP side</div><div class="kpival">${(d.upload_problems_by_side || {}).CSP || 0}</div></article>
       </div>
+      <div class="card tablewrap" style="margin-top:14px"><h2>Upload problems</h2>
+        <p class="small muted">Sends that did not go through and links that were turned away, newest first. The CSP or DC sees only what they can act on; the cause is here.</p>
+        <table><thead><tr><th>When</th><th>CSP</th><th>Via</th><th>What happened</th><th>Side</th><th>Details</th></tr></thead><tbody>
+        ${(d.upload_problems || []).map((p) => `<tr><td class="small">${when(p.at)}</td>
+          <td>${p.csp ? `<a href="#" data-csp="${p.csp.id}" class="ko">KO ${esc(p.csp.code)} · ${esc(p.csp.name)}</a>` : `<span class="muted">—</span>`}</td>
+          <td class="small">${esc(p.via)}</td><td>${esc(p.what)}</td>
+          <td>${badge(p.side === "OUR" ? "REJECTED" : p.side === "CSP" ? "MISSING" : "APPROVAL",p.side === "OUR" ? "our side" : p.side === "CSP" ? "CSP side" : "link")}</td>
+          <td class="small">${esc(p.details)}</td></tr>`).join("") || `<tr><td colspan="6" class="empty">No upload problems in this period.</td></tr>`}
+        </tbody></table></div>
       <div class="analytics">
         <div class="card tablewrap"><h2>People</h2><table><thead><tr><th>Name</th><th>Role</th><th class="num">Actions</th><th>Last</th><th></th></tr></thead><tbody>
           ${d.people.map((p) => `<tr><td><b>${esc(p.name)}</b></td><td>${esc(p.role)}</td><td class="num">${p.actions}</td><td class="small">${when(p.last)}</td>
