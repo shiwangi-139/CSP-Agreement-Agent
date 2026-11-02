@@ -169,7 +169,8 @@ def _short_year_date(raw: str, end_year: int) -> Optional[date]:
 # terminated" never picks up a date from the next clause.
 END_DATE = re.compile(
     r"\b(?:end\s*(?:and\s*close\s*)?date\s*(?:on\b)?"
-    r"|valid(?:ity)?\s*(?:up\s*to|upto|till|until|thru|through)(?:\s*date)?"
+    # (OCR of a highlighted / underlined line: "vaiid", "valld"; "upio", "uplo", "upt0", "unto")
+    r"|v[a@][il1|!]{1,2}d(?:ity)?\s*(?:u[pn]\s*[tli1]\s*[o0c]|till|until|thru|through)(?:\s*date)?"
     r"|expir(?:y|es|ing|ation)(?:\s*date)?(?:\s*on)?"
     # "commencing from 26/05/2025 an(d) ending on 25/05/2028", "ends on", "up to and including"
     # (a tick or stamp on the "n" of ending: OCR "e|ding", "e\ding", "eading" - Manoj Kumar Sah)
@@ -180,7 +181,11 @@ END_DATE = re.compile(
     r"|effective\s*date\W{0,2}\s*\)"
     # 'On this day of, 11-06-2026, effected date 10-06-2029' (typed for "end date")
     r"|effected\s*date)\s*", re.I)
-BETWEEN_LABEL_AND_DATE = re.compile(r"^[\s:\-–—_.,(]{0,12}$")
+BETWEEN_LABEL_AND_DATE = re.compile(r"^[\s:\-–—_.,(‘’“”'\"`]{0,12}$")
+# A date right after the label that a highlighter, underline or stamp has
+# blurred: separators read as | \ l I or 1 ("22|04|2027", "2210412027",
+# "22104/2027"), or the year split ("22/04/20 27"). Only tried there.
+BROKEN_DATE = re.compile(r"(?<!\d)(\d{1,2})\s?[/|\\lI1.\-]\s?(\d{2})\s?[/|\\lI1.\-]\s?(20)\s?(\d)\s?(\d)(?!\d)")
 HINDI_UPTO = re.compile(r"\s*तक\s*(?:मान्य|वैध)")
 
 
@@ -199,9 +204,10 @@ def find_end_date(text: str, issue: Optional[date], today: Optional[date] = None
         ok = lambda d: 30 <= (d - issue).days <= 6 * 366
     for m in END_DATE.finditer(flat):
         window = flat[m.end():m.end() + 40]
-        found = find_dates(window)
-        if found and BETWEEN_LABEL_AND_DATE.match(window[:found[0].start]) and ok(found[0].value):
-            return found[0].value
+        for w in (window, BROKEN_DATE.sub(lambda d: f"{d[1]}/{d[2]}/{d[3]}{d[4]}{d[5]}", window)):
+            found = find_dates(w)
+            if found and BETWEEN_LABEL_AND_DATE.match(w[:found[0].start]) and ok(found[0].value):
+                return found[0].value
     for f in find_dates(flat):
         if HINDI_UPTO.match(flat, f.end) and ok(f.value):
             return f.value

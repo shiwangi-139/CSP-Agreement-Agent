@@ -905,3 +905,29 @@ def test_agreement_range_in_the_opening_line_with_ocr_marks():
         r = extract_agreement(line.format(a=a, b=b), date(2026, 11, 2))
         assert (r["issue_date"], r["explicit_expiry"]) == (date(2024, 10, 6), date(2027, 10, 5)), (a, r)
         assert r["validity_source"] == "AGREEMENT_RANGE_FROM_TO"
+
+
+@pytest.mark.parametrize("upto", [
+    "valid upto 22/04/2027", "valid upto 22|04|2027", "valid upto 22\\04\\2027", "valid upto 2210412027",
+    "valid upto 22104/2027", "valid upto 22l04l2027", "valid upto 22/04/20 27", "valid upto ‘22/04/2027",
+    "valid upio 22/04/2027", "valid uplo 22/04/2027", "valid upt0 22/04/2027", "vaiid upto 22/04/2027",
+    "valld upto 22/04/2027"])
+def test_valid_upto_a_highlighted_date(upto):
+    """A term clause whose date is highlighted and underlined: 'shall be valid upto 22/04/2027' as OCR reads
+    it (separators lost or read as | or 1, the year split, 'upto' / 'valid' misread)."""
+    from app.ai.extraction.rules.agreement import extract_agreement
+    text = ("CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 23/04/2024 (\"Effective Date\"), X\n"
+            "4. TERM AND TERMINATION\nA. Term: This Agreement shall commence on the Effective Date and shall be "
+            f"{upto}\nor until terminated in accordance with Clause I(4)B or Clause III(1).\n")
+    r = extract_agreement(text, date(2026, 11, 2))
+    assert r["explicit_expiry"] == date(2027, 4, 22), r
+    # Without a readable start date (only the term page is clear) the end date still counts.
+    r = extract_agreement(text.replace("23/04/2024", "__________"), date(2026, 11, 2))
+    assert r["explicit_expiry"] == date(2027, 4, 22), r
+
+
+def test_a_blank_valid_upto_still_takes_no_date_from_the_next_clause():
+    from app.ai.extraction.rules.agreement import find_end_date
+    text = ("Term: This Agreement shall be valid upto ____ or until terminated. B. Termination by either Eko or CSP "
+            "by giving 30 days notice 2210412027")
+    assert find_end_date(text, date(2024, 4, 23)) is None
