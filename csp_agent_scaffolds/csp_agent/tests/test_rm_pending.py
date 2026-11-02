@@ -17,6 +17,7 @@ def test_district_is_read_from_the_address():
     assert district_from_address("Vill Rampur, Post Bihta, Dist. Patna, Bihar 801103") == "Patna"
     assert district_from_address("At+Po- Sakra, District: Muzaffarpur (Bihar)") == "Muzaffarpur"
     assert district_from_address("Mohalla Kazi, DISTT-GAYA 823001") == "Gaya"
+    assert district_from_address("Dumra, Dist.  SITAMARHI, Bihar") == "Sitamarhi"
     assert district_from_address("ग्राम सिमरी, जिला बक्सर, बिहार") == "बक्सर"
     assert district_from_address("Near SBI branch, Main Road") is None
 
@@ -37,19 +38,22 @@ def test_one_csv_per_rm_labels_2_to_4_by_district(client, monkeypatch):
     csp("A", 3, "Vill X, Dist. Patna, Bihar")
     csp("B", 2, district="Gaya")
     csp("C", 4)
+    csp("F", 2, district="  PATNA ")                 # another spelling of the same district
     csp("D", 1, "Dist. Patna")                       # all documents on file: not listed
     csp("E", 3, "Dist. Patna", active=False)         # not on the calling sheet: not listed
     s.commit()
     rm_id = rm.id
     s.close()
     listed = {r["id"]: r for r in c.get("/api/hub/rm-pending", headers=HDR).json()["rms"]}
-    assert listed[rm_id]["csps"] == 3
+    assert listed[rm_id]["csps"] == 4
     r = c.get(f"/api/hub/rm-pending/{rm_id}.csv", headers=HDR)
     assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
     rows = list(csv.reader(io.StringIO(r.content.decode("utf-8-sig"))))
     assert rows[0][:2] == ["District", "DC"] and rows[0][-1] == "To upload"
-    assert [x[0] for x in rows[1:]] == ["Gaya", "Patna", "District not given"]
-    assert all(x[1] == f"DC {tag}" for x in rows[1:]) and "Pending" in rows[1]
+    csps = [x for x in rows[1:] if x[2]]
+    assert [x[0] for x in csps] == ["Gaya", "Patna", "Patna", "District not given"]   # SITAMARHI-style spellings merged
+    assert [x[0] for x in rows[1:] if x[0] and not x[2]] == ["GAYA · 1 CSP", "PATNA · 2 CSPs", "DISTRICT NOT GIVEN · 1 CSP"]
+    assert all(x[1] == f"DC {tag}" for x in csps) and "Pending" in csps[0]
     assert c.get("/api/hub/rm-pending/999999.csv", headers=HDR).status_code == 404
 
 
