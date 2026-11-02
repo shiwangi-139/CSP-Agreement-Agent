@@ -57,7 +57,11 @@ THIS_DAY_OF = re.compile(r"(?:on\s+t[hpb][il1]s\s+\w{2,4}|\b[tn]?h[il1]s\s+d[aeo
 # "Three (3) Years", "3 years", Hindi "तीन वर्ष" / "3 वर्ष" / "तीन साल".
 THREE_YEAR = [
     re.compile(r"(?:valid|va\w?id|period|per\s?od|remain|validity|duration)[^.\n]{0,40}?\b(?:three|thr[e3]{2}|3)\b\s*(?:\(\s*3\s*\))?\s*y\w{1,4}", re.I),
-    re.compile(r"\(\s*3\s*\)\s*y[ea]\w{0,3}", re.I),
+    re.compile(r"[\(\{\[]\s*3\s*[\)\}\]]\s*y[ea]\w{0,3}", re.I),     # "(3) years"; OCR: "{3) years", "[3] years"
+    # "B. Initial Term: The initial term of this Agreement shall be three (3)
+    # years from the Effective Date" (Eko's agreement, clause 1B), also
+    # without the "(3)". The word "term" alone, never "terminate".
+    re.compile(r"\bterm\b[^.]{0,60}?\b(?:three|thr[e3]{2}|3)\b\s*(?:[\(\{\[]\s*3\s*[\)\}\]]\s*)?y[ea]\w{0,3}", re.I),
     re.compile(r"(?:तीन|3)\s*(?:वर्ष|वर्षों|साल)"),
     # "Full 3 year agreement", "three years agreement".
     re.compile(r"\b(?:three|thr[e3]{2}|3)\s*(?:\(\s*3\s*\)\s*)?y[ea]\w{0,3}'?s?\s+agreement", re.I),

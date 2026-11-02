@@ -880,3 +880,15 @@ def test_the_start_of_the_term_is_the_issue_date_even_a_few_days_ahead():
     # A date given by the heading or "On this day of" still comes first.
     r = extract_agreement("On this day of, 28/10/2026 (Effective Date)\n" + PRITY, date(2026, 10, 30))
     assert r["issue_date"] == date(2026, 10, 28) and r["date_source"] == "AGREEMENT_THIS_DAY_OF"
+
+
+def test_agreement_initial_term_of_three_years_is_three_years():
+    """Eko's agreement clause 1B: 'The initial term of this Agreement shall be three (3) years from the Effective Date'."""
+    from app.ai.extraction.rules.agreement import has_three_year_clause
+    clause = ("B. Initial Term: The initial term of this Agreement shall be {} from the Effective Date "
+              "(\"Initial Term\"). Upon expiry of the Initial Term, this Agreement may be renewed")
+    for words in ("three (3) years", "three years", "thr3e {3) years", "3 years"):
+        assert has_three_year_clause(clause.format(words)), words
+    assert not has_three_year_clause(clause.format("one (1) year"))
+    assert not has_three_year_clause("A. Term: This Agreement shall commence on the Effective Date and shall be valid "
+                                     "until terminated. C. Termination by either Eko or CSP by giving 30 days of notice")

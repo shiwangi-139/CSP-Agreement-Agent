@@ -460,7 +460,7 @@ def extract_document_fields_deterministic(
         csp_code=csp_code,
         start_date=issue.isoformat(),
         expiry_date=expiry.isoformat() if expiry else (
-            "LIFETIME_NO_EXPIRY" if doc_type == "IIBF_CERTIFICATE" or validity_source == "PVR_PCC_LIFETIME" else None),
+            "LIFETIME_NO_EXPIRY" if doc_type == "IIBF_CERTIFICATE" else None),
         explicit_expiry=r.get("explicit_expiry").isoformat() if r.get("explicit_expiry") else None,
         has_explicit_3year_clause=three_year,
         validity_months=months if doc_type == "POLICE_VERIFICATION" else (36 if three_year else (12 * AGREEMENT_DEFAULT_YEARS if doc_type == "AGREEMENT" and not r.get("explicit_expiry") else None)),

@@ -69,8 +69,11 @@ def test_pvr_with_stated_validity_keeps_it_even_if_it_says_pcc():
     assert extract_pvr(text, date(2026, 9, 29))["validity_months"] == 6
 
 
-def test_pcc_expiry_is_lifetime():
+def test_pcc_once_marked_no_expiry_is_one_year_now():
+    """Since 02-11-2026 no police certificate is valid for life."""
     from datetime import date
     from app.expiry_engine import calculate_document_expiry
-    r = calculate_document_expiry("POLICE_VERIFICATION", date(2023, 3, 14), validity_rule="PVR_PCC_LIFETIME")
-    assert r["status"] == "VALID" and r["calculated_expiry"] is None
+    r = calculate_document_expiry("POLICE_VERIFICATION", date(2023, 3, 14), validity_rule="PVR_PCC_LIFETIME",
+                                  today=date(2026, 11, 2))
+    assert r["calculated_expiry"] == date(2024, 3, 14) and r["status"] == "EXPIRED"
+    assert r["validity_rule_used"] == "PVR_PCC_DEFAULT_1_YEAR"

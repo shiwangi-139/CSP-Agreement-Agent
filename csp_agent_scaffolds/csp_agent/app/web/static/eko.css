@@ -389,7 +389,7 @@ label input, label select { color: var(--ink); font-size: 13px; }
 }
 @media (max-width: 640px) {
   .side { width: min(84vw, 300px); transform: translateX(-100%); transition: transform .2s ease; }
-  .side.open { transform: none; width: min(84vw, 300px); }
+  .side.open { transform: none; width: min(84vw, 300px); z-index: 45; }   /* above the backdrop (40), or taps close it */
   .side .navtext, .side .navlabel { opacity: 1; pointer-events: auto; }
   .pin { display: none; }
   main, body.pinned main { margin-left: 0; }

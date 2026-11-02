@@ -238,10 +238,7 @@ def recompute_current(db: Session, csp: CSP, doc_type: str) -> Optional[Document
     today = date.today()
 
     def rank(d: Document) -> int:
-        # PVR section: a valid PVR / character certificate first, then a
-        # lifetime Police Clearance Certificate, then an expired PVR.
-        if d.validity_rule_used == "PVR_PCC_LIFETIME":
-            return 1
+        # PVR section: a valid certificate first, then an expired one.
         return 2 if d.expiry_date is None or d.expiry_date >= today else 0
 
     best = max(usable, key=lambda d: (rank(d) if t == "POLICE_VERIFICATION" else 0,

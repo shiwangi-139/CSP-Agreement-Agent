@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..models import CSP, InternalUser
+from ..rm_pending import district_from_address
 from ..validation import normalize_csp_code
 from .sheet_source import load_calling_sheet_rows, SheetSourceError
 
@@ -47,6 +48,8 @@ COLUMNS = {
     "circle (lho)": "circle",
     "terminal status": "terminal_status",
     "full address": "address",
+    "district": "district",
+    "district name": "district",
 }
 
 
@@ -127,6 +130,7 @@ def parse_row(raw: dict[str, Any]) -> dict[str, Any] | None:
         "circle": _text(row.get("circle")) or None,
         "terminal_status": _text(row.get("terminal_status")) or None,
         "kiosk_location": _text(row.get("address")) or None,
+        "district": _text(row.get("district")) or district_from_address(_text(row.get("address"))),
         "row_hash": generate_row_hash([raw.get(k) for k in sorted(raw)]),
     }
 
@@ -243,6 +247,7 @@ def sync_calling_sheet(sheet_id: str | None = None, range_name: str | None = Non
             csp.circle = r["circle"]
             csp.terminal_status = r["terminal_status"]
             csp.kiosk_location = r["kiosk_location"]
+            csp.district = r["district"]
             csp.status = (r["terminal_status"] or "ACTIVE").upper()
             csp.rm_id = rm.id if rm else None
             csp.dc_id = dc.id if dc else None

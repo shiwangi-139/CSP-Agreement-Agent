@@ -32,11 +32,12 @@ TYPE_ALIASES = {
 # Codes used by the API and the WhatsApp agent: keep them stable.
 CATEGORY_NAMES = {1: "COMPLETE", 2: "MISSING_ONE", 3: "MISSING_TWO", 4: "NONE"}
 # What people see ("Cat A/B/1/2" is already used for other things in the company).
-SLAB_NAMES = {1: "All documents on file", 2: "1 document missing", 3: "2 documents missing", 4: "No documents"}
+# "Pending", not "missing" (since 02-11-2026): the CSP still has to send it.
+SLAB_NAMES = {1: "All documents on file", 2: "1 document pending", 3: "2 documents pending", 4: "No documents"}
 
 
 def slab_label(category: int) -> str:
-    """e.g. "Label 3 · 2 documents missing". Users see "Label": "slab" already
+    """e.g. "Label 3 · 2 documents pending". Users see "Label": "slab" already
     means something else on Eko's website (internally the code keeps "slab")."""
     return f"Label {category} · {SLAB_NAMES.get(category, '')}"
 
@@ -48,9 +49,9 @@ SUB_SLABS = {
     "1.1": "Fully compliant",
     "1.2": "Renewal coming up (60 days)",
     "1.3": "Renewal overdue (expired)",
-    "2.1": "Agreement missing",
-    "2.2": "PVR missing",
-    "2.3": "IIBF missing",
+    "2.1": "Agreement pending",
+    "2.2": "PVR pending",
+    "2.3": "IIBF pending",
     "3.1": "Only Agreement on file",
     "3.2": "Only PVR on file",
     "3.3": "Only IIBF on file",

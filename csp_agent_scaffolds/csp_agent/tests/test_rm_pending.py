@@ -1,0 +1,61 @@
+"""Pending list by RM (app/rm_pending.py): one live CSV per RM of their CSPs in
+Labels 2-4, district by district, with the DC; an RM gets only their own."""
+import csv
+import io
+import uuid
+
+from app import auth
+from app.models import CSP, InternalUser
+from app.rm_pending import district_from_address
+from tests.test_login import CSRF, PUBLIC, _login, world  # noqa: F401  (fixture)
+from tests.test_portal_and_api import client  # noqa: F401  (fixture)
+
+HDR = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
+
+
+def test_district_is_read_from_the_address():
+    assert district_from_address("Vill Rampur, Post Bihta, Dist. Patna, Bihar 801103") == "Patna"
+    assert district_from_address("At+Po- Sakra, District: Muzaffarpur (Bihar)") == "Muzaffarpur"
+    assert district_from_address("Mohalla Kazi, DISTT-GAYA 823001") == "Gaya"
+    assert district_from_address("ग्राम सिमरी, जिला बक्सर, बिहार") == "बक्सर"
+    assert district_from_address("Near SBI branch, Main Road") is None
+
+
+def test_one_csv_per_rm_labels_2_to_4_by_district(client, monkeypatch):
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    c, Session = client
+    s = Session()
+    tag = uuid.uuid4().hex[:6]
+    rm, dc = InternalUser(name=f"RM {tag}", role="RM"), InternalUser(name=f"DC {tag}", role="DC")
+    s.add_all([rm, dc])
+    s.flush()
+    def csp(n, cat, address=None, district=None, active=True):
+        x = CSP(name=f"CSP {n} {tag}", current_code=f"7{n}{int(tag, 16) % 1000000:06d}", rm_id=rm.id, dc_id=dc.id,
+                category=cat, kiosk_location=address, district=district, is_active_in_calling_sheet=active)
+        s.add(x)
+        return x
+    csp("A", 3, "Vill X, Dist. Patna, Bihar")
+    csp("B", 2, district="Gaya")
+    csp("C", 4)
+    csp("D", 1, "Dist. Patna")                       # all documents on file: not listed
+    csp("E", 3, "Dist. Patna", active=False)         # not on the calling sheet: not listed
+    s.commit()
+    rm_id = rm.id
+    s.close()
+    listed = {r["id"]: r for r in c.get("/api/hub/rm-pending", headers=HDR).json()["rms"]}
+    assert listed[rm_id]["csps"] == 3
+    r = c.get(f"/api/hub/rm-pending/{rm_id}.csv", headers=HDR)
+    assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
+    rows = list(csv.reader(io.StringIO(r.content.decode("utf-8-sig"))))
+    assert rows[0][:2] == ["District", "DC"] and rows[0][-1] == "To upload"
+    assert [x[0] for x in rows[1:]] == ["Gaya", "Patna", "District not given"]
+    assert all(x[1] == f"DC {tag}" for x in rows[1:]) and "Pending" in rows[1]
+    assert c.get("/api/hub/rm-pending/999999.csv", headers=HDR).status_code == 404
+
+
+def test_an_rm_gets_only_their_own_list(world):
+    c, w = world
+    _login(c, w["rm"])
+    rms = c.get("/api/hub/rm-pending", headers={**PUBLIC, **CSRF}).json()["rms"]
+    assert [r["name"] for r in rms] == ["RM One"] and rms[0]["csps"] == 1
+    assert c.get(f"/api/hub/rm-pending/{rms[0]['id']}.csv", headers={**PUBLIC, **CSRF}).status_code == 200

@@ -233,14 +233,14 @@ def generate_discrepancy_workbook(db: Session) -> io.BytesIO:
 
         bg_col, text_col, cat_desc = category_colors.get(cat, ("FFFFFF", "000000", cat))
 
-        agr_exp = agr.expiry_date.strftime("%Y-%m-%d") if agr and agr.expiry_date else "Missing"
-        pvr_exp = agr.police_verification_expiry.strftime("%Y-%m-%d") if agr and agr.police_verification_expiry else "Missing"
+        agr_exp = agr.expiry_date.strftime("%Y-%m-%d") if agr and agr.expiry_date else "Pending"
+        pvr_exp = agr.police_verification_expiry.strftime("%Y-%m-%d") if agr and agr.police_verification_expiry else "Pending"
 
         # Check for character cert and IIBF in docs
         has_cc = any(d.document_type == "CHARACTER_CERTIFICATE" for d in docs)
-        cc_exp = "On File" if has_cc else "Missing"
+        cc_exp = "On File" if has_cc else "Pending"
         has_iibf = any(d.document_type == "IIBF_CERTIFICATE" for d in docs)
-        iibf_str = "YES (Lifetime)" if has_iibf else "NO"
+        iibf_str = "Submitted" if has_iibf else "Pending"
 
         sync_str = csp.calling_sheet_synced_at.strftime("%Y-%m-%d %H:%M") if csp.calling_sheet_synced_at else "Initial"
 

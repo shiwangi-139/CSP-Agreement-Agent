@@ -279,6 +279,37 @@ def find_csps(agr: str = "", pvr: str = "", iibf: str = "", slab: Optional[int] 
     return {"total": len(found), "page": page, "size": size, "rows": [_find_row(*r) for r in rows]}
 
 
+# Pending list by RM (app/rm_pending.py): one live CSV per RM. An RM gets only
+# their own; an admin any RM's.
+@router.get("/rm-pending")
+def rm_pending_list(me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from .. import rm_pending
+    return {"rms": rm_pending.rm_list(db, None if me.is_admin else {me.user_id or -1})}
+
+
+@router.get("/rm-pending/{rm_id}.csv")
+def rm_pending_csv(rm_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from fastapi.responses import Response
+    from .. import rm_pending
+    rm = db.get(InternalUser, rm_id)
+    if rm is None or rm.role != "RM" or (not me.is_admin and me.user_id != rm_id):
+        raise HTTPException(404, "RM not found")
+    name, data = rm_pending.rm_csv(db, rm)
+    return Response(data, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
+
+
+# Words in the Excel: "pending" for a document not on file yet, and
+# "submitted" for an IIBF certificate on file (it never expires, so "valid"
+# confused people).
+STATE_WORDS = {"VALID": "valid", "EXPIRING": "expiring", "EXPIRED": "expired", "MISSING": "pending",
+               "UNREADABLE": "unreadable"}
+
+
+def _state_word(doc_type: str, state: str) -> str:
+    return "submitted" if doc_type == "IIBF_CERTIFICATE" and state == "VALID" else STATE_WORDS.get(state, state.lower())
+
+
 @router.get("/find.xlsx")
 def find_csps_xlsx(agr: str = "", pvr: str = "", iibf: str = "", slab: Optional[int] = None, rm: str = "",
                    form: str = "", me: Principal = Depends(require_user), db: Session = Depends(get_db)):
@@ -295,7 +326,7 @@ def find_csps_xlsx(agr: str = "", pvr: str = "", iibf: str = "", slab: Optional[
         line = [r["code"], r["name"], r["phone"], r["rm"], r["dc"], r["category"], r["sub_slab_label"]]
         for t in REQUIRED_TYPES:
             d = r["docs"][t]
-            line += [d["state"].lower(), d["issue_date"], d["expiry_date"]]
+            line += [_state_word(t, d["state"]), d["issue_date"], d["expiry_date"]]
         ws.append(line + [r["form"] or ""])
     ws.freeze_panes = "A2"
     buf = io.BytesIO()
@@ -1258,10 +1289,10 @@ def reread_review(item_id: int, me: Principal = Depends(require_user), db: Sessi
     return {"changed": r["changed"], "note": r["note"]}
 
 
-# Validity a reviewer may pick, in months (what the document states).
-# -1 = no expiry (a Police Clearance Certificate states no validity).
-NO_EXPIRY = -1
-VALIDITY_CHOICES = {"AGREEMENT": (12, 24, 36, 60), "POLICE_VERIFICATION": (6, 12, NO_EXPIRY)}
+# Validity a reviewer may pick, in months (what the document states). No
+# police certificate is valid for life: one that states no validity, a Police
+# Clearance Certificate too, is 1 year (the "no expiry" choice ended 02-11-2026).
+VALIDITY_CHOICES = {"AGREEMENT": (12, 24, 36, 60), "POLICE_VERIFICATION": (6, 12)}
 
 
 @router.post("/review/{item_id}/resolve")
@@ -1308,9 +1339,7 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
         if date_changed:
             d.issue_date = date.fromisoformat(issue_date)
             d.date_source = "MANUAL_REVIEW"
-        if validity_months == NO_EXPIRY:
-            d.validity_months, d.expiry_date, d.validity_rule_used = None, None, "PVR_PCC_LIFETIME"
-        elif validity_months:
+        if validity_months:
             # The validity the document states, as the reviewer read it.
             d.validity_months = validity_months
             d.has_explicit_3year_clause = validity_months == 36
@@ -1320,9 +1349,7 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
         elif date_changed or new_type:
             exp = calculate_document_expiry(canonical_type(d.document_type), d.issue_date,
                                             has_explicit_3year_clause=d.has_explicit_3year_clause,
-                                            validity_months=d.validity_months,
-                                            # a clearance certificate keeps "no expiry" when only its date changes
-                                            validity_rule=d.validity_rule_used if d.validity_rule_used == "PVR_PCC_LIFETIME" else None)
+                                            validity_months=d.validity_months)
             d.expiry_date = exp["calculated_expiry"]
         if new_expiry:
             d.expiry_date, d.validity_rule_used = new_expiry, "MANUAL_REVIEW_EXPIRY_DATE"

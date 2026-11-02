@@ -682,7 +682,8 @@ def test_rereading_a_waiting_item_updates_its_dates_but_does_not_accept_it(clien
     s.close()
 
 
-def test_reviewer_can_mark_a_police_clearance_certificate_as_no_expiry(client, monkeypatch):
+def test_reviewer_cannot_mark_a_police_certificate_as_no_expiry(client, monkeypatch):
+    """Since 02-11-2026: no police certificate is valid for life; 6 months or 1 year only."""
     from app.models import ManualReviewQueue, ReviewStatus
     monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
     hdr = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
@@ -700,11 +701,15 @@ def test_reviewer_can_mark_a_police_clearance_certificate_as_no_expiry(client, m
     qid, did = q.id, d.id
     s.close()
     r = c.post(f"/api/hub/review/{qid}/resolve", headers=hdr, json={"accept": True, "validity_months": -1})
+    assert r.status_code == 422, r.text
+    r = c.post(f"/api/hub/review/{qid}/resolve", headers=hdr, json={"accept": True, "validity_months": 12})
     assert r.status_code == 200, r.text
     s = Session()
     d = s.get(Document, did)
-    assert d.expiry_date is None and d.validity_rule_used == "PVR_PCC_LIFETIME" and d.status == DocumentStatus.MANUAL_VERIFIED
+    expiry, status = d.expiry_date, d.status
     s.close()
+    # Issued 11-04-2025: one year ends 11-04-2026, so it counts as expired now.
+    assert expiry == date(2026, 4, 11) and status == DocumentStatus.EXPIRED, (expiry, status)
 
 
 def test_reviewer_types_the_expiry_date_written_on_the_document(client, monkeypatch):

@@ -131,7 +131,7 @@ def csp_report(db: Session, today: Optional[date] = None, csp_ids: Optional[list
     summary = [["Generated", datetime.now().strftime("%d-%m-%Y %H:%M")], ["Active CSPs (calling sheet)", len(csps)]]
     summary += [[slab_label(k), len(v)] for k, v in by_cat.items()]
     summary += [["CSPs with an expired document (any label)", len(renewal)]]
-    summary += [[f"{DOC_LABELS[t][0]} missing or unreadable", missing[t]] for t in REQUIRED_TYPES]
+    summary += [[f"{DOC_LABELS[t][0]} pending or unreadable", missing[t]] for t in REQUIRED_TYPES]
     summary += [[f"Documents expiring within {EXPIRING_WITHIN_DAYS} days", len(expiring)],
                 ["Messages waiting for approval", queued]]
 
@@ -157,7 +157,7 @@ def _dc_doc_text(t: str, s, today: date) -> tuple[str, Optional[PatternFill]]:
         return "Being checked by Eko – nothing to do", AMBER
     if s.status == "VALID":
         if s.expiry_date is None:
-            return "OK (no expiry)", GREEN
+            return "Submitted", GREEN
         if s.days_left is not None and s.days_left <= EXPIRING_WITHIN_DAYS:
             return f"Renew now – expires {fmt(s.expiry_date)} ({s.days_left} days left)", AMBER
         return f"OK till {fmt(s.expiry_date)}", GREEN
@@ -167,7 +167,7 @@ def _dc_doc_text(t: str, s, today: date) -> tuple[str, Optional[PatternFill]]:
                 else "EXPIRED – upload the renewed one") + applied, RED
     if s.status == "UNREADABLE":
         return "Not readable – upload a clear scan", RED
-    return "MISSING – upload it" + applied, RED
+    return "PENDING – upload it" + applied, RED
 
 
 # The CSPs with no DC, reported like a DC, one group per RM (dashboard: "No DC –
@@ -236,7 +236,7 @@ def dc_summary_text(db: Session, dc: InternalUser, today: Optional[date] = None)
                 bad += 1
             elif s.status != "VALID":
                 miss += 1
-        parts = [f"नहीं है / missing {miss}"] + ([f"खत्म / expired {exp}"] if exp else []) \
+        parts = [f"बाकी / pending {miss}"] + ([f"खत्म / expired {exp}"] if exp else []) \
             + ([f"साफ़ नहीं / not readable {bad}"] if bad else [])
         out.append(f"• {DC_SHORT_HI[t]} / {DC_SHORT[t]}: *{miss + exp + bad}* ({', '.join(parts)})")
     out.append(f"• 60 दिन में रिन्यू / Renew within 60 days: *{len(soon)}*")

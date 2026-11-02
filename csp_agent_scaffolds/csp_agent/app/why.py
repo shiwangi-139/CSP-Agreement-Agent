@@ -45,7 +45,8 @@ VALIDITY = {
     "PVR_STATED_6_MONTHS": "6 months, stated on the certificate",
     "PVR_STATED_6_MONTHS_BIHAR_BCHC": "6 months, stated on the Bihar certificate",
     "PVR_DEFAULT_1_YEAR": "1 year by Eko's rule (no validity written on the certificate)",
-    "PVR_PCC_LIFETIME": "no expiry (Police Clearance Certificate, set by a person)",
+    "PVR_PCC_LIFETIME": "no expiry (Police Clearance Certificate, set by a person; ended 02-11-2026)",
+    "PVR_PCC_DEFAULT_1_YEAR": "1 year by Eko's rule (Police Clearance Certificate, no validity written)",
     "IIBF_LIFETIME_NO_EXPIRY": "no expiry (IIBF certificates do not expire)",
     "MANUAL_REVIEW_EXPIRY_DATE": "the expiry date entered by a person",
 }

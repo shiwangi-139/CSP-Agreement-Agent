@@ -263,7 +263,7 @@ def test_email_signature_logos_are_not_stored(db_session, fake_gmail):
     assert [d["decision"] for d in decisions] == ["SKIPPED_SIGNATURE_IMAGE", "SKIPPED_SIGNATURE_IMAGE", "READABLE"]
 
 
-def test_valid_pvr_is_current_before_pcc_and_pcc_before_expired_pvr(db_session):
+def test_valid_pvr_is_current_before_an_expired_one(db_session):
     from app.document_service import recompute_current
     from app.models import DocumentStatus
     a = _csp(db_session)
@@ -275,11 +275,10 @@ def test_valid_pvr_is_current_before_pcc_and_pcc_before_expired_pvr(db_session):
         db_session.flush()
         return d
     old_pvr = doc(date.today() - timedelta(days=500), date.today() - timedelta(days=135), "PVR_DEFAULT_1_YEAR")
-    pcc = doc(date.today() - timedelta(days=900), None, "PVR_PCC_LIFETIME")
-    assert recompute_current(db_session, a, "POLICE_VERIFICATION") is pcc          # PCC beats an expired PVR
-    new_pvr = doc(date.today() - timedelta(days=30), date.today() + timedelta(days=335), "PVR_STATED_1_YEAR")
-    assert recompute_current(db_session, a, "POLICE_VERIFICATION") is new_pvr     # valid PVR beats the PCC
-    assert not old_pvr.is_current and not pcc.is_current
+    assert recompute_current(db_session, a, "POLICE_VERIFICATION") is old_pvr
+    new_pvr = doc(date.today() - timedelta(days=30), date.today() + timedelta(days=335), "PVR_PCC_DEFAULT_1_YEAR")
+    assert recompute_current(db_session, a, "POLICE_VERIFICATION") is new_pvr     # the valid one is current
+    assert not old_pvr.is_current
 
 
 def test_same_iibf_certificate_sent_again_as_a_new_photo_is_not_stored_twice(db_session):

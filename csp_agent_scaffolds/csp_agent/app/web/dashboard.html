@@ -6,7 +6,7 @@
 <title>Eko Anupaalan</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500;600&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
-<link rel="stylesheet" href="static/eko.css?v=8">
+<link rel="stylesheet" href="static/eko.css?v=9">
 </head>
 <body>
 <!-- Icons (line style, drawn in the text colour). -->
@@ -134,13 +134,13 @@
   const when = (iso) => iso ? new Date(iso).toLocaleString("en-IN", {dateStyle: "medium", timeStyle: "short"}) : "—";
   const DOC = {AGREEMENT: "Agreement", POLICE_VERIFICATION: "PVR / Character", IIBF_CERTIFICATE: "IIBF"};
   const CAT = {1: ["All documents on file", "Agreement, PVR and IIBF all received"],
-               2: ["1 document missing", "Two received, one missing or unreadable"],
-               3: ["2 documents missing", "One received, two missing or unreadable"],
+               2: ["1 document pending", "Two received, one pending or unreadable"],
+               3: ["2 documents pending", "One received, two pending or unreadable"],
                4: ["No documents", "Nothing readable on file in 2 years"],
                5: ["Inactive", "Terminal Inactive on the calling sheet: no messages are sent"]};
   const slab = (k) => k === 5 ? "Inactive" : `Label ${k} · ${CAT[k][0]}`;          // "slab" is used elsewhere at Eko: users see "Label"
   // Find CSPs: one state per document; "" = any.
-  const FSTATES = [["", "any"], ["VALID", "valid"], ["EXPIRING", "expiring ≤60d"], ["EXPIRED", "expired"], ["MISSING", "missing"], ["UNREADABLE", "unreadable"]];
+  const FSTATES = [["", "any"], ["VALID", "valid"], ["EXPIRING", "expiring ≤60d"], ["EXPIRED", "expired"], ["MISSING", "pending"], ["UNREADABLE", "unreadable"]];
   const FPRESETS = [
     ["Only agreement expired", {agr: "EXPIRED", pvr: "VALID", iibf: "VALID"}],
     ["Only PVR expired", {agr: "VALID", pvr: "EXPIRED", iibf: "VALID"}],
@@ -148,7 +148,7 @@
     ["PVR expired (any other)", {pvr: "EXPIRED"}],
     ["Agreement expiring ≤60d", {agr: "EXPIRING"}],
     ["PVR expiring ≤60d", {pvr: "EXPIRING"}],
-    ["Only IIBF missing", {agr: "VALID", pvr: "VALID", iibf: "MISSING"}],
+    ["Only IIBF pending", {agr: "VALID", pvr: "VALID", iibf: "MISSING"}],
     ["Everything valid", {agr: "VALID", pvr: "VALID", iibf: "VALID"}],
   ];
   const findQuery = (f) => ["agr", "pvr", "iibf", "slab", "rm", "form"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&");
@@ -317,10 +317,10 @@
     if (!d) return "—";
     if (d.status === "VALID") {
       const soon = d.days_left != null && d.days_left <= 60;
-      return `<span class="b ${soon ? "soon" : "VALID"}">${d.expiry_date ? (soon ? d.days_left + "d left" : "valid") : "valid · lifetime"}</span><div class="small muted mono">${d.expiry_date ? "exp " + fmt(d.expiry_date) : "iss " + fmt(d.issue_date)}</div>`;
+      return `<span class="b ${soon ? "soon" : "VALID"}">${d.expiry_date ? (soon ? d.days_left + "d left" : "valid") : "submitted"}</span><div class="small muted mono">${d.expiry_date ? "exp " + fmt(d.expiry_date) : "iss " + fmt(d.issue_date)}</div>`;
     }
     if (d.status === "EXPIRED") return `${badge("EXPIRED", "expired")}<div class="small muted mono">exp ${fmt(d.expiry_date)}</div>`;
-    return badge(d.status, d.status === "UNREADABLE" ? "unreadable" : "missing");
+    return badge(d.status, d.status === "UNREADABLE" ? "unreadable" : "pending");
   }
 
   // ------------------------------------------------------- monitoring page
@@ -800,7 +800,7 @@
         ${dc || panel("Where to act", "", `<p class="small muted">Open a CSP below to see every link they were given and what happened on it. "Send link now" sends a working link on WhatsApp.</p>`)}
       </div>
       <div class="card tablewrap" style="margin-top:16px"><h2>Needs attention · ${d.attention.length}</h2>
-        <p class="small muted">CSPs still missing a document whose last link event was a problem with no upload since, or who opened their link ${3}+ times without sending.</p>
+        <p class="small muted">CSPs with a document still pending whose last link event was a problem with no upload since, or who opened their link ${3}+ times without sending.</p>
         <table><thead><tr><th>CSP</th><th>What happened</th><th>Side</th><th>When</th><th>Next step</th><th></th></tr></thead><tbody>
         ${d.attention.map((r) => `<tr><td>${cspLink(r.csp)}<div class="small muted">Label ${r.label ?? "—"}</div></td><td>${esc(r.what)}</td><td>${side(r.side)}</td>
           <td class="small">${when(r.at)}</td><td class="small">${esc(r.next)}</td>
@@ -899,7 +899,7 @@
       <div class="tabs">${[["", "All"], ["AGREEMENT", "Agreements"], ["POLICE_VERIFICATION", "PVR / Character"], ["IIBF_CERTIFICATE", "IIBF"], ["UPLOADS", "Recent uploads by CSPs"]]
         .map(([k, l]) => `<button data-doctype="${k}" class="${state.docType === k ? "active" : ""}">${l}</button>`).join("")}</div>
       <p class="small muted">${uploads ? "Every file CSPs uploaded through their link, newest first, with what the agent read from it."
-        : "Current documents per CSP, soonest expiry first. Expired ones stay listed in red with their dates. Unreadable files are kept for audit only and count as missing."}</p>
+        : "Current documents per CSP, soonest expiry first. Expired ones stay listed in red with their dates. Unreadable files are kept for audit only and count as pending."}</p>
       <div class="card tablewrap"><table><thead><tr><th>CSP</th><th>Type</th><th>Status</th><th>Issued</th><th>Expires</th><th>Rule</th><th>Read by</th><th>Source</th><th></th></tr></thead><tbody>
       ${d.rows.map((r) => `<tr>
         <td class="click" data-csp="${r.csp_id}"><div class="mono">${esc(r.csp_code)}</div><div class="small">${esc(r.csp_name)}</div></td>
@@ -916,7 +916,7 @@
 
     async comms() {
       const d = await api(`/api/hub/messages?channel=${state.channel}&status=${state.msgStatus}&slab=${state.msgSlab || ""}&kind=${state.msgKind || ""}&size=100`);
-      const kinds = [["", "All types"], ["renewal", "Renewal reminders"], ["expired", "Renew expired"], ["missing", "Upload missing"],
+      const kinds = [["", "All types"], ["renewal", "Renewal reminders"], ["expired", "Renew expired"], ["missing", "Upload pending"],
                      ["onboard", "Onboarding (no documents)"], ["escalation", "RM / DC escalations"],
                      ["upload_reply", "Replies after upload"]];
       const allKinds = Object.values(d.by_kind).reduce((a, b) => a + b, 0);
@@ -1012,7 +1012,7 @@
           <dt>Last new-mail check</dt><dd>${when(s2.last_incremental_at)}</dd>
           ${Object.entries(sec.messages_by_status || {}).map(([k, v]) => `<dt>${badge(k)}</dt><dd class="num">${v}</dd>`).join("")}</div>
           <p class="small muted">Read the same way as the main inbox; the agent never sends from it or changes it. Switched off by removing GMAIL_SECOND_TOKEN from .env.</p></div>` : ""}
-        <div class="card"><h2>Decisions per attachment</h2><p class="small muted">Readable → stored as current · Unreadable → kept in archive/, counts as missing · Not allowed → not stored (e.g. Aadhaar) · Duplicate → already on file.</p></div>
+        <div class="card"><h2>Decisions per attachment</h2><p class="small muted">Readable → stored as current · Unreadable → kept in archive/, counts as pending · Not allowed → not stored (e.g. Aadhaar) · Duplicate → already on file.</p></div>
       </div>
       <div class="card tablewrap" style="margin-top:14px"><table><thead><tr><th>Received</th><th>Subject / sender</th><th>Outcome</th><th>Attachments</th></tr></thead><tbody>
       ${d.rows.map((i) => `<tr${i.csp_id ? ` class="click" data-csp="${i.csp_id}"` : ""}><td class="small mono">${when(i.received_at)}</td>
@@ -1068,7 +1068,7 @@
     async analytics() {
       const a = await api("/api/hub/analytics?days=14");
       const pct = (n, d) => d ? Math.round(100 * n / d) + "%" : "—";
-      const TYPES = {ONBOARD_ALL: "Onboarding (no documents)", UPLOAD_MISSING: "Documents missing", UPLOAD_EXPIRED: "Documents expired",
+      const TYPES = {ONBOARD_ALL: "Onboarding (no documents)", UPLOAD_MISSING: "Documents pending", UPLOAD_EXPIRED: "Documents expired",
                      UNREADABLE_REUPLOAD: "Unreadable, re-upload", RENEWAL_NOTICE: "Renewal notice", RENEWAL_FOLLOWUP: "Renewal reminder",
                      RENEWAL_FINAL: "Renewal final", LINK_REQUEST: "Link the CSP asked for",
                      UPLOAD_RECEIPT: "Reply after upload", UPLOAD_SUCCESS_ALL: "All documents recorded"};
@@ -1109,6 +1109,7 @@
     async find() {
       const f = state.find;
       const d = await api(`/api/hub/find?${findQuery(f)}&page=${state.page}&size=50`);
+      const rmp = (await api("/api/hub/rm-pending")).rms;
       const sel = (key, label, opts) => `<label class="small">${label}<br><select data-fkey="${key}">${opts.map(([v, l]) =>
         `<option value="${v}" ${String(f[key] ?? "") === String(v) ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
       const rms = [["", "any"], ...(state.rms || []).map((n) => [n, n])];
@@ -1122,6 +1123,9 @@
         ${sel("form", "Upload page", [["", "any"], ["yes", "used it"], ["no", "not used"], ["accepted", "all accepted"], ["partly", "partly accepted"], ["rejected", "tried, nothing accepted"]])}
         <span class="muted"><b>${d.total}</b> CSPs</span>
         <a class="btn" href="#" data-findxlsx="1">Download this list (.xlsx)</a></div>
+      ${rmp.length ? `<div class="card" style="margin-bottom:12px"><div class="meta"><b>Pending list by RM (CSV)</b></div>
+        <p class="small muted">Labels 2, 3 and 4: CSPs with a document still pending, district by district, with the DC and what to upload. Made fresh when you download.</p>
+        <div class="toolbar" style="flex-wrap:wrap">${rmp.map((r) => `<a class="btn" href="#" data-rmcsv="${r.id}">${esc(r.name)} · ${r.csps} CSPs</a>`).join("")}</div></div>` : ""}
       <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>CSP</th><th>Agreement</th><th>PVR</th><th>IIBF</th><th>RM / DC</th><th>Upload page</th></tr></thead><tbody>
         ${d.rows.map((r) => `<tr class="click" data-csp="${r.id}">
           <td><div class="mono">${esc(r.code)}</div><div>${esc(r.name)}</div><div class="small">${badge("c" + r.category, r.sub_slab_label)}</div></td>
@@ -1235,7 +1239,7 @@
         <div class="rv-main">
         <div class="meta">${badge(kind(r.reason)[0], kind(r.reason)[1])} <a href="#" data-csp="${r.csp.id}"><b class="mono">${esc(r.csp.code)}</b> ${esc(r.csp.name)}</a> · <b>${esc(DOC[r.document.type] || r.document.type)}</b>
           <span class="small muted" style="margin-left:auto">waiting ${ago(r.created_at)}</span></div>
-        <div class="rv-dates">issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : r.document.validity_rule === "PVR_PCC_LIFETIME" ? ` · <b>no expiry</b> (Police Clearance Certificate)` : ""}</div>
+        <div class="rv-dates">issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : ""}</div>
         <p class="rv-reason">${esc(r.reason)}</p>
         ${whyBox(r.document, true)}
         ${aiHint(r.document.model_suggestion)}
@@ -1246,7 +1250,7 @@
             `<option value="${t}" ${t === r.document.type ? "selected" : ""}>${esc(DOC[t] || t)}</option>`).join("")}</select></label>
           <label>Validity stated <select id="rm${r.id}"><option value="">as read</option>
             <optgroup label="Agreement"><option value="12">1 year</option><option value="24">2 years</option><option value="36">3 years</option><option value="60">5 years</option></optgroup>
-            <optgroup label="Police certificate"><option value="6">6 months</option><option value="12">1 year</option><option value="-1">No expiry (Police Clearance Certificate)</option></optgroup></select></label>
+            <optgroup label="Police certificate"><option value="6">6 months</option><option value="12">1 year</option></optgroup></select></label>
           <button class="btn" data-reread="${r.id}" title="Read the document again with the agent's latest rules (doesn't accept it)">Re-read with current rules</button>
           <button class="btn primary" data-resolve="${r.id}" data-accept="1">Accept</button>
           <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button></div></div></div>`).join("") || `<div class="card empty">Nothing to review. ✓</div>`}`;
@@ -1401,7 +1405,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-attfilter],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-attfilter],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -1550,6 +1554,13 @@
       if (ds.approve) { const m = await post(`/api/hub/messages/${ds.approve}/approve`); toast(`Approved → ${m.status.replaceAll("_", " ").toLowerCase()}`); return refreshAfterAction(); }
       if (ds.sendnow) { if (!confirm("Send this WhatsApp message to the CSP now?")) return; const m = await post(`/api/hub/messages/${ds.sendnow}/send-now`); toast(`→ ${m.status.replaceAll("_", " ").toLowerCase()}${m.error ? ": " + m.error : ""}`); return refreshAfterAction(); }
       if (ds.findset) { e.preventDefault(); state.find = JSON.parse(ds.findset); state.page = 1; state.view = "find"; return render(); }
+      if (ds.rmcsv) {
+        e.preventDefault();
+        const r = await fetch(`api/hub/rm-pending/${ds.rmcsv}.csv`, {credentials: "same-origin", headers: H});
+        if (!r.ok) return alert("Download failed: " + r.status);
+        const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
+        a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "pending.csv"; a.click(); return;
+      }
       if (ds.findxlsx) {
         e.preventDefault();
         const r = await fetch(`api/hub/find.xlsx?${findQuery(state.find)}`, {credentials: "same-origin", headers: H});

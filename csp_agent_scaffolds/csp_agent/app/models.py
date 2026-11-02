@@ -88,6 +88,7 @@ class CSP(Base):
     region = Column(String)
     branch = Column(String)
     kiosk_location = Column(String)
+    district = Column(String)          # calling sheet "District", else read from the address (app/rm_pending.py)
     preferred_language = Column(String, default="ENGLISH")
     calling_sheet_synced_at = Column(DateTime)
     sheet_row_version = Column(String)
