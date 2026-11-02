@@ -43,6 +43,7 @@ FAILED_WHAT = {
     "slow": "Server too slow: the page stopped waiting",
     "server": "Server error or down",
     "page_error": "Error in the upload page itself",
+    "reading_failed": "The agent could not read it 3 times (sent to a person)",
 }
 REFUSED_WHAT = {
     "UNKNOWN": "Link not recognised (cut short when copied?)", "EXPIRED": "Link expired",
@@ -240,7 +241,7 @@ def overview(db: Session, ids: Optional[set[int]], days: int = 7, admin: bool = 
                      "refused_csps": len({e.csp_id for e in refusals if e.csp_id})},
            "journey": journey,
            "by_side": by_side,
-           "failed_kinds": [[FAILED_WHAT.get(k, k or "?"), n, "bad" if k in ("too_big", "slow", "server", "page_error")
+           "failed_kinds": [[FAILED_WHAT.get(k, k or "?"), n, "bad" if k in ("too_big", "slow", "server", "page_error", "reading_failed")
                              else "warn"] for k, n in kinds.most_common()],
            "refused_reasons": [[w, n, ""] for w, n in reasons.most_common()],
            "patterns": found, "attention": attention[:100], "problems": rows}

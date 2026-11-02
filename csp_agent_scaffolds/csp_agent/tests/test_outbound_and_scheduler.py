@@ -34,7 +34,7 @@ def test_worker_schedule():
     from app.config import FEATURE_MESSAGING_ANALYTICS
     core = {"gmail", "sheet", "engine", "outbox", "vault", "reports", "model_assist", "model_guard", "snapshot", "snapshot_at_start",
             "staff_lists", "nudges", "catch_up_at_start", "reading_eval", "signals", "rule_health", "findings",
-            "reference_batch"}
+            "reference_batch", "upload_jobs"}
     assert ids == (core | {"delivery"} if FEATURE_MESSAGING_ANALYTICS else core)    # delivery: parked feature
     assert "worker" in get_scheduler_status()["runs_in"]
 

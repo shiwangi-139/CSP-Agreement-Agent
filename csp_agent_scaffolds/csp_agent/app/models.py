@@ -1,7 +1,7 @@
 import enum
 from sqlalchemy import (
     Column, Integer, String, Date, Boolean, Float, BigInteger,
-    ForeignKey, DateTime, Text, Enum as SQLEnum, func, UniqueConstraint, Index, text,
+    ForeignKey, DateTime, Text, Enum as SQLEnum, func, UniqueConstraint, Index, text, LargeBinary,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -608,3 +608,39 @@ class CoachFinding(Base):
     fix_note = Column(Text)
     closed_at = Column(DateTime)
     history = Column(JSONB)                                 # [{"at", "status", "count", "note"}], newest last
+
+
+class UploadJob(Base):
+    """One submission on the upload page (a CSP's link or the DC master link)
+    whose documents are read after the quick checks (app/upload_jobs.py). The
+    page waits a little for it; a slow one answers "received, being checked"
+    and the page asks again. QUEUED -> RUNNING -> DONE, or FAILED."""
+    __tablename__ = "upload_jobs"
+    id = Column(Integer, primary_key=True)
+    key = Column(String, nullable=False, unique=True)        # what the page asks with (not the link)
+    csp_id = Column(Integer, ForeignKey("csp.id"), nullable=False, index=True)
+    token = Column(String)                                  # the CSP's link (jti); None on the DC master link
+    channel = Column(String, nullable=False)
+    status = Column(String, default="QUEUED", nullable=False, index=True)
+    attempts = Column(Integer, default=0, nullable=False)
+    results = Column(JSONB)                                 # sections already answered by the quick checks
+    contact = Column(JSONB)                                 # contact details typed on the CSP's form
+    reply = Column(JSONB)                                   # what the page shows, when DONE / FAILED
+    error = Column(Text)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+    claimed_at = Column(DateTime)
+    finished_at = Column(DateTime)
+
+
+class UploadJobFile(Base):
+    """A document waiting in an UploadJob; deleted once it is read."""
+    __tablename__ = "upload_job_files"
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey("upload_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
+    section = Column(String, nullable=False)
+    doc_type = Column(String, nullable=False)
+    typed = Column(Date)
+    filename = Column(String)
+    mime = Column(String)
+    n_files = Column(Integer, default=1)                     # photos joined into this PDF (1 for a PDF)
+    data = Column(LargeBinary, nullable=False)

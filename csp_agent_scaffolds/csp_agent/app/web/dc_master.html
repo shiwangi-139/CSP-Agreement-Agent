@@ -285,6 +285,19 @@
     input.value = "";                                          // cleared: not sent
   });
 
+  // Still being read on the server (app/upload_jobs.py): ask again every
+  // 5 s for up to 10 minutes; after that the result comes on WhatsApp.
+  async function finished(j) {
+    const until = Date.now() + 10 * 60 * 1000;
+    while (j.pending && Date.now() < until) {
+      await new Promise((ok) => setTimeout(ok, 5000));
+      const r = await fetch("api/portal/upload-status?job=" + encodeURIComponent(j.pending)).catch(() => null);
+      const k = r && r.ok ? await r.json().catch(() => null) : null;
+      if (k && k.done) return k;
+    }
+    return j;
+  }
+
   $("f").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("formerr").textContent = "";
@@ -303,9 +316,13 @@
     try {
       const r = await fetch("api/portal/upload", { method: "POST", body: fd }).catch(() => null);
       if (!r) return failed($("formerr"), noAnswer(), 0, started, "upload", koCode, fd);
-      const j = await r.json().catch(() => null);
+      let j = await r.json().catch(() => null);
       if (!j) return failed($("formerr"), notJson(r.status), r.status, started, "upload", koCode, fd);
       if (!r.ok) { const m = j.detail || {}; $("formerr").textContent = (m.hi || "") + " / " + (m.en || "Upload failed."); return; }
+      if (j.pending) {
+        $("send").textContent = "मिल गया, जाँच हो रही है… / Received, checking…";
+        j = await finished(j);
+      }
       const lines = skipped.map(({ d, msg }) => `<div class="err">⏭️ <b>${esc(d.label_hi)}</b> <span class="en">/ ${esc(d.label_en)}</span>: नहीं भेजा गया / not sent — ${esc(msg)}</div>`).concat(j.results.map((res) => {
         const d = ctx.docs.find((x) => x.section === res.section) || { label_hi: res.section, label_en: res.section };
         return `<div class="${res.ok ? "ok" : "err"}">${res.ok ? "✅" : "❌"} <b>${esc(d.label_hi)}</b> <span class="en">/ ${esc(d.label_en)}</span>: ${esc(res.message?.hi || "")} <span class="en">(${esc(res.message?.en || "")})</span></div>`;
@@ -314,7 +331,8 @@
       await load(code);                                       // live status after the upload
       $("result").style.display = "block";
       $("result").innerHTML = `<h2>नतीजा <span class="en">/ Result · KO ${esc(code)}</span></h2>${lines.join("")}` +
-        (j.still_needed.length ? `<p class="hint">अभी भी चाहिए / Still needed: ${esc(j.still_needed.join(", "))}</p>` : `<p class="ok">सारे डॉक्यूमेंट मिल गए / All documents received.</p>`);
+        (j.pending ? `<p class="hint">जाँच हो रही है, नतीजा CSP को WhatsApp पर मिलेगा / Still being checked: the CSP gets the result on WhatsApp.</p>`
+          : j.still_needed.length ? `<p class="hint">अभी भी चाहिए / Still needed: ${esc(j.still_needed.join(", "))}</p>` : `<p class="ok">सारे डॉक्यूमेंट मिल गए / All documents received.</p>`);
       $("result").scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (err) {
       failed($("formerr"), "page_error", 0, started, "upload", koCode, fd);

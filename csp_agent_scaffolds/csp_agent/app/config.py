@@ -53,6 +53,11 @@ AI_HUMAN_REVIEW_THRESHOLD = float(os.getenv("AI_HUMAN_REVIEW_THRESHOLD", "0.70")
 
 MAX_UPLOAD_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(10 * 1024 * 1024)))
 ALLOWED_MIME_TYPES = {"application/pdf", "image/jpeg", "image/png"}
+# Upload page: documents are read after the reply can go (app/upload_jobs.py).
+# The request waits this long for the reading; a slower one answers "received,
+# being checked" and the page asks again, so Nginx never times out on OCR.
+UPLOAD_WAIT_SECONDS = float(os.getenv("UPLOAD_WAIT_SECONDS", "20"))
+UPLOAD_READERS = int(os.getenv("UPLOAD_READERS", "2"))       # documents read at the same time
 
 # STORAGE_BACKEND=local for dev (Render's free tier has EPHEMERAL disk --
 # never use "local" there, files vanish on every restart/redeploy).

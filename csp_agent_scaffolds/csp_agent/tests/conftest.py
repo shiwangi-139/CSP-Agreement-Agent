@@ -86,3 +86,12 @@ def _no_quiet_hours(monkeypatch):
     (app/comms/send_gate.py); tests of the quiet hours set them themselves."""
     from app import config
     monkeypatch.setattr(config, "QUIET_HOURS", ())
+
+
+@pytest.fixture(autouse=True)
+def _upload_answered_in_the_request(monkeypatch):
+    """Upload tests check what was decided, not how long the read took: the
+    request waits for it (the first read in a run loads the OCR models).
+    Tests of the "still being read" answer set a short wait themselves."""
+    from app.api import portal
+    monkeypatch.setattr(portal, "UPLOAD_WAIT_SECONDS", 600)

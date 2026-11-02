@@ -49,6 +49,7 @@ SHORT_REASON = {
     "future": ("तारीख आज के बाद की है", "date in the future"),
     "too_big": ("फ़ाइल बहुत बड़ी है", "file too large"),
     "file_type": ("सिर्फ़ PDF/JPG/PNG चलेगी", "only PDF/JPG/PNG"),
+    "not_checked": ("जाँच पूरी नहीं हो सकी, आपकी गलती नहीं; फिर से भेजें", "the check could not be finished, not your fault; please send it again"),
     "rejected_by_team": ("हमारी टीम ने जाँच में सही नहीं पाया", "our team found it was not correct"),
 }
 NONE_HI, NONE_EN = "कोई नहीं", "none"

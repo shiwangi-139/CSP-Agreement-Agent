@@ -445,6 +445,19 @@
     img.src = url;
   });
 
+  // Still being read on the server (app/upload_jobs.py): ask again every
+  // 5 s for up to 10 minutes; after that the result comes on WhatsApp.
+  async function finished(j) {
+    const until = Date.now() + 10 * 60 * 1000;
+    while (j.pending && Date.now() < until) {
+      await new Promise((ok) => setTimeout(ok, 5000));
+      const r = await fetch("api/portal/upload-status?job=" + encodeURIComponent(j.pending)).catch(() => null);
+      const k = r && r.ok ? await r.json().catch(() => null) : null;
+      if (k && k.done) return k;
+    }
+    return j;
+  }
+
   $("f").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("formerr").textContent = "";
@@ -470,9 +483,17 @@
       // /<public-path>/upload behind Nginx; both post next to the page.
       const r = await fetch("api/portal/upload", { method: "POST", body: fd }).catch(() => null);
       if (!r) return failed($("formerr"), noAnswer(), 0, started, "upload", fd);
-      const j = await r.json().catch(() => null);
+      let j = await r.json().catch(() => null);
       if (!j) return failed($("formerr"), notJson(r.status), r.status, started, "upload", fd);
       if (!r.ok) { const m = j.detail || {}; $("formerr").textContent = (m.hi || "") + " / " + (m.en || "Upload failed."); return; }
+      if (j.pending) {
+        $("send").textContent = "मिल गया, जाँच हो रही है… / Received, checking…";
+        for (const res of j.results) {
+          const el = $(res.section + (res.ok ? "_ok" : "_err"));
+          if (el) el.textContent = (res.message.hi || "") + " / " + (res.message.en || "");
+        }
+        j = await finished(j);
+      }
       let allOk = true;
       const rejectedItems = [];
       for (const res of j.results) {
@@ -498,7 +519,9 @@
         $("rejection_alert").style.display = "none";
         $("f").style.display = "none";
         $("done").style.display = "block";
-        $("summary").innerHTML = j.still_needed.length
+        $("summary").innerHTML = j.pending
+          ? `<p>आपके डॉक्यूमेंट मिल गए हैं और जाँच हो रही है। नतीजा WhatsApp पर आएगा।</p><p class="en">We have your documents and are checking them. The result will come on WhatsApp.</p>`
+          : j.still_needed.length
           ? `<p>अभी भी चाहिए: ${esc(j.still_needed.join(", "))}</p><p class="en">Still needed: ${esc(j.still_needed.join(", "))}</p>`
           : `<p>आपके सारे डॉक्यूमेंट मिल गए हैं।</p><p class="en">We have all your documents.</p>`;
       } else {

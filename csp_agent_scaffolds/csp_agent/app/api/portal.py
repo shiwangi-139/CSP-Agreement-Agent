@@ -41,16 +41,17 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse
 from starlette.concurrency import run_in_threadpool
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..ai.extraction.deterministic_extractor import extract_document_fields_deterministic
 from ..compliance import DOC_LABELS, evaluate, refresh_category, slab_label, sub_slab_label
-from ..config import MAX_UPLOAD_SIZE_BYTES, local_now
+from ..config import MAX_UPLOAD_SIZE_BYTES, UPLOAD_WAIT_SECONDS, local_now
 from ..db import SessionLocal, get_db
 from ..document_service import store_extracted_document
 from ..models import (AgreementEvent, ContactChangeRequest, CSP, CspQuestion, Document, DocumentStatus, InternalUser,
-                      ManualReviewQueue, OutboundMessage, OutboundStatus, ReviewStatus)
-from .. import master_link, pages, vault
+                      ManualReviewQueue, OutboundMessage, OutboundStatus, PortalToken, ReviewStatus)
+from .. import master_link, pages, upload_jobs, vault
 from ..ocr_service import detect_mime, photo_problem
 from ..portal_tokens import issue_upload_link, refusal, resolve_token, revoke_if_complete
 from ..validation import normalize_csp_code
@@ -144,6 +145,13 @@ MSG = {
     "accepted": ("डॉक्यूमेंट मिल गया और ठीक है। धन्यवाद!", "Document accepted. Thank you!"),
     "received_check": ("डॉक्यूमेंट मिल गया। हमारी टीम इसे जाँचेगी, 1-2 दिन में आपका रिकॉर्ड अपडेट हो जाएगा।",
                        "Document received. Our team will check it and update your record in 1-2 days."),
+    # Still being read when the page got its answer (app/upload_jobs.py).
+    "reading": ("डॉक्यूमेंट मिल गया, जाँच हो रही है। कृपया यह पेज खुला रखें, नतीजा कुछ देर में यहीं और WhatsApp पर आएगा।",
+                "Document received and being checked. Keep this page open: the result will come here and on "
+                "WhatsApp in a few minutes."),
+    "not_checked": ("अभी जाँच पूरी नहीं हो सकी, इसमें आपकी कोई गलती नहीं है। 10 मिनट बाद फिर से भेजें।",
+                    "The check could not be finished right now; this is not your fault. Please send it again "
+                    "after 10 minutes."),
     "review": ("डॉक्यूमेंट मिल गया। आपकी भरी हुई तारीख और डॉक्यूमेंट पर लिखी तारीख अलग है, हमारी टीम इसे चेक करेगी।",
                "Document received. The date you entered differs from the document, so our team will check it."),
 }
@@ -656,7 +664,7 @@ def _record_contact_changes(db: Session, csp: CSP, form: dict) -> int:
 
 
 @router.post("/api/portal/upload")
-async def portal_upload(request: Request, background: BackgroundTasks, db: Session = Depends(get_db)):
+async def portal_upload(request: Request, db: Session = Depends(get_db)):
     form = await request.form()
     # The DC master link sends its link as "dc" and no token. A CSP's own form
     # also has a "dc" field (the DC's name, shown read-only): it is NOT the
@@ -684,7 +692,7 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
     # (Name and mobile on the CSP's form are locked, from our record: not
     # required, so a CSP with no mobile on record can still upload.)
 
-    results = []
+    results, to_read = [], []
     for section, doc_type in SECTIONS.items():
         # One PDF, or one photo per page (several files under the same name).
         uploads = [u for u in form.getlist(f"{section}_file")
@@ -697,13 +705,7 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
         results.append(res)
 
         def turn_away(reason: str, data: Optional[bytes] = None, mime: Optional[str] = None) -> None:
-            res["message"], res["reason"] = _msg(reason), reason
-            if data and mime:
-                # Kept so the team can see what the CSP tried (dashboard: Form uploads).
-                try:
-                    res["kept_file"] = vault.keep_rejected_upload(data, csp.current_code, section, mime)
-                except OSError:
-                    logger.exception("portal_rejected_file_not_kept csp_id=%s", csp.id)
+            _turn_away(csp, res, reason, data, mime)
 
         lock = dc_locks.get(doc_type)
         if lock:
@@ -745,189 +747,297 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
             # Photos -> one small PDF (shrunk, upright, pages in order).
             data = await run_in_threadpool(lambda: pages.photos_to_pdf([pages.shrink_photo(f) for f in files]))
             mime = "application/pdf"
-        # The same file already filed under another CSP: refused, unless the
-        # document itself names this CSP (then the other copy was misfiled).
-        elsewhere = via_dc and _on_record_elsewhere(db, csp, data)
-        # The section is a hint: a readable file whose wording or date the
-        # rules don't recognise goes to a person instead of being turned away.
-        ex = await run_in_threadpool(lambda: extract_document_fields_deterministic(
-            data, upload.filename, expected_type=doc_type, typed_issue_date=typed))
-        if ex["readability"] == "UNREADABLE":
-            # OCR could not read it (a faint scan, handwriting): a person
-            # looks before the CSP is told it is unreadable. (Blurry, dark or
-            # tiny photos were already sent back above, with what to fix.)
-            if ex.get("page_count", 0) > 0:
-                ex["readability"] = "READABLE"
-                ex["document_type"] = doc_type
-                ex["type_review"] = (f"OCR could not read this {doc_type.replace('_', ' ').lower()} "
-                                     f"({ex.get('readability_reason') or 'no clear text'}). Check it, enter the "
-                                     "issue date, or reject it if it really is unreadable.")
-            else:
-                ex["document_type"] = ex.get("document_type") if ex.get("document_type") != "UNKNOWN" else doc_type
-                kept = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel=channel)
-                turn_away("unreadable")
-                res["document_id"] = kept.document.id if kept.document is not None else None
-                continue
+        # Read after the reply can go (app/upload_jobs.py): a long OCR read
+        # never makes Nginx time out.
+        results.remove(res)
+        to_read.append(dict(section=section, doc_type=doc_type, typed=typed, filename=str(upload.filename)[:200],
+                            mime=mime, n_files=len(files), data=data))
 
-        # If it is explicitly an unauthorized document (Aadhaar, PAN, etc.)
-        if ex.get("document_type") == "REJECTED_UNAUTHORIZED":
-            turn_away("wrong_doc", data, mime)
-            res["read_as"] = "UNAUTHORIZED"
-            continue
-
-        # The wording says it is an application receipt (or a KYC form), not
-        # the certificate: turned away whatever section it was uploaded in.
-        if ex.get("document_type") == "PVR_APPLICATION_ONLY" and doc_type == "POLICE_VERIFICATION":
-            # Applied for a new certificate (it can take a month): recorded as
-            # "PVR applied" (not a valid PVR; reminders go on), and the link
-            # keeps working so the certificate can be uploaded when it comes.
-            from ..models import PvrApplication
-            try:
-                kept = vault.keep_rejected_upload(data, csp.current_code, "pvr_application", mime)
-            except OSError:
-                kept = None
-            db.add(PvrApplication(csp_id=csp.id, applied_on=_parse_date(ex.get("start_date")) or typed or today,
-                                  file_path=kept, channel=channel))
-            res.update(ok=True, reason="pvr_applied", message=_msg("pvr_applied"), kept_file=kept,
-                       read_as="PVR_APPLICATION_ONLY")
-            continue
-        if ex.get("document_type") in ("PVR_APPLICATION_ONLY", "NOT_A_PVR", "IIBF_RECEIPT_ONLY"):
-            turn_away({"PVR_APPLICATION_ONLY": "application_only", "IIBF_RECEIPT_ONLY": "iibf_receipt"}
-                      .get(ex["document_type"], "wrong_doc"), data, mime)
-            res["read_as"] = ex["document_type"]
-            continue
-
-        # Reads as another required document (an IIBF certificate uploaded in
-        # the police box): filed as what it reads as, and a person confirms
-        # before it counts. The CSP is not told "wrong document": the reading
-        # may be wrong, and if it is right the document is still needed.
-        if ex.get("document_type") in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE") and ex["document_type"] != doc_type:
-            res["read_as"] = ex["document_type"]
-            ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
-                f"Uploaded in the {doc_type.replace('_', ' ').lower()} box but reads as a "
-                f"{ex['document_type'].replace('_', ' ').lower()}; check which document it is "
-                "(change the type if needed).")) if x)
-
-        # If document_type was UNKNOWN, fall back to human review for the expected section
-        if ex.get("document_type") not in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"):
-            ex["document_type"] = doc_type
-            ex["type_review"] = (ex.get("type_review") or "") + f" Document wording in {doc_type} section needs human verification."
-
-        if ex.get("document_type") == "AGREEMENT":
-            # About 13 pages: one or two pages is not the agreement (app/agreement_pages.py).
-            from .. import agreement_pages
-            n_pages = len(files) if len(files) > 1 else (ex.get("page_count") or 0)
-            v = agreement_pages.verdict(n_pages)
-            if v == "refuse":
-                turn_away("agreement_short", data, mime)
-                res["message"] = agreement_pages.message(n_pages)
-                continue
-            if v == "review":
-                ex["type_review"] = " ".join(x for x in (ex.get("type_review"), agreement_pages.review_note(n_pages)) if x)
-
-        if ex.get("compliance_status") == "EXPIRED":
-            if _surely_expired(ex, typed):
-                turn_away("expired", data, mime)
-                continue
-            # Not certain: a person checks before the CSP hears "expired".
-            ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
-                f"Read as expired on {ex.get('expiry_date')} (issued {ex.get('start_date')}, "
-                f"{ex.get('validity_rule_used')}); the CSP typed issue date {typed:%d-%m-%Y}. "
-                "Check the dates and the validity before the CSP is told.")) if x)
-
-        # If OCR could not read the issue date, take the date typed by the CSP and compute expiry
-        if typed and not ex.get("start_date"):
-            ex["start_date"] = typed.isoformat()
-            ex["date_source"] = "CSP_PORTAL_TYPED"
-            from ..expiry_engine import add_years, calculate_document_expiry
-            explicit, rule = _parse_date(ex.get("explicit_expiry")), None
-            if not explicit and not ex.get("has_explicit_3year_clause") and ex.get("stated_years"):
-                # "valid for two years from the date of signing": from the typed date.
-                explicit, rule = add_years(typed, ex["stated_years"]), "AGREEMENT_RANGE_FROM_TO"
-            exp = calculate_document_expiry(
-                doc_type=doc_type,
-                issue_date=typed,
-                explicit_expiry_date=explicit,
-                has_explicit_3year_clause=ex.get("has_explicit_3year_clause", False),
-                today=today,
-                validity_months=ex.get("validity_months"),
-                validity_rule=rule,
-            )
-            ex["expiry_date"] = exp["calculated_expiry"].isoformat() if exp.get("calculated_expiry") else (
-                "LIFETIME_NO_EXPIRY" if doc_type == "IIBF_CERTIFICATE" else None
-            )
-            # Named, so "How the agent read it" says which rule set the expiry.
-            ex["validity_rule_used"] = exp.get("validity_rule_used")
-            ex["type_review"] = (ex.get("type_review") or "") + f" Issue date entered as {typed.strftime('%d-%m-%Y')} by CSP; verify on document."
-
-        if ex.get("type_review") and typed:
-            ex["type_review"] += f" The CSP typed issue date {typed.strftime('%d-%m-%Y')}."
-        read_date = _parse_date(ex.get("start_date"))
-        if read_date == today and typed and typed != today:
-            # A document issued today is rare; read as today while the date
-            # typed is another is most likely a date on the photo (camera stamp).
-            ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
-                f"Read as issued today ({today:%d-%m-%Y}), but the date typed is {typed:%d-%m-%Y}: the date read may "
-                "be the photo's date. Check the issue date on the document.")) if x)
-        needs_review = False
-        if read_date and typed != read_date:
-            ex["typed_issue_date"] = typed.isoformat()
-            needs_review = (ex.get("date_source") or "").startswith("MODEL_VISION")
-        if via_dc and _same_as_on_file(db, csp, doc_type, ex):
-            turn_away("dup_same", data, mime)
-            continue
-        owner_note = None
-        if via_dc:
-            # A wrong KO code typed by the DC: the document shows another CSP.
-            other, owner_note = _other_owner(db, csp, ex)
-            if elsewhere:
-                if other is not None or owner_note:
-                    turn_away("dup_other", data, mime)
-                    continue
-                owner_note = "the same file is also on record for " + _misfiled_note(db, csp, data)
-            if other is not None:
-                turn_away("dc_other_csp", data, mime)
-                if other:
-                    hi, en = MSG["dc_other_csp"]
-                    res["message"] = {"hi": f"{hi} (KO {other})", "en": f"{en} (KO {other})"}
-                continue
-        out = store_extracted_document(db, csp, data, upload.filename, mime, ex, channel=channel,
-                                       sender_on_sheet=True)
-        if out.decision == "DUPLICATE":
-            # The same file was sent before: say what became of it (a file that
-            # was rejected or unreadable then doesn't count now either).
-            known = out.document
-            st = known.status if known is not None else None
-            if st == DocumentStatus.REJECTED:
-                turn_away("dup_rejected")
-            elif st == DocumentStatus.UNREADABLE:
-                turn_away("dup_unreadable")
-            elif st in (DocumentStatus.NEEDS_REVIEW, DocumentStatus.NEEDS_APPROVAL) and known.is_current is False:
-                res.update(message=_msg("dup_checking"), reason="received_check", ok=True)
-            else:
-                res.update(message=_msg("duplicate"), reason="duplicate", ok=True)
-            res["document_id"] = known.id if known is not None else None
-            continue
-        doc = out.document
-        if ex.get("typed_issue_date"):
-            doc.extracted_fields = {**(doc.extracted_fields or {}), "typed_issue_date": ex["typed_issue_date"]}
-        if needs_review and not (doc.extracted_fields or {}).get("safety_check"):
-            doc.status = DocumentStatus.NEEDS_REVIEW
-            db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
-                                     reason=f"Typed issue date {typed} differs from date read by model {read_date}."))
-        if via_dc:
-            db.flush()
-            _list_for_review(db, doc, section, owner_note)
-        held = (doc.extracted_fields or {}).get("safety_check")
-        said = "received_check" if ex.get("type_review") or held else ("review" if needs_review else "accepted")
-        res.update(ok=True, message=_msg(said), reason=said, document_id=doc.id)
-        if not held:     # dates that cannot be right are not shown to the CSP
-            res.update(issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))
-
-    if not results:
+    if not results and not to_read:
         raise HTTPException(422, detail={"hi": "कम से कम एक डॉक्यूमेंट चुनें।", "en": "Please choose at least one document."})
 
-    changes = 0 if via_dc else _record_contact_changes(db, csp, {k: form.get(k) for k in ("name", "email", "mobile", "rm", "dc")})
+    contact = None if via_dc else {k: form.get(k) for k in ("name", "email", "mobile", "rm", "dc")
+                                   if isinstance(form.get(k), str)}
+    job = upload_jobs.enqueue(db, csp.id, row.jti if row is not None else None, channel, results, to_read, contact)
+    db.commit()
+    from sqlalchemy.orm import sessionmaker
+    # Same database as this request (tests use their own).
+    fut = upload_jobs.start(job.id, sessionmaker(bind=db.get_bind()))
+    if await upload_jobs.wait(fut, UPLOAD_WAIT_SECONDS):
+        answer = upload_jobs.reply(db, job.key)
+        if answer and answer.get("done"):
+            answer.pop("done")
+            return answer
+    # Still being read: the page asks again with this key (GET /api/portal/upload-status).
+    waiting = [{"section": f["section"], "ok": True, "pending": True, "message": _msg("reading")} for f in to_read]
+    shown = ("section", "ok", "message")
+    return {"pending": job.key, "results": [{k: r[k] for k in shown if k in r} for r in results] + waiting,
+            "category": csp.category, "still_needed": []}
+
+
+@router.get("/api/portal/upload-status")
+def upload_status(job: str = Query(""), db: Session = Depends(get_db)):
+    """The answer to an upload still being read when the page got its reply."""
+    answer = upload_jobs.reply(db, job) if 10 <= len(job) <= 40 else None
+    if answer is None:
+        raise HTTPException(404, detail=_msg("bad_link"))
+    return answer
+
+
+def _turn_away(csp: CSP, res: dict, reason: str, data: Optional[bytes] = None, mime: Optional[str] = None) -> None:
+    res["message"], res["reason"] = _msg(reason), reason
+    if data and mime:
+        # Kept so the team can see what the CSP tried (dashboard: Form uploads).
+        try:
+            res["kept_file"] = vault.keep_rejected_upload(data, csp.current_code, res["section"], mime)
+        except OSError:
+            logger.exception("portal_rejected_file_not_kept csp_id=%s", csp.id)
+
+
+def _read_section(db: Session, csp: CSP, res: dict, *, doc_type: str, data: bytes, mime: str, filename: str,
+                  typed: Optional[date], n_files: int, via_dc: bool, channel: str, today: date) -> None:
+    """Read one document of an upload and file it (or say why not) in `res`."""
+    section = res["section"]
+
+    def turn_away(reason: str, data: Optional[bytes] = None, mime: Optional[str] = None) -> None:
+        _turn_away(csp, res, reason, data, mime)
+
+    # The same file already filed under another CSP: refused, unless the
+    # document itself names this CSP (then the other copy was misfiled).
+    elsewhere = via_dc and _on_record_elsewhere(db, csp, data)
+    # The section is a hint: a readable file whose wording or date the
+    # rules don't recognise goes to a person instead of being turned away.
+    ex = extract_document_fields_deterministic(data, filename, expected_type=doc_type, typed_issue_date=typed)
+    if ex["readability"] == "UNREADABLE":
+        # OCR could not read it (a faint scan, handwriting): a person
+        # looks before the CSP is told it is unreadable. (Blurry, dark or
+        # tiny photos were already sent back above, with what to fix.)
+        if ex.get("page_count", 0) > 0:
+            ex["readability"] = "READABLE"
+            ex["document_type"] = doc_type
+            ex["type_review"] = (f"OCR could not read this {doc_type.replace('_', ' ').lower()} "
+                                 f"({ex.get('readability_reason') or 'no clear text'}). Check it, enter the "
+                                 "issue date, or reject it if it really is unreadable.")
+        else:
+            ex["document_type"] = ex.get("document_type") if ex.get("document_type") != "UNKNOWN" else doc_type
+            kept = store_extracted_document(db, csp, data, filename, mime, ex, channel=channel)
+            turn_away("unreadable")
+            res["document_id"] = kept.document.id if kept.document is not None else None
+            return
+
+    # If it is explicitly an unauthorized document (Aadhaar, PAN, etc.)
+    if ex.get("document_type") == "REJECTED_UNAUTHORIZED":
+        turn_away("wrong_doc", data, mime)
+        res["read_as"] = "UNAUTHORIZED"
+        return
+
+    # The wording says it is an application receipt (or a KYC form), not
+    # the certificate: turned away whatever section it was uploaded in.
+    if ex.get("document_type") == "PVR_APPLICATION_ONLY" and doc_type == "POLICE_VERIFICATION":
+        # Applied for a new certificate (it can take a month): recorded as
+        # "PVR applied" (not a valid PVR; reminders go on), and the link
+        # keeps working so the certificate can be uploaded when it comes.
+        from ..models import PvrApplication
+        try:
+            kept = vault.keep_rejected_upload(data, csp.current_code, "pvr_application", mime)
+        except OSError:
+            kept = None
+        db.add(PvrApplication(csp_id=csp.id, applied_on=_parse_date(ex.get("start_date")) or typed or today,
+                              file_path=kept, channel=channel))
+        res.update(ok=True, reason="pvr_applied", message=_msg("pvr_applied"), kept_file=kept,
+                   read_as="PVR_APPLICATION_ONLY")
+        return
+    if ex.get("document_type") in ("PVR_APPLICATION_ONLY", "NOT_A_PVR", "IIBF_RECEIPT_ONLY"):
+        turn_away({"PVR_APPLICATION_ONLY": "application_only", "IIBF_RECEIPT_ONLY": "iibf_receipt"}
+                  .get(ex["document_type"], "wrong_doc"), data, mime)
+        res["read_as"] = ex["document_type"]
+        return
+
+    # Reads as another required document (an IIBF certificate uploaded in
+    # the police box): filed as what it reads as, and a person confirms
+    # before it counts. The CSP is not told "wrong document": the reading
+    # may be wrong, and if it is right the document is still needed.
+    if ex.get("document_type") in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE") and ex["document_type"] != doc_type:
+        res["read_as"] = ex["document_type"]
+        ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
+            f"Uploaded in the {doc_type.replace('_', ' ').lower()} box but reads as a "
+            f"{ex['document_type'].replace('_', ' ').lower()}; check which document it is "
+            "(change the type if needed).")) if x)
+
+    # If document_type was UNKNOWN, fall back to human review for the expected section
+    if ex.get("document_type") not in ("AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"):
+        ex["document_type"] = doc_type
+        ex["type_review"] = (ex.get("type_review") or "") + f" Document wording in {doc_type} section needs human verification."
+
+    if ex.get("document_type") == "AGREEMENT":
+        # About 13 pages: one or two pages is not the agreement (app/agreement_pages.py).
+        from .. import agreement_pages
+        n_pages = n_files if n_files > 1 else (ex.get("page_count") or 0)
+        v = agreement_pages.verdict(n_pages)
+        if v == "refuse":
+            turn_away("agreement_short", data, mime)
+            res["message"] = agreement_pages.message(n_pages)
+            return
+        if v == "review":
+            ex["type_review"] = " ".join(x for x in (ex.get("type_review"), agreement_pages.review_note(n_pages)) if x)
+
+    if ex.get("compliance_status") == "EXPIRED":
+        if _surely_expired(ex, typed):
+            turn_away("expired", data, mime)
+            return
+        # Not certain: a person checks before the CSP hears "expired".
+        ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
+            f"Read as expired on {ex.get('expiry_date')} (issued {ex.get('start_date')}, "
+            f"{ex.get('validity_rule_used')}); the CSP typed issue date {typed:%d-%m-%Y}. "
+            "Check the dates and the validity before the CSP is told.")) if x)
+
+    # If OCR could not read the issue date, take the date typed by the CSP and compute expiry
+    if typed and not ex.get("start_date"):
+        ex["start_date"] = typed.isoformat()
+        ex["date_source"] = "CSP_PORTAL_TYPED"
+        from ..expiry_engine import add_years, calculate_document_expiry
+        explicit, rule = _parse_date(ex.get("explicit_expiry")), None
+        if not explicit and not ex.get("has_explicit_3year_clause") and ex.get("stated_years"):
+            # "valid for two years from the date of signing": from the typed date.
+            explicit, rule = add_years(typed, ex["stated_years"]), "AGREEMENT_RANGE_FROM_TO"
+        exp = calculate_document_expiry(
+            doc_type=doc_type,
+            issue_date=typed,
+            explicit_expiry_date=explicit,
+            has_explicit_3year_clause=ex.get("has_explicit_3year_clause", False),
+            today=today,
+            validity_months=ex.get("validity_months"),
+            validity_rule=rule,
+        )
+        ex["expiry_date"] = exp["calculated_expiry"].isoformat() if exp.get("calculated_expiry") else (
+            "LIFETIME_NO_EXPIRY" if doc_type == "IIBF_CERTIFICATE" else None
+        )
+        # Named, so "How the agent read it" says which rule set the expiry.
+        ex["validity_rule_used"] = exp.get("validity_rule_used")
+        ex["type_review"] = (ex.get("type_review") or "") + f" Issue date entered as {typed.strftime('%d-%m-%Y')} by CSP; verify on document."
+
+    if ex.get("type_review") and typed:
+        ex["type_review"] += f" The CSP typed issue date {typed.strftime('%d-%m-%Y')}."
+    read_date = _parse_date(ex.get("start_date"))
+    if read_date == today and typed and typed != today:
+        # A document issued today is rare; read as today while the date
+        # typed is another is most likely a date on the photo (camera stamp).
+        ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
+            f"Read as issued today ({today:%d-%m-%Y}), but the date typed is {typed:%d-%m-%Y}: the date read may "
+            "be the photo's date. Check the issue date on the document.")) if x)
+    needs_review = False
+    if read_date and typed != read_date:
+        ex["typed_issue_date"] = typed.isoformat()
+        needs_review = (ex.get("date_source") or "").startswith("MODEL_VISION")
+    if via_dc and _same_as_on_file(db, csp, doc_type, ex):
+        turn_away("dup_same", data, mime)
+        return
+    owner_note = None
+    if via_dc:
+        # A wrong KO code typed by the DC: the document shows another CSP.
+        other, owner_note = _other_owner(db, csp, ex)
+        if elsewhere:
+            if other is not None or owner_note:
+                turn_away("dup_other", data, mime)
+                return
+            owner_note = "the same file is also on record for " + _misfiled_note(db, csp, data)
+        if other is not None:
+            turn_away("dc_other_csp", data, mime)
+            if other:
+                hi, en = MSG["dc_other_csp"]
+                res["message"] = {"hi": f"{hi} (KO {other})", "en": f"{en} (KO {other})"}
+            return
+    out = store_extracted_document(db, csp, data, filename, mime, ex, channel=channel,
+                                   sender_on_sheet=True)
+    if out.decision == "DUPLICATE":
+        # The same file was sent before: say what became of it (a file that
+        # was rejected or unreadable then doesn't count now either).
+        known = out.document
+        st = known.status if known is not None else None
+        if st == DocumentStatus.REJECTED:
+            turn_away("dup_rejected")
+        elif st == DocumentStatus.UNREADABLE:
+            turn_away("dup_unreadable")
+        elif st in (DocumentStatus.NEEDS_REVIEW, DocumentStatus.NEEDS_APPROVAL) and known.is_current is False:
+            res.update(message=_msg("dup_checking"), reason="received_check", ok=True)
+        else:
+            res.update(message=_msg("duplicate"), reason="duplicate", ok=True)
+        res["document_id"] = known.id if known is not None else None
+        return
+    doc = out.document
+    if ex.get("typed_issue_date"):
+        doc.extracted_fields = {**(doc.extracted_fields or {}), "typed_issue_date": ex["typed_issue_date"]}
+    if needs_review and not (doc.extracted_fields or {}).get("safety_check"):
+        doc.status = DocumentStatus.NEEDS_REVIEW
+        db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING,
+                                 reason=f"Typed issue date {typed} differs from date read by model {read_date}."))
+    if via_dc:
+        db.flush()
+        _list_for_review(db, doc, section, owner_note)
+    held = (doc.extracted_fields or {}).get("safety_check")
+    said = "received_check" if ex.get("type_review") or held else ("review" if needs_review else "accepted")
+    res.update(ok=True, message=_msg(said), reason=said, document_id=doc.id)
+    if not held:     # dates that cannot be right are not shown to the CSP
+        res.update(issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))
+
+
+
+def _read_job(db: Session, job) -> None:
+    """Read an UploadJob's documents (app/upload_jobs.py), then everything the
+    upload changes: Label, follow-ups, the link, the record, the WhatsApp reply."""
+    from ..models import UploadJobFile
+    csp = db.get(CSP, job.csp_id)
+    via_dc = job.channel == master_link.CHANNEL
+    today = date.today()
+    results = list(job.results or [])
+    files = db.query(UploadJobFile).filter(UploadJobFile.job_id == job.id).order_by(UploadJobFile.id).all()
+    for f in files:
+        res = {"section": f.section, "ok": False, "filename": f.filename, "pages": f.n_files}
+        results.append(res)
+        _read_section(db, csp, res, doc_type=f.doc_type, data=f.data, mime=f.mime, filename=f.filename or "",
+                      typed=f.typed, n_files=f.n_files or 1, via_dc=via_dc, channel=job.channel, today=today)
+    _finish_job(db, job, csp, results, files, today)
+
+
+def _give_up_job(db: Session, job) -> None:
+    """Read MAX_ATTEMPTS times without success (a fault on our side): each
+    document goes to a person, who reads it by hand; the CSP is told it was
+    received and is being checked, never asked to send it again."""
+    from ..models import UploadJobFile
+    csp = db.get(CSP, job.csp_id)
+    today = date.today()
+    results = list(job.results or [])
+    files = db.query(UploadJobFile).filter(UploadJobFile.job_id == job.id).order_by(UploadJobFile.id).all()
+    for f in files:
+        res = {"section": f.section, "ok": False, "filename": f.filename, "pages": f.n_files}
+        results.append(res)
+        ex = {"readability": "READABLE", "document_type": f.doc_type, "page_count": f.n_files,
+              "type_review": (f"The agent could not read this upload ({job.error or 'reading failed'}). "
+                              "Read it by hand and enter the dates." +
+                              (f" The CSP typed issue date {f.typed:%d-%m-%Y}." if f.typed else ""))}
+        try:
+            out = store_extracted_document(db, csp, f.data, f.filename or "", f.mime, ex, channel=job.channel,
+                                           sender_on_sheet=True)
+        except Exception:
+            db.rollback()
+            logger.exception("upload_job_not_filed job=%s section=%s", job.id, f.section)
+            out = None
+        if out is not None and out.document is not None:
+            res.update(ok=True, message=_msg("received_check"), reason="received_check", document_id=out.document.id)
+        else:
+            res.update(message=_msg("not_checked"), reason="not_checked")
+    db.add(AgreementEvent(csp_id=csp.id, event_type="UPLOAD_FAILED", source=job.channel, channel="WEB",
+                          payload={"kind": "reading_failed", "side": "OUR", "where": "upload",
+                                   "sections": [f.section for f in files], "error": (job.error or "")[:200]}))
+    _finish_job(db, job, csp, results, files, today, status="FAILED")
+
+
+def _finish_job(db: Session, job, csp: CSP, results: list[dict], files: list, today: date,
+                status: str = "DONE") -> None:
+    order = list(SECTIONS)
+    results.sort(key=lambda r: order.index(r["section"]) if r["section"] in order else 9)
+    channel = job.channel
+    changes = _record_contact_changes(db, csp, job.contact) if job.contact else 0
     slab_before = csp.category
     # Category, and the follow-up cycles this upload satisfies, update now
     # (queued reminders for them are cancelled), not at the next daily run.
@@ -940,17 +1050,21 @@ async def portal_upload(request: Request, background: BackgroundTasks, db: Sessi
                                    "contact_changes": changes, "slab_before": slab_before,
                                    "slab_after": state.category, "sub_slab_after": csp.sub_slab,
                                    "still_needed": state.needs_upload}))
+    row = db.get(PortalToken, job.token) if job.token else None
     if row is not None:
         revoke_if_complete(db, row, state.needs_upload)
+    shown = ("section", "ok", "message", "issue_date", "expiry_date")       # nothing internal to the browser
+    job.reply = {"results": [{k: r[k] for k in shown if k in r} for r in results], "category": state.category,
+                 "still_needed": [DOC_LABELS[t][0] for t in state.needs_upload]}
+    job.status, job.finished_at = status, func.now()
+    for f in files:
+        db.delete(f)
     db.commit()
 
-    # Reply to the CSP at once: what was recorded and what wasn't (and why).
-    # Same database as this request (its own session: it runs after the reply).
+    # Reply to the CSP: what was recorded and what wasn't (and why).
     from sqlalchemy.orm import sessionmaker
-    background.add_task(_send_upload_status, csp.id, results=[{k: r.get(k) for k in ("section", "ok", "reason")}
-                                                             for r in results],
-                        session_factory=sessionmaker(bind=db.get_bind()))
-
-    shown = ("section", "ok", "message", "issue_date", "expiry_date")       # nothing internal to the browser
-    return {"results": [{k: r[k] for k in shown if k in r} for r in results], "category": state.category,
-            "still_needed": [DOC_LABELS[t][0] for t in state.needs_upload]}
+    try:
+        _send_upload_status(csp.id, results=[{k: r.get(k) for k in ("section", "ok", "reason")} for r in results],
+                            session_factory=sessionmaker(bind=db.get_bind()))
+    except Exception:
+        logger.exception("upload_status_not_sent csp_id=%s", csp.id)

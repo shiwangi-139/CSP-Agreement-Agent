@@ -13,6 +13,7 @@ Schedule (Asia/Kolkata):
   Calling-sheet reload                             every 60 minutes
   Categories + renewal ladders + upload cycle      daily 09:00
   Outbox sender / retries                          every 2 minutes
+  Upload page documents the web app left unread    every 2 minutes (app/upload_jobs.py)
   Vault: expiry renames + INDEX.xlsx               daily 00:10
   Excel reports (CSP report, Contacts & gaps)      daily 07:30
   Daily Label snapshot (Monitoring page history)   daily 09:30 (and at start if missed)
@@ -121,6 +122,11 @@ def job_outbox():
         finally:
             db.close()
     return _run("outbox", go)
+
+
+def job_upload_jobs():
+    from .upload_jobs import sweep
+    return _run("upload_jobs", lambda: sweep(SessionLocal))
 
 
 def job_delivery():
@@ -359,6 +365,7 @@ def build_scheduler():
     sched.add_job(job_sheet, IntervalTrigger(minutes=60), id="sheet", next_run_time=datetime.now())
     sched.add_job(job_engine, CronTrigger(hour=9, minute=0), id="engine")
     sched.add_job(job_outbox, IntervalTrigger(minutes=2), id="outbox")
+    sched.add_job(job_upload_jobs, IntervalTrigger(minutes=2), id="upload_jobs", next_run_time=datetime.now())
     if FEATURE_MESSAGING_ANALYTICS:                       # parked feature
         sched.add_job(job_delivery, IntervalTrigger(minutes=30), id="delivery")
     sched.add_job(job_vault, CronTrigger(hour=VAULT_JOB_HOUR, minute=VAULT_JOB_MINUTE), id="vault")
