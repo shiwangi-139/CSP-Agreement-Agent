@@ -78,7 +78,7 @@ THREE_YEAR = [
 ]
 # A raised "th" in "30th December 2023" often comes out of OCR as a quote
 # mark: "30” December 2023", "29" December 2026".
-_DATE = r"\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*(?:\d{4}|\d{2})(?!\d)|\d{1,2}(?:st|nd|rd|th|[\"”“'’`°]{1,2})?\s*[- ]?\s*[A-Za-z]{3,9}\.?\s*[- ,]?\s*\d{4}"
+_DATE = r"\d{1,2}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*(?:\d{4}|\d{2})(?!\d)|\d{1,2}(?:st|nd|rd|th|t[nbh]|[\"”“'’‘`^*°]{1,2}[a-z]{0,2})?\s*[- ]?\s*[A-Za-z]{3,9}\.?\s*[- ,]?\s*\d{4}"
 VALID_FROM = re.compile(r"\bvalid\w*\s*(?:from|w\.?\s?e\.?\s?f\.?)", re.I)
 RANGE = [
     re.compile(r"(?:valid\s+)?(?:from|w\.?\s?e\.?\s?f\.?)\s*[:\-]?\s*(?P<a>[^\n]{6,30}?)\s*(?:to|till|until|upto|up\s+to)\s*(?P<b>[^\n]{6,30})", re.I),

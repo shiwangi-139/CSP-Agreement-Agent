@@ -28,7 +28,8 @@ _EN_MON = r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|au
 _HI_MON = "(" + "|".join(sorted((k for k in MONTHS if not k.isascii()), key=len, reverse=True)) + ")"
 _DAY = r"(0?[1-9]|[12]\d|3[01])"
 _YEAR = r"((?:19|20)\d{2})"
-_ORD = r"(?:\s*(?:st|nd|rd|th|\"|”|'))?"
+# "06th", "06 th", and what OCR makes of a raised "th": 06" 06” 06'h 06’h 06tn 06* 06° (1A850245: "06'h Oct.2024").
+_ORD = r"(?:\s*(?:st|nd|rd|th|t[nbh]|[\"”“'’‘`^*°][a-z]{0,2}))?"
 
 PATTERNS = [
     # 2026.01.28 / 2024-05-12 / 2024/05/12

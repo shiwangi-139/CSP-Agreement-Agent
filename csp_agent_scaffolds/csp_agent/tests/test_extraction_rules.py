@@ -892,3 +892,16 @@ def test_agreement_initial_term_of_three_years_is_three_years():
     assert not has_three_year_clause(clause.format("one (1) year"))
     assert not has_three_year_clause("A. Term: This Agreement shall commence on the Effective Date and shall be valid "
                                      "until terminated. C. Termination by either Eko or CSP by giving 30 days of notice")
+
+
+def test_agreement_range_in_the_opening_line_with_ocr_marks():
+    """1A850245: 'On this day of, 06th Oct.2024 to 05th Oct. 2027' is 06-10-2024 to 05-10-2027, also as OCR reads the raised 'th'."""
+    from datetime import date
+    from app.ai.extraction.rules.agreement import extract_agreement
+    line = ("CUSTOMER SERVICE POINT AGREEMENT SANJAY KUMAR SAHA(1A850245) On this day of, {a} Oct.2024 to {b} Oct. 2027 "
+            "an indian national, son/daughter/wife of DINANATH SAHA residing at Bihariganj, Under Distt Madhepura")
+    for a, b in (("06th", "05th"), ("06'h", "05'h"), ("06’h", "05’h"), ("06tn", "05tn"), ("06*", "05*"), ("06°", "05°"),
+                 ('06"h', '05"h'), ("06", "05")):
+        r = extract_agreement(line.format(a=a, b=b), date(2026, 11, 2))
+        assert (r["issue_date"], r["explicit_expiry"]) == (date(2024, 10, 6), date(2027, 10, 5)), (a, r)
+        assert r["validity_source"] == "AGREEMENT_RANGE_FROM_TO"
