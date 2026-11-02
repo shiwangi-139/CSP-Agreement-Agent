@@ -1109,7 +1109,8 @@
     async find() {
       const f = state.find;
       const d = await api(`/api/hub/find?${findQuery(f)}&page=${state.page}&size=50`);
-      const rmp = (await api("/api/hub/rm-pending")).rms;
+      // The RM buttons are extra: if they can't load, the list still shows.
+      const rmp = await api("/api/hub/rm-pending").then((x) => x.rms).catch(() => []);
       const sel = (key, label, opts) => `<label class="small">${label}<br><select data-fkey="${key}">${opts.map(([v, l]) =>
         `<option value="${v}" ${String(f[key] ?? "") === String(v) ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
       const rms = [["", "any"], ...(state.rms || []).map((n) => [n, n])];
