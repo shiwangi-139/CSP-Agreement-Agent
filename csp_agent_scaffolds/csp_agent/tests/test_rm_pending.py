@@ -5,7 +5,9 @@ import io
 import uuid
 
 from app import auth
-from app.models import CSP, InternalUser
+from datetime import date, timedelta
+
+from app.models import CSP, Document, DocumentStatus, InternalUser
 from app.rm_pending import district_from_address
 from tests.test_login import CSRF, PUBLIC, _login, world  # noqa: F401  (fixture)
 from tests.test_portal_and_api import client  # noqa: F401  (fixture)
@@ -92,7 +94,7 @@ def test_the_list_as_a_table_with_rm_district_and_dc_filters(client, monkeypatch
     assert d["districts"] == [{"name": "Gaya", "csps": 1}, {"name": "Patna", "csps": 2}]
     assert [r["district"] for r in d["rows"]] == ["Gaya", "Patna", "Patna"]
     a = next(r for r in d["rows"] if r["code"] == f"7A{n:06d}")
-    assert (a["state"], a["rm"], a["dc"], a["phone"], a["category"]) == ("Bihar", f"RM {tag}", f"DC {tag}", "9876500001", 3)
+    assert (a["state"], a["rm"], a["dc"], a["phone"], a["category"]) == ("Bihar", f"RM {tag}", f"DC {tag}", "9876500001", 4)   # Label as of today: no documents
     assert a["docs"]["AGREEMENT"] == {"word": "Pending", "tone": "warn"} and "AGREEMENT" in a["to_upload"]
     assert next(r for r in d["rows"] if r["district"] == "Gaya")["dc"] == "No DC"
     assert d["pending"]["AGREEMENT"] == 3
@@ -110,3 +112,36 @@ def test_an_rm_sees_only_their_own_rows_whatever_rm_they_ask_for(world):
     d = c.get("/api/hub/rm-pending/rows?rm=999999", headers={**PUBLIC, **CSRF}).json()
     assert [r["name"] for r in d["rows"]] == ["Mine"] and d["rms"] == []
     assert d["districts"] == [{"name": "District not given", "csps": 1}]
+
+
+def test_label_1_with_an_expired_document_is_on_the_list(client, monkeypatch):
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    c, Session = client
+    s = Session()
+    tag = uuid.uuid4().hex[:6]
+    rm = InternalUser(name=f"RM {tag}", role="RM")
+    s.add(rm)
+    s.flush()
+    today, n = date.today(), int(tag, 16) % 1000000
+    def label_1(code, agreement_expiry):
+        x = CSP(name=f"L1 {code} {tag}", current_code=f"7{code}{n:06d}", rm_id=rm.id, category=1,
+                sub_slab="1.3" if agreement_expiry < today else "1.1", is_active_in_calling_sheet=True)
+        s.add(x)
+        s.flush()
+        for t, issue, exp in (("AGREEMENT", agreement_expiry - timedelta(days=365), agreement_expiry),
+                              ("POLICE_VERIFICATION", today - timedelta(days=30), today + timedelta(days=300)),
+                              ("IIBF_CERTIFICATE", date(2020, 1, 1), None)):
+            s.add(Document(csp_id=x.id, document_type=t, sha256=uuid.uuid4().hex, readability="READABLE",
+                           status=DocumentStatus.VALID, is_current=True, issue_date=issue, expiry_date=exp))
+    label_1("X", today - timedelta(days=10))           # agreement expired: listed
+    label_1("Y", today + timedelta(days=400))          # everything valid: not listed
+    s.commit()
+    rm_id = rm.id
+    s.close()
+    d = c.get(f"/api/hub/rm-pending/rows?rm={rm_id}", headers=HDR).json()
+    assert [r["code"] for r in d["rows"]] == [f"7X{n:06d}"]
+    r = d["rows"][0]
+    assert r["category"] == 1 and r["sub_slab_label"].startswith("1.3") and r["to_upload"] == ["AGREEMENT"]
+    assert r["docs"]["AGREEMENT"]["tone"] == "bad" and r["docs"]["AGREEMENT"]["word"].startswith("Expired on")
+    rows = list(csv.reader(io.StringIO(c.get(f"/api/hub/rm-pending/{rm_id}.csv", headers=HDR).content.decode("utf-8-sig"))))
+    assert [x[2] for x in rows[1:] if x[2]] == [f"7X{n:06d}"]

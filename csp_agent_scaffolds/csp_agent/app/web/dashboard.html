@@ -241,7 +241,7 @@
   const PAGES = {
     today: ["Work", "Today", "Your daily compliance worklist"],
     find: ["Work", "Find CSPs", "Pick a state for each document and see exactly those CSPs"],
-    rmpending: ["Work", "Pending by RM", "CSPs in Labels 2–4 with a document still to upload, district by district, with their RM and DC"],
+    rmpending: ["Work", "Pending by RM", "CSPs with a document pending or expired (Labels 2–4, and Label 1 with an expired document), district by district, with their RM and DC"],
     categories: ["Work", "Labels", "CSPs by how many of their 3 documents are on file"],
     overview: ["Work", "Overview", "Document health across the whole network, and the jobs you can run by hand"],
     review: ["Documents", "Review queue", "Documents waiting for a person's decision before the CSP's status changes"],
@@ -1115,7 +1115,7 @@
       const rmp = await api("/api/hub/rm-pending").then((x) => x.rms).catch(() => []);
       const sel = (key, label, opts) => `<label class="small">${label}<br><select data-fkey="${key}">${opts.map(([v, l]) =>
         `<option value="${v}" ${String(f[key] ?? "") === String(v) ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
-      const rms = [["", "any"], ...(state.rms || []).map((n) => [n, n])];
+      const rms = [["", "any"], ...(state.rms || rmp.map((r) => r.name)).map((n) => [n, n])];     // state.rms comes from Overview
       const pages = Math.max(1, Math.ceil(d.total / d.size));
       return `<p class="small muted">Pick a state for each document; "any" means it doesn't matter. Example: <i>only the agreement expired</i> = Agreement expired, PVR valid, IIBF valid. Expiring = valid but ends within 60 days.</p>
       <div class="tabs small">${FPRESETS.map(([l, p]) => `<button data-findset='${JSON.stringify(p)}'>${l}</button>`).join("")}<button data-findset='{}'>Clear</button></div>
@@ -1127,7 +1127,7 @@
         <span class="muted"><b>${d.total}</b> CSPs</span>
         <a class="btn" href="#" data-findxlsx="1">Download this list (.xlsx)</a></div>
       ${rmp.length ? `<div class="card" style="margin-bottom:12px"><div class="meta"><b>Pending list by RM (CSV)</b></div>
-        <p class="small muted">Labels 2, 3 and 4: CSPs with a document still pending, district by district, with the DC and what to upload. Made fresh when you download.</p>
+        <p class="small muted">Labels 2, 3 and 4, and Label 1 with an expired document: CSPs with a document pending or expired, district by district, with the DC and what to upload. Made fresh when you download.</p>
         <div class="toolbar" style="flex-wrap:wrap">${rmp.map((r) => `<a class="btn" href="#" data-rmcsv="${r.id}">${esc(r.name)} · ${r.csps} CSPs</a>`).join("")}</div></div>` : ""}
       <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>CSP</th><th>Agreement</th><th>PVR</th><th>IIBF</th><th>RM / DC</th><th>Upload page</th></tr></thead><tbody>
         ${d.rows.map((r) => `<tr class="click" data-csp="${r.id}">
@@ -1160,7 +1160,7 @@
         body += `<tr class="click" data-csp="${r.id}">
           <td class="small">${esc(r.district)}</td><td class="small">${esc(r.state || "—")}</td>${cols === 11 ? `<td class="small">${esc(r.rm)}</td>` : ""}
           <td class="small">${esc(r.dc)}</td><td><div class="mono">${esc(r.code || "")}</div><div>${esc(r.name)}</div></td>
-          <td class="mono small">${esc(r.phone || "—")}</td><td>${badge("c" + r.category, "Label " + r.category)}</td>
+          <td class="mono small">${esc(r.phone || "—")}</td><td>${badge("c" + r.category, r.sub_slab_label || "Label " + r.category)}</td>
           <td>${tone(r.docs.AGREEMENT)}</td><td>${tone(r.docs.POLICE_VERIFICATION)}</td><td>${tone(r.docs.IIBF_CERTIFICATE)}</td>
           <td class="small"><b>${esc(r.to_upload.map((t) => DOC[t]).join(", ") || "—")}</b></td></tr>`;
       }

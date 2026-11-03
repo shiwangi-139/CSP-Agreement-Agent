@@ -2,7 +2,7 @@
 app/rm_pending.py
 Pending list per RM (dashboard: "Pending by RM", and Find CSPs -> "Pending
 list by RM"): their working CSPs in Labels 2, 3 and 4 (a document not on file
-yet), district by district, with the DC, each document in plain words and
+yet) and in Label 1 with a document expired (1.3), district by district, with the DC, each document in plain words and
 what to upload. Shown as a table (pending_rows) and as one CSV per RM, both
 made live.
 
@@ -16,10 +16,10 @@ import re
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from .compliance import DOC_LABELS, REQUIRED_TYPES, evaluate, slab_label
+from .compliance import DOC_LABELS, REQUIRED_TYPES, evaluate, slab_label, sub_slab, sub_slab_label
 from .models import CSP, InternalUser
 
 LABELS = (2, 3, 4)
@@ -50,7 +50,10 @@ def district_of(csp: CSP) -> str:
 
 def _csps(db: Session, rm_id: Optional[int] = None):
     """The list's CSPs: one RM's, or (rm_id None) everyone's, CSPs with no RM included."""
-    q = db.query(CSP).filter(CSP.category.in_(LABELS), CSP.is_active_in_calling_sheet.is_(True),
+    # Label 1 with an expired document: the stored sub-group or reason says so
+    # (pending_rows checks it again with today's evaluation).
+    expired_1 = and_(CSP.category == 1, or_(CSP.sub_slab == "1.3", CSP.category_reason.ilike("%Expired:%")))
+    q = db.query(CSP).filter(or_(CSP.category.in_(LABELS), expired_1), CSP.is_active_in_calling_sheet.is_(True),
                              or_(CSP.state.is_(None), CSP.state != "TEST"))
     return (q if rm_id is None else q.filter(CSP.rm_id == rm_id)).all()
 
@@ -93,10 +96,13 @@ def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date]
     rows = []
     for c in _csps(db, rm_id):
         st = evaluate(db, c, today)
+        if st.category == 1 and not st.expired:
+            continue
         rows.append({
             "id": c.id, "district": district_of(c), "state": _clean(c.state) or "", "rm_id": c.rm_id,
             "rm": name(c.rm_id, "No RM"), "dc": name(c.dc_id, "No DC"), "code": c.current_code, "name": c.name,
-            "phone": c.phone or "", "label": slab_label(c.category), "category": c.category,
+            "phone": c.phone or "", "label": slab_label(st.category), "category": st.category,
+            "sub_slab_label": sub_slab_label(sub_slab(st)),
             "docs": {t: {"word": _word(t, st.docs[t]), "tone": _tone(st.docs[t])} for t in REQUIRED_TYPES},
             "to_upload": [t for t in REQUIRED_TYPES
                           if not st.docs[t].in_review and st.docs[t].status in ("MISSING", "UNREADABLE", "EXPIRED")],
