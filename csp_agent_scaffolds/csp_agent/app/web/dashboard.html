@@ -62,6 +62,7 @@
     <div class="navgroup"><div class="navlabel">Work</div>
       <button class="nav" data-view="today" title="Today"><svg><use href="#i-today"/></svg><span class="navtext">Today</span><span class="count" id="n-today"></span></button>
       <button class="nav" data-view="find" title="Find CSPs"><svg><use href="#i-search"/></svg><span class="navtext">Find CSPs</span></button>
+      <button class="nav" data-view="rmpending" title="Pending by RM"><svg><use href="#i-users"/></svg><span class="navtext">Pending by RM</span></button>
       <button class="nav" data-view="categories" title="Labels"><svg><use href="#i-tag"/></svg><span class="navtext">Labels</span><span class="count" id="n-cat"></span></button>
       <button class="nav" data-view="overview" title="Overview"><svg><use href="#i-chart"/></svg><span class="navtext">Overview</span></button>
     </div>
@@ -152,7 +153,7 @@
     ["Everything valid", {agr: "VALID", pvr: "VALID", iibf: "VALID"}],
   ];
   const findQuery = (f) => ["agr", "pvr", "iibf", "slab", "rm", "form"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&");
-  const state = {view: "today", find: {}, cat: 1, q: "", expiredOnly: false, page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
+  const state = {view: "today", find: {}, rmp: {}, cat: 1, q: "", expiredOnly: false, page: 1, channel: "WHATSAPP", msgStatus: "QUEUED_FOR_REVIEW", docType: "", summary: null};
 
   // ---------------------------------------------------------------- api
   // Paths are relative (no leading "/"): the page is served at "/" on the
@@ -240,6 +241,7 @@
   const PAGES = {
     today: ["Work", "Today", "Your daily compliance worklist"],
     find: ["Work", "Find CSPs", "Pick a state for each document and see exactly those CSPs"],
+    rmpending: ["Work", "Pending by RM", "CSPs in Labels 2–4 with a document still to upload, district by district, with their RM and DC"],
     categories: ["Work", "Labels", "CSPs by how many of their 3 documents are on file"],
     overview: ["Work", "Overview", "Document health across the whole network, and the jobs you can run by hand"],
     review: ["Documents", "Review queue", "Documents waiting for a person's decision before the CSP's status changes"],
@@ -1137,6 +1139,51 @@
       ${pager(pages)}`;
     },
 
+    // Pending by RM (app/rm_pending.py): the RM's CSV as a table. Admins pick an
+    // RM (or all); an RM sees only their own CSPs.
+    async rmpending() {
+      const f = state.rmp, isAdmin = state.summary.me.role === "ADMIN";
+      const d = await api(`/api/hub/rm-pending/rows?${["rm", "district", "dc", "q"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&")}`);
+      const sel = (key, label, all, opts) => `<label class="small">${label}<br><select data-rmpkey="${key}"><option value="">${all}</option>${opts.map(([v, l]) =>
+        `<option value="${esc(v)}" ${String(f[key] ?? "") === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
+      const tile = (label, n, sub) => `<div class="card kpi" style="cursor:default"><div class="label">${label}</div><div class="n">${n}</div><div class="small muted">${sub}</div></div>`;
+      const rmName = isAdmin ? (d.rms.find((r) => r.id === d.rm)?.name || "All RMs") : state.summary.me.name;
+      const tone = (x) => `<span class="chip ${x.tone}">${esc(x.word)}</span>`;
+      const cols = isAdmin && !f.rm ? 11 : 10;
+      let body = "", last = null;
+      for (const r of d.rows) {
+        if (r.district !== last) {
+          const n = d.rows.filter((x) => x.district === r.district).length;
+          body += `<tr class="grouphead"><td colspan="${cols}">${esc(r.district)} · ${n} CSP${n === 1 ? "" : "s"}</td></tr>`;
+          last = r.district;
+        }
+        body += `<tr class="click" data-csp="${r.id}">
+          <td class="small">${esc(r.district)}</td><td class="small">${esc(r.state || "—")}</td>${cols === 11 ? `<td class="small">${esc(r.rm)}</td>` : ""}
+          <td class="small">${esc(r.dc)}</td><td><div class="mono">${esc(r.code || "")}</div><div>${esc(r.name)}</div></td>
+          <td class="mono small">${esc(r.phone || "—")}</td><td>${badge("c" + r.category, "Label " + r.category)}</td>
+          <td>${tone(r.docs.AGREEMENT)}</td><td>${tone(r.docs.POLICE_VERIFICATION)}</td><td>${tone(r.docs.IIBF_CERTIFICATE)}</td>
+          <td class="small"><b>${esc(r.to_upload.map((t) => DOC[t]).join(", ") || "—")}</b></td></tr>`;
+      }
+      return `
+      <div class="grid k4">
+        ${tile(isAdmin ? "CSPs pending" : "Your CSPs pending", d.total, esc(rmName) + (f.district ? " · " + esc(f.district) : "") + (f.dc ? " · " + esc(f.dc) : ""))}
+        ${tile("Agreement to upload", d.pending.AGREEMENT, "pending, expired or not readable")}
+        ${tile("PVR to upload", d.pending.POLICE_VERIFICATION, "pending, expired or not readable")}
+        ${tile("IIBF to upload", d.pending.IIBF_CERTIFICATE, "pending or not readable")}
+      </div>
+      <div class="toolbar" style="flex-wrap:wrap;gap:12px;margin-top:14px">
+        ${isAdmin ? sel("rm", "RM", "All RMs", d.rms.map((r) => [r.id, `${r.name} · ${r.csps}`])) : ""}
+        ${sel("district", "District", "All districts", d.districts.map((x) => [x.name, `${x.name} · ${x.csps}`]))}
+        ${sel("dc", "DC", "All DCs", d.dcs.map((x) => [x.name, `${x.name} · ${x.csps}`]))}
+        <label class="small">Search<br><input type="search" id="rmpq" placeholder="Code, name or mobile" value="${esc(f.q || "")}"></label>
+        ${Object.keys(f).length ? `<button class="btn" data-rmpclear="1">Clear filters</button>` : ""}
+        <span class="muted"><b>${d.total}</b> CSPs</span>
+        ${d.rm ? `<a class="btn" href="#" data-rmcsv="${d.rm}">Download ${esc(rmName)}'s list (CSV)</a>` : ""}</div>
+      <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>District</th><th>State</th>${cols === 11 ? "<th>RM</th>" : ""}<th>DC</th><th>CSP</th><th>Mobile</th><th>Label</th>
+        <th>Agreement</th><th>PVR / Character</th><th>IIBF</th><th>To upload</th></tr></thead><tbody>${body}</tbody></table>`
+        : `<div class="empty">No CSPs pending${Object.keys(f).length ? " for these filters" : ""}.</div>`}</div>`;
+    },
+
     async formuploads() {
       const out = state.fout ?? "", days = state.fdays ?? 0;
       // All submissions (newest first), grouped one row per CSP; the outcome
@@ -1406,7 +1453,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-attfilter],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-rmpclear],[data-attfilter],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -1555,6 +1602,7 @@
       if (ds.approve) { const m = await post(`/api/hub/messages/${ds.approve}/approve`); toast(`Approved → ${m.status.replaceAll("_", " ").toLowerCase()}`); return refreshAfterAction(); }
       if (ds.sendnow) { if (!confirm("Send this WhatsApp message to the CSP now?")) return; const m = await post(`/api/hub/messages/${ds.sendnow}/send-now`); toast(`→ ${m.status.replaceAll("_", " ").toLowerCase()}${m.error ? ": " + m.error : ""}`); return refreshAfterAction(); }
       if (ds.findset) { e.preventDefault(); state.find = JSON.parse(ds.findset); state.page = 1; state.view = "find"; return render(); }
+      if (ds.rmpclear) { state.rmp = {}; return render(); }
       if (ds.rmcsv) {
         e.preventDefault();
         const r = await fetch(`api/hub/rm-pending/${ds.rmcsv}.csv`, {credentials: "same-origin", headers: H});
@@ -1628,11 +1676,19 @@
     if (e.key === "Escape") { closeDrawer(); closeCoach(); closeNav(); $("#gresults").classList.remove("open"); }
     if (e.key === "/" && !/input|textarea|select/i.test(document.activeElement.tagName)) { e.preventDefault(); $("#gsearch").focus(); }
     if (e.key === "Enter" && e.target.matches(".kpi[data-go]")) e.target.click();
+    if (e.key === "Enter" && e.target.id === "rmpq") { state.rmp = {...state.rmp, q: e.target.value.trim()}; if (!state.rmp.q) delete state.rmp.q; render(); }
     if (e.key === "Enter" && e.target.id === "q") { state.q = e.target.value; state.page = 1; render(); }
   });
   document.addEventListener("change", (e) => {
     if (e.target.id === "dcprogday" && $("#dcprog").style.display === "block") document.querySelector("[data-dcprogress]").click();
     if (e.target.id === "expiredonly") { state.expiredOnly = e.target.checked; state.page = 1; render(); }
+    if (e.target.dataset.rmpkey) {
+      const f = {...state.rmp, [e.target.dataset.rmpkey]: e.target.value};
+      if (!e.target.value) delete f[e.target.dataset.rmpkey];
+      if (e.target.dataset.rmpkey === "rm") { delete f.district; delete f.dc; }      // another RM has other districts
+      if (e.target.dataset.rmpkey === "district") delete f.dc;
+      state.rmp = f; render();
+    }
     if (e.target.dataset.fkey) {
       const f = {...state.find, [e.target.dataset.fkey]: e.target.value};
       if (!e.target.value) delete f[e.target.dataset.fkey];

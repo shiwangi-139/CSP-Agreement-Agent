@@ -63,3 +63,50 @@ def test_an_rm_gets_only_their_own_list(world):
     rms = c.get("/api/hub/rm-pending", headers={**PUBLIC, **CSRF}).json()["rms"]
     assert [r["name"] for r in rms] == ["RM One"] and rms[0]["csps"] == 1
     assert c.get(f"/api/hub/rm-pending/{rms[0]['id']}.csv", headers={**PUBLIC, **CSRF}).status_code == 200
+
+
+def test_the_list_as_a_table_with_rm_district_and_dc_filters(client, monkeypatch):
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    c, Session = client
+    s = Session()
+    tag = uuid.uuid4().hex[:6]
+    rm, dc, dc2 = (InternalUser(name=f"RM {tag}", role="RM"), InternalUser(name=f"DC {tag}", role="DC"),
+                   InternalUser(name=f"DC2 {tag}", role="DC"))
+    s.add_all([rm, dc, dc2])
+    s.flush()
+    n = int(tag, 16) % 1000000
+    s.add_all([CSP(name=f"Asha {tag}", current_code=f"7A{n:06d}", rm_id=rm.id, dc_id=dc.id, category=3, state="BIHAR",
+                   phone="9876500001", kiosk_location="Vill X, Dist. Patna, Bihar", is_active_in_calling_sheet=True),
+               CSP(name=f"Binod {tag}", current_code=f"7B{n:06d}", rm_id=rm.id, dc_id=dc2.id, category=2,
+                   district="PATNA", is_active_in_calling_sheet=True),
+               CSP(name=f"Chandan {tag}", current_code=f"7C{n:06d}", rm_id=rm.id, category=4, district="Gaya",
+                   is_active_in_calling_sheet=True),
+               CSP(name=f"Done {tag}", current_code=f"7D{n:06d}", rm_id=rm.id, category=1, district="Gaya",
+                   is_active_in_calling_sheet=True)])
+    s.commit()
+    rm_id = rm.id
+    s.close()
+    get = lambda q="": c.get(f"/api/hub/rm-pending/rows?rm={rm_id}{q}", headers=HDR).json()
+    d = get()
+    assert d["rm"] == rm_id and d["total"] == 3 and any(r["id"] == rm_id for r in d["rms"])
+    assert d["districts"] == [{"name": "Gaya", "csps": 1}, {"name": "Patna", "csps": 2}]
+    assert [r["district"] for r in d["rows"]] == ["Gaya", "Patna", "Patna"]
+    a = next(r for r in d["rows"] if r["code"] == f"7A{n:06d}")
+    assert (a["state"], a["rm"], a["dc"], a["phone"], a["category"]) == ("Bihar", f"RM {tag}", f"DC {tag}", "9876500001", 3)
+    assert a["docs"]["AGREEMENT"] == {"word": "Pending", "tone": "warn"} and "AGREEMENT" in a["to_upload"]
+    assert next(r for r in d["rows"] if r["district"] == "Gaya")["dc"] == "No DC"
+    assert d["pending"]["AGREEMENT"] == 3
+    p = get("&district=patna")
+    assert p["total"] == 2 and {x["name"] for x in p["dcs"]} == {f"DC {tag}", f"DC2 {tag}"}
+    assert p["districts"] == d["districts"]                      # the district list stays whole to switch
+    assert get(f"&district=Patna&dc=DC2 {tag}")["total"] == 1
+    assert [r["name"] for r in get("&q=asha")["rows"]] == [f"Asha {tag}"]
+    assert get("&q=98765000")["total"] == 1
+
+
+def test_an_rm_sees_only_their_own_rows_whatever_rm_they_ask_for(world):
+    c, w = world
+    _login(c, w["rm"])
+    d = c.get("/api/hub/rm-pending/rows?rm=999999", headers={**PUBLIC, **CSRF}).json()
+    assert [r["name"] for r in d["rows"]] == ["Mine"] and d["rms"] == []
+    assert d["districts"] == [{"name": "District not given", "csps": 1}]

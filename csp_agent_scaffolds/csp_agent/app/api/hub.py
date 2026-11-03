@@ -287,6 +287,32 @@ def rm_pending_list(me: Principal = Depends(require_user), db: Session = Depends
     return {"rms": rm_pending.rm_list(db, None if me.is_admin else {me.user_id or -1})}
 
 
+# The same list as a table on the dashboard ("Pending by RM"), with filters
+# for the RM (admins), district and DC. An RM always gets only their own.
+@router.get("/rm-pending/rows")
+def rm_pending_rows(rm: Optional[int] = None, district: str = "", dc: str = "", q: str = "",
+                    me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from .. import rm_pending
+    if not me.is_admin:
+        rm = me.user_id or -1
+    rows = rm_pending.pending_rows(db, rm)
+    count = lambda key, rs: [{"name": k, "csps": n} for k, n in
+                             sorted(Counter(r[key] for r in rs).items(),
+                                    key=lambda x: (x[0] in (rm_pending.NO_DISTRICT, "No DC"), x[0].lower()))]
+    districts = count("district", rows)
+    if district:
+        rows = [r for r in rows if r["district"].lower() == district.lower()]
+    dcs = count("dc", rows)
+    if dc:
+        rows = [r for r in rows if r["dc"].lower() == dc.lower()]
+    if q.strip():
+        n = q.strip().lower()
+        rows = [r for r in rows if n in (r["code"] or "").lower() or n in r["name"].lower() or n in r["phone"]]
+    return {"rms": rm_pending.rm_list(db) if me.is_admin else [], "rm": rm, "districts": districts, "dcs": dcs,
+            "pending": {t: sum(t in r["to_upload"] for r in rows) for t in REQUIRED_TYPES},
+            "total": len(rows), "rows": rows}
+
+
 @router.get("/rm-pending/{rm_id}.csv")
 def rm_pending_csv(rm_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     from fastapi.responses import Response

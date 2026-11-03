@@ -1,9 +1,10 @@
 """
 app/rm_pending.py
-Pending list per RM (dashboard: Find CSPs -> "Pending list by RM"): one CSV
-per RM, made live at download, of their working CSPs in Labels 2, 3 and 4
-(a document not on file yet), district by district, with the DC, each
-document in plain words and what to upload.
+Pending list per RM (dashboard: "Pending by RM", and Find CSPs -> "Pending
+list by RM"): their working CSPs in Labels 2, 3 and 4 (a document not on file
+yet), district by district, with the DC, each document in plain words and
+what to upload. Shown as a table (pending_rows) and as one CSV per RM, both
+made live.
 
 District: the calling sheet's "District" column when it has one, else read
 from the CSP's full address ("Dist. Patna", "District: Gaya", "जिला ..."),
@@ -47,10 +48,11 @@ def district_of(csp: CSP) -> str:
     return _clean(csp.district) or _clean(district_from_address(csp.kiosk_location)) or NO_DISTRICT
 
 
-def _csps(db: Session, rm_id: int):
-    return (db.query(CSP).filter(CSP.rm_id == rm_id, CSP.category.in_(LABELS),
-                                 CSP.is_active_in_calling_sheet.is_(True),
-                                 or_(CSP.state.is_(None), CSP.state != "TEST")).all())
+def _csps(db: Session, rm_id: Optional[int] = None):
+    """The list's CSPs: one RM's, or (rm_id None) everyone's, CSPs with no RM included."""
+    q = db.query(CSP).filter(CSP.category.in_(LABELS), CSP.is_active_in_calling_sheet.is_(True),
+                             or_(CSP.state.is_(None), CSP.state != "TEST"))
+    return (q if rm_id is None else q.filter(CSP.rm_id == rm_id)).all()
 
 
 def rm_list(db: Session, rm_ids: Optional[set[int]] = None) -> list[dict]:
@@ -76,18 +78,39 @@ def _word(t: str, s) -> str:
     return "Pending"
 
 
+def _tone(s) -> str:
+    """How a document's word is shown on the dashboard: ok / warn / bad."""
+    if s.in_review:
+        return "warn"
+    return {"VALID": "ok", "EXPIRED": "bad", "UNREADABLE": "bad"}.get(s.status, "warn")
+
+
+def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date] = None) -> list[dict]:
+    """The list as rows for the dashboard, district by district, then DC and CSP code."""
+    today = today or date.today()
+    staff = {u.id: u for u in db.query(InternalUser).filter(InternalUser.role.in_(("RM", "DC")))}
+    name = lambda i, none: staff[i].name if i in staff else none
+    rows = []
+    for c in _csps(db, rm_id):
+        st = evaluate(db, c, today)
+        rows.append({
+            "id": c.id, "district": district_of(c), "state": _clean(c.state) or "", "rm_id": c.rm_id,
+            "rm": name(c.rm_id, "No RM"), "dc": name(c.dc_id, "No DC"), "code": c.current_code, "name": c.name,
+            "phone": c.phone or "", "label": slab_label(c.category), "category": c.category,
+            "docs": {t: {"word": _word(t, st.docs[t]), "tone": _tone(st.docs[t])} for t in REQUIRED_TYPES},
+            "to_upload": [t for t in REQUIRED_TYPES
+                          if not st.docs[t].in_review and st.docs[t].status in ("MISSING", "UNREADABLE", "EXPIRED")],
+        })
+    rows.sort(key=lambda r: (r["district"] == NO_DISTRICT, r["district"].lower(), r["dc"].lower(), r["code"] or ""))
+    return rows
+
+
 def rm_csv(db: Session, rm: InternalUser, today: Optional[date] = None) -> tuple[str, bytes]:
     """(file name, CSV bytes) for one RM. UTF-8 with a BOM so Excel shows Hindi names."""
     today = today or date.today()
-    dcs = {u.id: u.name for u in db.query(InternalUser).filter(InternalUser.role == "DC")}
-    rows = []
-    for c in _csps(db, rm.id):
-        st = evaluate(db, c, today)
-        todo = [DOC_LABELS[t][0] for t in REQUIRED_TYPES
-                if not st.docs[t].in_review and st.docs[t].status in ("MISSING", "UNREADABLE", "EXPIRED")]
-        rows.append([district_of(c), dcs.get(c.dc_id, "No DC"), c.current_code, c.name, c.phone or "",
-                     slab_label(c.category)] + [_word(t, st.docs[t]) for t in REQUIRED_TYPES] + [", ".join(todo)])
-    rows.sort(key=lambda r: (r[0] == NO_DISTRICT, r[0].lower(), r[1].lower(), r[2] or ""))
+    rows = [[r["district"], r["dc"], r["code"], r["name"], r["phone"], r["label"]]
+            + [r["docs"][t]["word"] for t in REQUIRED_TYPES] + [", ".join(DOC_LABELS[t][0] for t in r["to_upload"])]
+            for r in pending_rows(db, rm.id, today)]
     head = ["District", "DC", "CSP code", "CSP name", "Phone", "Label"] + [DOC_LABELS[t][0] for t in REQUIRED_TYPES] \
         + ["To upload"]
     buf = io.StringIO()
