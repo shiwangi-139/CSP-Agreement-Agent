@@ -35,14 +35,17 @@ SIGN_STAMP = re.compile(r"(?<!\d)(20\d\d)\s?-\s?(0[1-9]|1[0-2])\s?-\s?(0[1-9]|[1
                         r"\s?[T1Il|]?\s?\d{1,2}\s?[:.?]\s?[\d?]{1,2}[^\n]{0,25}?\+\s?0?5\s?[:.]?\s?30")
 SIGN_DATE_LABEL = re.compile(r"\bdate\s*[:\-]?\s*", re.I)
 TOP_LABEL = re.compile(r"(?:approval\s*date|issue\s*date|date\s*of\s*issue|dated|date|दिनांक|तिथि|जारी\s*दिनांक|निर्गत\s*तिथि)\s*[:\-–.]*\s*", re.I)
-VALID_UPTO = re.compile(r"(?:valid\s*(?:up\s*to|upto|till|until)|वैध\s*(?:तिथि)?)\s*[:\-]?\s*", re.I)
+# "valid" as printed or read: Lucknow's "valied for the One Year only", "vaild",
+# "vaid", OCR "va1id", "valld".
+VALID = r"\bva(?:li|lie|il|ll|l1|[1I]i|i)d"
+VALID_UPTO = re.compile(r"(?:" + VALID + r"\s*(?:up\s*to|upto|till|until)|वैध\s*(?:तिथि)?)\s*[:\-]?\s*", re.I)
 
 SIX_MONTHS = re.compile(r"(?:\b(?:six|6)\s*\(?\s*6?\s*\)?\s*months?\b|(?:छह|छः|छ:|6)\s*(?:माह|महीने|महीना))", re.I)
 ONE_YEAR = re.compile(r"(?:\b(?:one|1)\s*(?:\(\s*1\s*\)\s*)?years?\b|(?:एक|1)\s*(?:वर्ष|साल))", re.I)
 # "from the date of issue": Jharkhand "जारी होने की तिथि से केवल छह महीने के लिए वैध"
 # where OCR often loses the last word.
 # Bihar: "इसकी वैधता निर्गत होने की तिथि से छः माह तक ही है".
-VALIDITY_CONTEXT = re.compile(r"valid|validity|वैध|मान्य|(?:जारी|निर्गत)\s*होने\s*की\s*तिथि\s*से|from\s+the\s+date\s+of\s+issue", re.I)
+VALIDITY_CONTEXT = re.compile(VALID + r"|वैध|मान्य|(?:जारी|निर्गत)\s*होने\s*की\s*तिथि\s*से|from\s+the\s+date\s+of\s+issue", re.I)
 # Bihar Police online character certificate: "Appl. Ref. No : BCHC/2026/337487".
 BIHAR_BCHC = re.compile(r"\bBCHC\s*/\s*20\d\d\s*/\s*\d{3,}", re.I)
 # Police Clearance Certificate: it states no validity and is accepted for life.

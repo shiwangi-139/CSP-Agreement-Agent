@@ -149,6 +149,21 @@ def test_pvr_six_months():
     assert r["validity_source"] == "PVR_STATED_6_MONTHS"
 
 
+def test_pvr_validity_with_valid_misspelled():
+    # Lucknow Commissionerate: "This certificate is valied for the One Year only."
+    lucknow = ("Commissionerate District - Lucknow Application No. - 202609272643 Date - 10-10-2026 CHARACTER CERTIFICATE "
+               "This is to certify that Mr. MISHRI LAL KASHYAP ... nothing adverse was found against Mr. MISHRI LAL KASHYAP "
+               "On the basis of the above enquiry, this character certificate is being issued to her/him. "
+               "This certificate is valied for the One Year only.")
+    r = extract_pvr(lucknow, TODAY)
+    assert (r["validity_months"], r["validity_source"]) == (12, "PVR_STATED_1_YEAR")
+    for word in ("valied", "vaild", "vaid", "va1id", "valld", "VALIED"):
+        r = extract_pvr(f"Date- 29/05/2025 It is certified that ... This certificate is {word} for six months only.", TODAY)
+        assert (r["validity_months"], r["validity_source"]) == (6, "PVR_STATED_6_MONTHS"), word
+    r = extract_pvr("Date- 29/05/2025 It is certified that ... This certificate is vaild upto 28/11/2025.", TODAY)
+    assert (r["explicit_expiry"], r["validity_source"]) == (date(2025, 11, 28), "PVR_PRINTED_EXPIRY")
+
+
 def test_pvr_six_months_hindi():
     r = extract_pvr("दिनांक ०३/०५/२०२५ चरित्र प्रमाण पत्र ... यह प्रमाण पत्र छह माह तक वैध है।", TODAY)
     assert r["issue_date"] == date(2025, 5, 3)
