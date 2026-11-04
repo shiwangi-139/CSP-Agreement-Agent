@@ -186,10 +186,11 @@
     dropped: "भेजते समय कनेक्शन टूट गया। अपना इंटरनेट देखें और फिर से भेजें, आपकी फ़ाइलें इसी पेज पर हैं। / The connection broke while sending. Check your internet and send again; your files are still on this page.",
     slow: "अभी पूरा नहीं हो सका, इसमें आपकी कोई गलती नहीं है। हो सकता है डॉक्यूमेंट पहुँच गया हो: 10 मिनट बाद यह पेज दोबारा खोलकर स्थिति देखें, ज़रूरत हो तभी दोबारा भेजें। / It did not finish just now. This is not your fault. Your document may have arrived: open this page again in 10 minutes to see its status, and send again only if needed.",
     ours: "अभी भेजा नहीं जा सका, इसमें आपकी कोई गलती नहीं है। 10 मिनट बाद फिर कोशिश करें, आपकी फ़ाइलें इसी पेज पर हैं। / It could not be sent just now. This is not your fault. Please try again in 10 minutes; your files are still on this page.",
+    too_big: `भेजी गई फ़ाइलें बहुत बड़ी थीं (सीमा ${ctx.max_upload_mb} MB)। एक बार में कम डॉक्यूमेंट या कम पेज भेजें, या 📷 फोटो लें बटन से फोटो लें — फोटो अपने-आप छोटी हो जाती हैं। आपकी फ़ाइलें इसी पेज पर हैं। / What you sent was too large (limit ${ctx.max_upload_mb} MB). Send fewer documents or pages at a time, or use the 📷 Take photos button: photos are made small automatically. Your files are still on this page.`,
   };
   const noAnswer = () => navigator.onLine === false ? "offline" : "dropped";
   const notJson = (status) => status === 413 ? "too_big" : status === 504 || status === 408 ? "slow" : "server";
-  const SAY = { offline: FAIL.offline, dropped: FAIL.dropped, too_big: FAIL.ours, slow: FAIL.slow, server: FAIL.ours, page_error: FAIL.ours };
+  const SAY = { offline: FAIL.offline, dropped: FAIL.dropped, too_big: FAIL.too_big, slow: FAIL.slow, server: FAIL.ours, page_error: FAIL.ours };
 
   // Every failed send is reported for the dashboard (Activity: Upload
   // problems): at once if the server answers, else kept on this phone and
@@ -328,15 +329,16 @@
   }
   docsEl.addEventListener("change", checkDates);
 
-  // Over the size limit: said at once, before sending (such a file used to
-  // travel all the way and come back as "Network problem").
+  // A PDF over the size limit is made small here, before sending: each page
+  // drawn as a photo (the camera photos' size and quality) and sent like
+  // photos. A PDF within the limit goes as it is (its text is read best).
   docsEl.addEventListener("change", (e) => {
     const input = e.target, f = input.files && input.files[0];
-    if (input.type !== "file" || !/_file$/.test(input.id) || !f || f.size <= ctx.max_upload_mb * 1024 * 1024) return;
-    const mb = (f.size / 1024 / 1024).toFixed(1);
-    $(input.id.replace(/_file$/, "_err")).textContent =
-      `यह फ़ाइल ${mb} MB की है, सीमा ${ctx.max_upload_mb} MB है। स्कैन ऐप में कम क्वालिटी (या ब्लैक-एंड-व्हाइट) चुनकर PDF दोबारा बनाएँ। / This file is ${mb} MB; the limit is ${ctx.max_upload_mb} MB. Make the PDF again in your scan app with lower quality or black-and-white.`;
-    input.value = "";                                          // cleared: not sent
+    if (input.type !== "file" || !/_file$/.test(input.id)) return;
+    $(input.id.replace(/_file$/, "_ok")).textContent = "";
+    if (!f || f.size <= ctx.max_upload_mb * 1024 * 1024) return;
+    input.value = "";                                          // the pages go instead
+    compressPdf(input.id.replace(/_file$/, ""), f);
   });
 
   // Photo check in the browser, before uploading (same limits as the server,
@@ -406,6 +408,52 @@
     c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
     return new Promise((ok) => c.toBlob(ok, "image/jpeg", QUALITY));
   }
+  const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+  let pdfjs = null;
+  function loadPdfJs() {                                     // only when a large PDF is chosen
+    if (!pdfjs) pdfjs = new Promise((ok, no) => {
+      const sc = document.createElement("script");
+      sc.src = PDFJS + "pdf.min.js";
+      sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js"; ok(window.pdfjsLib); };
+      sc.onerror = () => { pdfjs = null; no(new Error("pdf.js did not load")); };
+      document.head.appendChild(sc);
+    });
+    return pdfjs;
+  }
+  const tooBigPdf = (mb) => `यह फ़ाइल ${mb} MB की है (सीमा ${ctx.max_upload_mb} MB) और छोटी नहीं हो सकी। सिर्फ़ इसी डॉक्यूमेंट के पेज भेजें, या 📷 फोटो लें बटन से हर पेज की फोटो लें। / This file is ${mb} MB (limit ${ctx.max_upload_mb} MB) and could not be made smaller. Send only this document's pages, or take a photo of each page with the 📷 Take photos button.`;
+  async function compressPdf(sec, f) {
+    const err = $(sec + "_err"), ok = $(sec + "_ok"), mb = (f.size / 1048576).toFixed(1), list = [];
+    clearShots(sec);
+    err.textContent = "";
+    ok.textContent = `फ़ाइल बड़ी है (${mb} MB), इसे छोटा किया जा रहा है… / The file is large (${mb} MB); making it smaller…`;
+    try {
+      const lib = await loadPdfJs();
+      const pdf = await lib.getDocument({ data: await f.arrayBuffer() }).promise;
+      if (pdf.numPages > MAX_SHOTS) throw new Error("too many pages");
+      let bytes = 0;
+      for (let n = 1; n <= pdf.numPages; n++) {
+        const pg = await pdf.getPage(n), v = pg.getViewport({ scale: 1 });
+        const vp = pg.getViewport({ scale: LONG_SIDE / Math.max(v.width, v.height) });
+        const c = document.createElement("canvas");
+        c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+        const g = c.getContext("2d");
+        g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);     // no black background in the JPEG
+        await pg.render({ canvasContext: g, viewport: vp }).promise;
+        const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", QUALITY));
+        if (!blob || (bytes += blob.size) > MAX_BYTES) throw new Error("still too big");
+        list.push({ blob, url: URL.createObjectURL(blob), pdf: true });
+      }
+      shots[sec] = list;
+      const now = (bytes / 1048576).toFixed(1);
+      ok.textContent = `फ़ाइल बड़ी थी (${mb} MB), हमने इसे छोटा कर दिया (${now} MB, ${list.length} पेज) ✅ / The file was large (${mb} MB); we made it smaller (${now} MB, ${list.length} pages) ✅`;
+    } catch (e) {
+      for (const x of list) URL.revokeObjectURL(x.url);
+      ok.textContent = "";
+      err.textContent = tooBigPdf(mb);
+    }
+    drawShots(sec); checkDates();
+  }
+
   docsEl.addEventListener("click", (e) => {
     const cam = e.target.closest("[data-cam]"), del = e.target.closest("[data-del]");
     if (cam) $(cam.dataset.cam + "_cam").click();
@@ -472,7 +520,7 @@
     for (const [sec, list] of Object.entries(shots)) {
       if (!list.length) continue;
       fd.delete(sec + "_file");
-      list.forEach((x, i) => fd.append(sec + "_file", new File([x.blob], `page-${i + 1}.jpg`, { type: "image/jpeg" })));
+      list.forEach((x, i) => fd.append(sec + "_file", new File([x.blob], `${x.pdf ? "pdf-page" : "page"}-${i + 1}.jpg`, { type: "image/jpeg" })));
     }
     fd.append("token", token);
     $("send").disabled = true;

@@ -83,7 +83,7 @@ def test_too_big_message_names_the_limit():
 def test_both_pages_check_size_first_and_report_failed_sends():
     for name in ("portal.html", "dc_master.html"):
         page = (WEB / name).read_text(encoding="utf-8")
-        assert "f.size <=" in page                            # checked before sending
+        assert "compressPdf(" in page                         # checked (and made small) before sending
         assert "status === 413" in page and "status === 504" in page and "navigator.onLine" in page
         assert '"page_failure"' in page and "localStorage" in page
         assert "Network problem, please try again" not in page

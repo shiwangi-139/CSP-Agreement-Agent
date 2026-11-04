@@ -67,6 +67,21 @@
   .meta b { font-weight: 600; color: var(--muted); }
   .days { font-weight: 600; }
   .days.soon { color: hsl(38 80% 32%); } .days.gone { color: hsl(0 70% 42%); }
+  /* Photos or a file for each document, as on the CSP's page: photos are checked and made small on the phone. */
+  .pick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+  .pick button, .pick label { margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    min-height: 72px; padding: 10px; border-radius: var(--radius); font: 700 1rem "Plus Jakarta Sans", Inter, sans-serif; cursor: pointer; text-align: center; }
+  .pick label { background: #fff; color: var(--ink); border: 1px solid var(--border); }
+  .pick .en { font: 400 .8rem Inter, sans-serif; color: inherit; opacity: .85; }
+  .shots { display: flex; gap: 10px; overflow-x: auto; padding: 12px 4px 6px; }
+  .shot { position: relative; flex: none; }
+  .shot img { width: 54px; height: 72px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); display: block; }
+  .shot .x { position: absolute; top: -8px; right: -8px; width: 28px; height: 28px; padding: 0; border-radius: 50%; font-size: 1rem; line-height: 28px; background: var(--ink); }
+  .shots .more { flex: none; width: 54px; height: 72px; padding: 0; background: transparent; color: var(--primary); border: 2px dashed var(--border); border-radius: 6px; font-size: 1.6rem; }
+  .pdfname { font-size: .95rem; padding: 4px 0; overflow-wrap: anywhere; }
+  .sizebar { display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; font-size: .88rem; margin-top: 4px; }
+  .sizebar .bar { grid-column: 1 / -1; height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+  .sizebar i { display: block; height: 100%; width: 0; background: var(--forest-light); }
 </style>
 </head>
 <body>
@@ -138,10 +153,11 @@
     dropped: "भेजते समय कनेक्शन टूट गया। अपना इंटरनेट देखें और फिर से भेजें, आपकी फ़ाइलें इसी पेज पर हैं। / The connection broke while sending. Check your internet and send again; your files are still on this page.",
     slow: "अभी पूरा नहीं हो सका, इसमें आपकी कोई गलती नहीं है। हो सकता है डॉक्यूमेंट पहुँच गया हो: 10 मिनट बाद यही KO कोड फिर खोलकर स्थिति देखें, ज़रूरत हो तभी दोबारा भेजें। / It did not finish just now. This is not your fault. The document may have arrived: open this KO code again in 10 minutes to see its status, and send again only if needed.",
     ours: "अभी भेजा नहीं जा सका, इसमें आपकी कोई गलती नहीं है। 10 मिनट बाद फिर कोशिश करें, आपकी फ़ाइलें इसी पेज पर हैं। / It could not be sent just now. This is not your fault. Please try again in 10 minutes; your files are still on this page.",
+    too_big: `भेजी गई फ़ाइलें बहुत बड़ी थीं (सीमा ${page.max_upload_mb} MB)। एक बार में कम डॉक्यूमेंट या कम पेज भेजें, या 📷 फोटो लें बटन से फोटो लें — फोटो अपने-आप छोटी हो जाती हैं। आपकी फ़ाइलें इसी पेज पर हैं। / What you sent was too large (limit ${page.max_upload_mb} MB). Send fewer documents or pages at a time, or use the 📷 Take photos button: photos are made small automatically. Your files are still on this page.`,
   };
   const noAnswer = () => navigator.onLine === false ? "offline" : "dropped";
   const notJson = (status) => status === 413 ? "too_big" : status === 504 || status === 408 ? "slow" : "server";
-  const SAY = { offline: FAIL.offline, dropped: FAIL.dropped, too_big: FAIL.ours, slow: FAIL.slow, server: FAIL.ours, page_error: FAIL.ours };
+  const SAY = { offline: FAIL.offline, dropped: FAIL.dropped, too_big: FAIL.too_big, slow: FAIL.slow, server: FAIL.ours, page_error: FAIL.ours };
 
   // Every failed send is reported for the dashboard (Activity: Upload
   // problems): at once if the server answers, else kept on this phone and
@@ -178,6 +194,8 @@
   window.addEventListener("online", flushReports);
   flushReports();
   let ctx = null;
+  const shots = {};
+  const hasFile = (sec) => Boolean($(sec + "_file")?.files[0] || (shots[sec] || []).length);
 
   async function post(fields) {
     const fd = new FormData();
@@ -230,6 +248,7 @@
     $("f").style.display = ctx.docs.some((d) => !d.locked) ? "block" : "none";
     $("formerr").textContent = "";
     const docsEl = $("docs");
+    for (const sec of Object.keys(shots)) clearShots(sec, true);   // another CSP: no photos carried over
     docsEl.innerHTML = "";
     for (const d of ctx.docs) {
       const st = STATUS[d.status] || [d.status, d.status];
@@ -246,8 +265,14 @@
         ${d.last_problem ? `<div class="err" style="margin-top:6px">❌ पिछली बार (${esc(d.last_problem.at)}) स्वीकार नहीं हुआ: ${esc(d.last_problem.hi)}
           <span class="en">Last upload (${esc(d.last_problem.at)}) was not accepted: ${esc(d.last_problem.en)}</span></div>` : ""}
         ${d.locked ? `<div class="lock">🔒 ${esc(d.lock_message.hi)}<div class="en">${esc(d.lock_message.en)}</div></div>` : `
-        <label for="${d.section}_file">फ़ाइल चुनें <span class="en">/ Choose file (PDF, max ${ctx.max_upload_mb} MB)</span></label>
-        <input type="file" id="${d.section}_file" name="${d.section}_file" accept="application/pdf,image/jpeg,image/png">
+        <div class="pick">
+          <button type="button" data-cam="${d.section}">📷 फोटो लें<span class="en">Take photos</span></button>
+          <label for="${d.section}_file">📄 फ़ाइल चुनें<span class="en">PDF or photo</span></label>
+        </div>
+        <input type="file" id="${d.section}_cam" accept="image/*" capture="environment" hidden>
+        <input type="file" id="${d.section}_file" name="${d.section}_file" accept="application/pdf,image/jpeg,image/png" hidden>
+        <div class="shots" id="${d.section}_shots" hidden></div>
+        <div class="sizebar" id="${d.section}_size" hidden><span>साइज़ <span class="en">/ Size</span></span><b></b><div class="bar"><i></i></div></div>
         <label for="${d.section}_issue_date">डॉक्यूमेंट बनने की तारीख <span class="en">/ Issue date</span></label>
         <input type="date" id="${d.section}_issue_date" name="${d.section}_issue_date" max="${ctx.today}">`}
         <div class="err" id="${d.section}_err"></div><div class="ok" id="${d.section}_ok"></div>`;
@@ -261,7 +286,7 @@
   function checkDates() {
     const bad = [];
     for (const d of open()) {
-      const file = $(d.section + "_file").files[0], v = $(d.section + "_issue_date").value, err = $(d.section + "_err");
+      const file = hasFile(d.section), v = $(d.section + "_issue_date").value, err = $(d.section + "_err");
       err.textContent = "";
       if (!file) continue;
       if (!v) { err.textContent = "कृपया तारीख भरें / Please enter the issue date."; bad.push(d.section); continue; }
@@ -274,15 +299,152 @@
   }
   $("docs").addEventListener("change", checkDates);
 
-  // Over the size limit: said at once, before sending (such a file used to
-  // travel all the way and come back as "Network problem").
+  // Photos (one per page) and files, as on the CSP's page (portal.html):
+  // each photo is checked here (same limits as the server, app/ocr_service.py:
+  // photo_problem) and made small; a photo chosen as a file joins the photos;
+  // a PDF over the size limit is drawn page by page as photos (a PDF within
+  // the limit goes as it is: its text is read best).
+  const PHOTO_MSG = {
+    too_small: "फोटो बहुत छोटी है। पूरा पन्ना फ्रेम में रखें और कैमरे से सीधे फोटो लें। / The photo is too small. Keep the whole page in the frame and take it with the camera (not a screenshot or forwarded photo).",
+    too_dark: "फोटो बहुत अंधेरी है। दिन की रोशनी में, बिना परछाईं के फोटो लें। / The photo is too dark. Take it in daylight, without shadows.",
+    washed_out: "अक्षर दिखाई नहीं दे रहे। फ्लैश बंद करके दोबारा फोटो लें। / The text is not visible. Turn the flash off and take it again.",
+    blurry: "फोटो धुंधली है। फोन स्थिर रखें, अक्षरों पर टैप करके फोकस करें। / The photo is blurry. Hold the phone still and tap on the text to focus.",
+  };
+  function photoProblem(img) {
+    if (Math.min(img.naturalWidth, img.naturalHeight) < 500) return "too_small";
+    const w = Math.min(1000, img.naturalWidth), h = Math.round(img.naturalHeight * w / img.naturalWidth);
+    const c = document.createElement("canvas"); c.width = w; c.height = h;
+    const g = c.getContext("2d"); g.drawImage(img, 0, 0, w, h);
+    const px = g.getImageData(0, 0, w, h).data, grey = new Float32Array(w * h);
+    let sum = 0;
+    for (let i = 0; i < w * h; i++) { grey[i] = 0.299 * px[4 * i] + 0.587 * px[4 * i + 1] + 0.114 * px[4 * i + 2]; sum += grey[i]; }
+    const mean = sum / (w * h);
+    let sq = 0;
+    for (let i = 0; i < w * h; i++) sq += (grey[i] - mean) ** 2;
+    const std = Math.sqrt(sq / (w * h));
+    if (mean < 55) return "too_dark";
+    if (mean > 235 && std < 20) return "washed_out";
+    let ls = 0, ls2 = 0, n = 0;                        // Laplacian variance = sharpness
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x, v = grey[i - w] + grey[i + w] + grey[i - 1] + grey[i + 1] - 4 * grey[i];
+      ls += v; ls2 += v * v; n++;
+    }
+    return ls2 / n - (ls / n) ** 2 < 25 ? "blurry" : null;
+  }
+
+  const MAX_SHOTS = 25, LONG_SIDE = 1600, QUALITY = 0.7;
+  const MAX_BYTES = page.max_upload_mb * 1024 * 1024;
+  const bytesOf = (sec) => (shots[sec] || []).reduce((n, x) => n + x.blob.size, 0) + ($(sec + "_file")?.files[0]?.size || 0);
+  function drawShots(sec) {
+    const list = shots[sec] || [], file = $(sec + "_file").files[0], box = $(sec + "_shots"), size = $(sec + "_size");
+    box.innerHTML = file ? `<div class="pdfname">📄 ${esc(file.name)}</div>`
+      : list.map((x, i) => `<span class="shot"><img src="${x.url}" alt=""><button type="button" class="x" data-del="${sec}:${i}" aria-label="यह फोटो हटाएँ / Remove this photo">×</button></span>`).join("")
+        + `<button type="button" class="more" data-cam="${sec}" aria-label="अगले पेज की फोटो / Photo of the next page">+</button>`;
+    box.hidden = size.hidden = !file && !list.length;
+    const b = bytesOf(sec);
+    size.querySelector("b").textContent = `${(b / 1048576).toFixed(1)} MB / ${page.max_upload_mb} MB`;
+    size.querySelector("i").style.width = Math.min(100, 100 * b / MAX_BYTES) + "%";
+  }
+  function clearShots(sec, gone) {
+    for (const x of shots[sec] || []) URL.revokeObjectURL(x.url);
+    shots[sec] = [];
+    if (!gone) drawShots(sec);
+  }
+  function shrink(img) {
+    const k = Math.min(1, LONG_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    return new Promise((ok) => c.toBlob(ok, "image/jpeg", QUALITY));
+  }
+  function addPhoto(sec, f) {
+    const err = $(sec + "_err");
+    if ((shots[sec] || []).length >= MAX_SHOTS) { err.textContent = `एक डॉक्यूमेंट में ज़्यादा से ज़्यादा ${MAX_SHOTS} फोटो। / At most ${MAX_SHOTS} photos for one document.`; return; }
+    const url = URL.createObjectURL(f), img = new Image();
+    img.onload = async () => {
+      const p = photoProblem(img);
+      if (p) { URL.revokeObjectURL(url); err.textContent = PHOTO_MSG[p] + " (यह फोटो दोबारा लें / please retake this photo)"; return; }
+      const blob = await shrink(img);
+      URL.revokeObjectURL(url);
+      if (!blob) { err.textContent = FAIL.ours; return; }
+      if (bytesOf(sec) + blob.size > MAX_BYTES) { err.textContent = `फोटो ${page.max_upload_mb} MB से ज़्यादा हो गईं। / The photos are over ${page.max_upload_mb} MB.`; return; }
+      $(sec + "_file").value = "";
+      (shots[sec] = shots[sec] || []).push({ blob, url: URL.createObjectURL(blob) });
+      err.textContent = "";
+      drawShots(sec); checkDates();
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); err.textContent = PHOTO_MSG.too_small; };
+    img.src = url;
+  }
+
+  const PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/";
+  let pdfjs = null;
+  function loadPdfJs() {                                     // only when a large PDF is chosen
+    if (!pdfjs) pdfjs = new Promise((ok, no) => {
+      const sc = document.createElement("script");
+      sc.src = PDFJS + "pdf.min.js";
+      sc.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS + "pdf.worker.min.js"; ok(window.pdfjsLib); };
+      sc.onerror = () => { pdfjs = null; no(new Error("pdf.js did not load")); };
+      document.head.appendChild(sc);
+    });
+    return pdfjs;
+  }
+  const tooBigPdf = (mb) => `यह फ़ाइल ${mb} MB की है (सीमा ${page.max_upload_mb} MB) और छोटी नहीं हो सकी। सिर्फ़ इसी डॉक्यूमेंट के पेज भेजें, या 📷 फोटो लें बटन से हर पेज की फोटो लें। / This file is ${mb} MB (limit ${page.max_upload_mb} MB) and could not be made smaller. Send only this document's pages, or take a photo of each page with the 📷 Take photos button.`;
+  async function compressPdf(sec, f) {
+    const err = $(sec + "_err"), ok = $(sec + "_ok"), mb = (f.size / 1048576).toFixed(1), list = [];
+    clearShots(sec);
+    err.textContent = "";
+    ok.textContent = `फ़ाइल बड़ी है (${mb} MB), इसे छोटा किया जा रहा है… / The file is large (${mb} MB); making it smaller…`;
+    try {
+      const lib = await loadPdfJs();
+      const pdf = await lib.getDocument({ data: await f.arrayBuffer() }).promise;
+      if (pdf.numPages > MAX_SHOTS) throw new Error("too many pages");
+      let bytes = 0;
+      for (let n = 1; n <= pdf.numPages; n++) {
+        const pg = await pdf.getPage(n), v = pg.getViewport({ scale: 1 });
+        const vp = pg.getViewport({ scale: LONG_SIDE / Math.max(v.width, v.height) });
+        const c = document.createElement("canvas");
+        c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+        const g = c.getContext("2d");
+        g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);     // no black background in the JPEG
+        await pg.render({ canvasContext: g, viewport: vp }).promise;
+        const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", QUALITY));
+        if (!blob || (bytes += blob.size) > MAX_BYTES) throw new Error("still too big");
+        list.push({ blob, url: URL.createObjectURL(blob), pdf: true });
+      }
+      shots[sec] = list;
+      const now = (bytes / 1048576).toFixed(1);
+      ok.textContent = `फ़ाइल बड़ी थी (${mb} MB), हमने इसे छोटा कर दिया (${now} MB, ${list.length} पेज) ✅ / The file was large (${mb} MB); we made it smaller (${now} MB, ${list.length} pages) ✅`;
+    } catch (e) {
+      for (const x of list) URL.revokeObjectURL(x.url);
+      ok.textContent = "";
+      err.textContent = tooBigPdf(mb);
+    }
+    drawShots(sec); checkDates();
+  }
+
+  $("docs").addEventListener("click", (e) => {
+    const cam = e.target.closest("[data-cam]"), del = e.target.closest("[data-del]");
+    if (cam) $(cam.dataset.cam + "_cam").click();
+    if (del) {
+      const [sec, i] = del.dataset.del.split(":");
+      const [x] = shots[sec].splice(+i, 1);
+      URL.revokeObjectURL(x.url);
+      drawShots(sec); checkDates();
+    }
+  });
   $("docs").addEventListener("change", (e) => {
-    const input = e.target, f = input.files && input.files[0];
-    if (input.type !== "file" || !f || f.size <= page.max_upload_mb * 1024 * 1024) return;
-    const mb = (f.size / 1024 / 1024).toFixed(1);
-    $(input.id.replace(/_file$/, "_err")).textContent =
-      `यह फ़ाइल ${mb} MB की है, सीमा ${page.max_upload_mb} MB है। स्कैन ऐप में कम क्वालिटी (या ब्लैक-एंड-व्हाइट) चुनकर PDF दोबारा बनाएँ। / This file is ${mb} MB; the limit is ${page.max_upload_mb} MB. Make the PDF again in your scan app with lower quality or black-and-white.`;
-    input.value = "";                                          // cleared: not sent
+    const input = e.target;
+    if (input.type !== "file") return;
+    const sec = input.id.replace(/_(cam|file)$/, ""), f = input.files[0];
+    $(sec + "_ok").textContent = "";
+    if (/_cam$/.test(input.id) || (f && /^image\//.test(f.type))) {     // a photo: checked, made small, one page
+      input.value = "";
+      if (f) addPhoto(sec, f);
+      return;
+    }
+    if (f && f.size > MAX_BYTES) { input.value = ""; compressPdf(sec, f); return; }
+    if (f) clearShots(sec); else drawShots(sec);           // a PDF replaces the photos
   });
 
   // Still being read on the server (app/upload_jobs.py): ask again every
@@ -301,13 +463,19 @@
   $("f").addEventListener("submit", async (e) => {
     e.preventDefault();
     $("formerr").textContent = "";
-    const chosen = open().filter((d) => $(d.section + "_file").files[0]);
+    const chosen = open().filter((d) => hasFile(d.section));
     if (!chosen.length) { $("formerr").textContent = "कम से कम एक डॉक्यूमेंट चुनें / Choose at least one document."; return; }
     const bad = checkDates(), good = chosen.filter((d) => !bad.includes(d.section));
     if (!good.length) { $("formerr").textContent = "चुने गए डॉक्यूमेंट की तारीख ठीक करें / Fix the date of the chosen document(s)."; return; }
     const skipped = chosen.filter((d) => bad.includes(d.section)).map((d) => ({ d, msg: $(d.section + "_err").textContent }));
     const fd = new FormData($("f"));
     for (const d of skipped) { fd.delete(d.d.section + "_file"); fd.delete(d.d.section + "_issue_date"); }
+    for (const d of good) {                                    // photos: one file per page
+      const list = shots[d.section] || [];
+      if (!list.length) continue;
+      fd.delete(d.section + "_file");
+      list.forEach((x, i) => fd.append(d.section + "_file", new File([x.blob], `${x.pdf ? "pdf-page" : "page"}-${i + 1}.jpg`, { type: "image/jpeg" })));
+    }
     fd.append("dc", dc);
     fd.append("code", ctx.csp.code);
     $("send").disabled = true;

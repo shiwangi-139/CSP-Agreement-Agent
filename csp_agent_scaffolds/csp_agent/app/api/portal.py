@@ -91,10 +91,10 @@ MSG = {
                         "This agreement is incomplete. Please upload all pages together."),
     "pdf_or_photos": ("या तो एक PDF चुनें, या पेजों की फोटो। दोनों एक साथ नहीं।",
                       "Choose either one PDF or photos of the pages, not both."),
-    "too_big": (f"फ़ाइल {round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)} MB से बड़ी है। स्कैन ऐप में कम क्वालिटी "
-                "(या ब्लैक-एंड-व्हाइट) चुनकर PDF दोबारा बनाएँ।",
-                f"The file is larger than {round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)} MB. Make the PDF again in "
-                "your scan app with lower quality or black-and-white."),
+    "too_big": (f"फ़ाइल {round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)} MB से बड़ी है। सिर्फ़ इसी डॉक्यूमेंट के पेज भेजें, "
+                "या 📷 फोटो लें बटन से हर पेज की फोटो लें (फोटो अपने-आप छोटी हो जाती हैं)।",
+                f"The file is larger than {round(MAX_UPLOAD_SIZE_BYTES / 1024 / 1024)} MB. Send only this document's "
+                "pages, or take a photo of each page with the 📷 Take photos button (photos are made small automatically)."),
     "no_date": ("कृपया डॉक्यूमेंट बनने की तारीख (issue date) भरें।", "Please enter the document's issue date."),
     "future": ("यह तारीख आज के बाद की नहीं हो सकती।", "The issue date cannot be in the future."),
     "expired": ("इस डॉक्यूमेंट की तारीख निकल चुकी है (expired)। कृपया इसे रिन्यू करवाकर नया डॉक्यूमेंट अपलोड करें।",
@@ -765,7 +765,10 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
         if mimes[0] == "application/pdf":
             data, mime = files[0], mimes[0]
         else:
-            bad = next(((i, p) for i, p in enumerate(photo_problem(f) for f in files) if p), None)
+            # Pages drawn from a large PDF on the phone (pdf-page-N.jpg) have no camera problems to fix.
+            drawn = [str(getattr(u, "filename", "")).startswith("pdf-page-") for u in uploads]
+            bad = next(((i, p) for i, p in enumerate(None if d else photo_problem(f) for f, d in zip(files, drawn))
+                        if p), None)
             if bad:
                 # Not filed as a document: the CSP retakes that page right away.
                 turn_away(bad[1], files[bad[0]], mimes[bad[0]])
