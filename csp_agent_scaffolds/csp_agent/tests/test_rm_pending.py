@@ -147,7 +147,7 @@ def test_label_1_with_an_expired_document_is_on_the_list(client, monkeypatch):
     assert [x[2] for x in rows[1:] if x[2]] == [f"7X{n:06d}"]
 
 
-def test_agreement_shows_submitted_unless_it_ends_within_60_days(client, monkeypatch):
+def test_agreement_and_pvr_show_submitted_unless_they_end_within_60_days(client, monkeypatch):
     monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
     c, Session = client
     s = Session()
@@ -156,19 +156,19 @@ def test_agreement_shows_submitted_unless_it_ends_within_60_days(client, monkeyp
     s.add(rm)
     s.flush()
     today, n = date.today(), int(tag, 16) % 1000000
-    for code, days in (("F", 400), ("S", 30)):          # PVR pending, so both are on the list
+    for code, days in (("F", 400), ("S", 30)):          # IIBF pending, so both are on the list
         x = CSP(name=f"A {code} {tag}", current_code=f"7{code}{n:06d}", rm_id=rm.id, category=3,
                 is_active_in_calling_sheet=True)
         s.add(x)
         s.flush()
-        for t, exp in (("AGREEMENT", today + timedelta(days=days)), ("POLICE_VERIFICATION", None)):
-            if exp:
-                s.add(Document(csp_id=x.id, document_type=t, sha256=uuid.uuid4().hex, readability="READABLE",
-                               status=DocumentStatus.VALID, is_current=True, issue_date=today - timedelta(days=300),
-                               expiry_date=exp))
+        for t, exp in (("AGREEMENT", today + timedelta(days=days)), ("POLICE_VERIFICATION", today + timedelta(days=days))):
+            s.add(Document(csp_id=x.id, document_type=t, sha256=uuid.uuid4().hex, readability="READABLE",
+                           status=DocumentStatus.VALID, is_current=True, issue_date=today - timedelta(days=300),
+                           expiry_date=exp))
     s.commit()
     rm_id = rm.id
     s.close()
-    rows = {r["code"][1]: r["docs"]["AGREEMENT"] for r in c.get(f"/api/hub/rm-pending/rows?rm={rm_id}", headers=HDR).json()["rows"]}
-    assert rows["F"] == {"word": "Submitted", "tone": "ok"}
-    assert rows["S"] == {"word": f"OK till {(today + timedelta(days=30)):%d-%m-%Y}", "tone": "warn"}
+    got = {r["code"][1]: r["docs"] for r in c.get(f"/api/hub/rm-pending/rows?rm={rm_id}", headers=HDR).json()["rows"]}
+    for t in ("AGREEMENT", "POLICE_VERIFICATION"):
+        assert got["F"][t] == {"word": "Submitted", "tone": "ok"}
+        assert got["S"][t] == {"word": f"OK till {(today + timedelta(days=30)):%d-%m-%Y}", "tone": "warn"}

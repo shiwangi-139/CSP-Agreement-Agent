@@ -67,8 +67,8 @@ def rm_list(db: Session, rm_ids: Optional[set[int]] = None) -> list[dict]:
 
 
 def _renewal_soon(t: str, s) -> bool:
-    """An agreement ending within 60 days: shown with its date. Further off it is just "Submitted"."""
-    return t == "AGREEMENT" and s.days_left is not None and s.days_left <= RENEWAL_SOON_DAYS
+    """A document ending within 60 days: shown with its date. Further off it is just "Submitted"."""
+    return s.days_left is not None and s.days_left <= RENEWAL_SOON_DAYS
 
 
 def _word(t: str, s) -> str:
@@ -76,7 +76,7 @@ def _word(t: str, s) -> str:
     if s.in_review:
         return "Being checked by Eko"
     if s.status == "VALID":
-        if s.expiry_date is None or t == "AGREEMENT" and not _renewal_soon(t, s):
+        if s.expiry_date is None or not _renewal_soon(t, s):
             return "Submitted"
         return f"OK till {fmt(s.expiry_date)}"
     if s.status == "EXPIRED":
