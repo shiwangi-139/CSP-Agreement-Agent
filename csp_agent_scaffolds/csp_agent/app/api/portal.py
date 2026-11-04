@@ -62,6 +62,7 @@ router = APIRouter()
 PAGE = Path(__file__).resolve().parent.parent / "web" / "portal.html"
 GET_LINK_PAGE = PAGE.parent / "get_link.html"
 DC_PAGE = PAGE.parent / "dc_master.html"
+COMMON_PAGE = PAGE.parent / "csp_common.html"
 # Inlined: only the upload routes are public, so the page can't fetch /static.
 LOGO = "data:image/png;base64," + base64.b64encode(
     (PAGE.parent / "static" / "logo.png").read_bytes()).decode()
@@ -106,6 +107,17 @@ MSG = {
     "application_only": ("यह पुलिस प्रमाण पत्र का आवेदन या उसकी रसीद है, प्रमाण पत्र नहीं। पुलिस से प्रमाण पत्र मिलने के बाद उसे यहाँ अपलोड करें।",
                          "This is the application or receipt for the police certificate, not the certificate itself. "
                          "Upload the certificate once the police issue it."),
+    # CSP common link (app/csp_common_link.py)
+    "common_closed": ("यह लिंक अब बंद है। नया लिंक अपने WhatsApp पर देखें या अपने DC से संपर्क करें।",
+                      "This link is closed. Check WhatsApp for the new link or contact your DC."),
+    "common_bad_input": ("अपना KO कोड और मोबाइल नंबर के आखिरी 4 अंक सही भरें।",
+                         "Enter your KO code and the last 4 digits of your mobile number."),
+    "common_no_match": ("KO कोड या मोबाइल नंबर मेल नहीं खाता। दोबारा जाँचें।",
+                        "KO code or mobile number doesn't match. Please check."),
+    "common_locked": ("बहुत ज़्यादा गलत प्रयास। 30 मिनट बाद दोबारा कोशिश करें या अपने DC से संपर्क करें।",
+                      "Too many wrong tries. Try again in 30 minutes or contact your DC."),
+    "common_no_mobile": ("आपका मोबाइल नंबर हमारे पास नहीं है। कृपया अपने DC से संपर्क करें।",
+                         "We don't have your mobile number. Please contact your DC."),
     # DC master link (app/master_link.py)
     "dc_unknown_csp": ("यह KO कोड सक्रिय CSP सूची में नहीं है। कोड जाँचें।",
                        "This KO code is not in the list of active CSPs. Please check the code."),
@@ -423,7 +435,13 @@ def _page_failure(db: Session, request: Request, token: str, dc: str, code: str,
 
 
 @router.get("/upload", response_class=HTMLResponse)
-def upload_page(token: str = Query(""), dc: str = Query(""), db: Session = Depends(get_db)):
+def upload_page(token: str = Query(""), dc: str = Query(""), c: str = Query(""), db: Session = Depends(get_db)):
+    if c:
+        # The CSP common link (app/csp_common_link.py): KO code + last 4 digits first.
+        from .. import csp_common_link
+        if csp_common_link.resolve(db, c) is None:
+            return _get_link_page(notice="common_closed")
+        return HTMLResponse(COMMON_PAGE.read_text(encoding="utf-8").replace("__LOGO__", LOGO))
     if dc:
         # The DC master link (app/master_link.py).
         if master_link.resolve(db, dc) is None:
@@ -569,6 +587,17 @@ def request_link(request: Request, background: BackgroundTasks, code: str = Form
             return JSONResponse({"ok": False, "message": _msg("dc_unknown_csp")}, status_code=404)
         _record_link_open(db, csp.id, "DC_LINK_VIEW", master_link.CHANNEL)
         return JSONResponse({"ok": True, "context": _dc_context(db, csp)})
+    if action == "csp_open":
+        # The CSP common link: KO code + last 4 digits of the mobile -> the CSP's own link.
+        from .. import csp_common_link
+        r = csp_common_link.open_page(db, key, code, mobile, ip)
+        if r["result"] == "ok":
+            return JSONResponse({"ok": True, "url": r["url"]})
+        msg = _msg("common_" + r["result"])
+        if r.get("tries_left"):
+            msg = {"hi": f"{msg['hi']} (बचे प्रयास: {r['tries_left']})", "en": f"{msg['en']} (tries left: {r['tries_left']})"}
+        return JSONResponse({"ok": False, "result": r["result"], "message": msg},
+                            status_code=429 if r["result"] == "locked" else 400)
     if action == "question":
         # Only Nginx's public routes reach the app, so questions share this one.
         if not _ip_allowed(ip):

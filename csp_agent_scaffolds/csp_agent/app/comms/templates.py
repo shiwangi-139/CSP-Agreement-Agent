@@ -206,6 +206,22 @@ def _upload_nudge(c):
             "The upload link is in the message above.")
 
 
+def _final_notice(c):
+    """The final notice (app/final_notice.py), as approved on 04-11-2026."""
+    return (f"Final notice: documents pending | KO {c['csp_code']}",
+            f"⚠️ अंतिम सूचना / FINAL NOTICE – Eko CSP\n\nप्रिय {c['csp_name']} (KO {c['csp_code']}),\n\n"
+            f"आपके CSP के ये डॉक्यूमेंट अभी तक जमा नहीं हुए हैं:\n❌ {c['docs_hi']}\n\n"
+            f"👉 {c['when_hi']} शाम 6 बजे तक नीचे दिए लिंक पर अपलोड करें:\n{c['common_link']}\n"
+            f"(लिंक खोलकर अपना KO कोड {c['csp_code']} और अपने रजिस्टर्ड मोबाइल नंबर के आखिरी 4 अंक डालें)\n\n"
+            "समय पर अपलोड न होने पर आपका CSP टर्मिनल बंद कर दिया जाएगा। सेवा बंद होने की पूरी ज़िम्मेदारी आपकी होगी।\n\n"
+            f"मदद के लिए अपने DC या RM {c['rm_name']} से संपर्क करें।",
+            f"Dear {c['csp_name']} (KO {c['csp_code']}),\n\nThe following documents for your CSP are still pending:\n"
+            f"❌ {c['docs_en']}\n\n👉 Upload them by 6 PM {c['when_en']}, using this link:\n{c['common_link']}\n"
+            f"(Open the link and enter your KO code {c['csp_code']} and the last 4 digits of your registered mobile number)\n\n"
+            "If they are not uploaded in time, your CSP terminal will be closed, and you will be responsible for the "
+            f"service being stopped.\n\nFor help, contact your DC or RM {c['rm_name']}.")
+
+
 def staff_list_text(name: str, count: int, codes: str) -> str:
     """The RM / DC list (app/escalation.py), as it reads on WhatsApp."""
     return (f"नमस्ते {name} 🙏\n\nआपके {count} CSP के डॉक्यूमेंट अभी बाकी हैं "
@@ -230,6 +246,7 @@ TEMPLATES = {
     "ESCALATION_RM": _escalation("RM"),
     "ESCALATION_DC": _escalation("DC"),
     "UPLOAD_NUDGE": _upload_nudge,
+    "FINAL_NOTICE": _final_notice,
 }
 CSP_FACING = {"RENEWAL_NOTICE", "RENEWAL_FOLLOWUP", "RENEWAL_FINAL", "UPLOAD_MISSING",
               "UPLOAD_EXPIRED", "ONBOARD_ALL", "UNREADABLE_REUPLOAD", "LINK_REQUEST",

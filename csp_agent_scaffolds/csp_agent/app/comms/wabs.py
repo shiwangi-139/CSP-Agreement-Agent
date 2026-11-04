@@ -116,6 +116,19 @@ CLEAN.update({
         "Hello {{4}}, {{5}} of your CSPs still have documents to upload (list above). Please call them and get the "
         "documents uploaded; each CSP has their upload link on WhatsApp.\n— Eko"),
 })
+# The final notice (app/final_notice.py). Firm wording: Meta may ask for it
+# to be softened.
+CLEAN["final_notice"] = (
+    "⚠️ अंतिम सूचना / FINAL NOTICE – Eko CSP\n\nप्रिय {{1}} (KO {{2}}),\n\n"
+    "आपके CSP के ये डॉक्यूमेंट अभी तक जमा नहीं हुए हैं:\n❌ {{3}}\n\n"
+    "👉 {{4}} शाम 6 बजे तक नीचे दिए लिंक पर अपलोड करें:\n{{5}}\n"
+    "(लिंक खोलकर अपना KO कोड और रजिस्टर्ड मोबाइल नंबर के आखिरी 4 अंक डालें)\n\n"
+    "समय पर अपलोड न होने पर आपका CSP टर्मिनल बंद कर दिया जाएगा। सेवा बंद होने की पूरी ज़िम्मेदारी आपकी होगी।\n"
+    "मदद के लिए अपने DC या RM {{6}} से संपर्क करें।\n\n"
+    "Dear {{7}}, these documents are still pending: {{8}}. Upload them by 6 PM {{9}} on the link above "
+    "(enter your KO code and the last 4 digits of your registered mobile). If they are not uploaded in time, "
+    "your CSP terminal will be closed, and you will be responsible for the service being stopped. "
+    "For help, contact your DC or RM {{10}}.\n— Eko India Financial Services")
 _RENEWAL = {"1": "name", "2": "code", "3": "doc_hi", "4": "date", "5": "name", "6": "doc_en", "7": "date",
             "8": "link", "9": "rm"}
 _DOCS = {"1": "name", "2": "code", "3": "doc_hi", "4": "name", "5": "doc_en", "6": "link", "7": "rm"}
@@ -129,6 +142,8 @@ CLEAN_MAP = {"onboard": {"1": "name", "2": "code", "3": "name", "4": "link", "5"
                          "7": "ok_en", "8": "check_en", "9": "bad_en", "10": "link", "11": "rm"},
              "all_done": {"1": "name", "2": "code", "3": "name", "4": "rm"},
              "nudge": {"1": "name", "2": "code", "3": "doc_hi", "4": "doc_en"},
+             "final_notice": {"1": "name", "2": "code", "3": "doc_hi", "4": "when_hi", "5": "link", "6": "rm_name",
+                              "7": "name", "8": "doc_en", "9": "when_en", "10": "rm_name"},
              "staff_list": {"1": "name", "2": "count", "3": "codes", "4": "name", "5": "count"}}
 # Message type (OutboundMessage.template_name) -> layout above. RM / DC
 # escalations go to staff and have no WhatsApp layout (yet).
@@ -137,7 +152,7 @@ KIND_FOR_TEMPLATE = {"ONBOARD_ALL": "onboard", "LINK_REQUEST": "link",
                      "RENEWAL_FINAL": "renewal_final", "UPLOAD_EXPIRED": "expired",
                      "UPLOAD_MISSING": "missing", "UNREADABLE_REUPLOAD": "unreadable",
                      "UPLOAD_RECEIPT": "receipt", "UPLOAD_PARTIAL_REJECTED": "receipt",
-                     "UPLOAD_SUCCESS_ALL": "all_done", "UPLOAD_NUDGE": "nudge",
+                     "UPLOAD_SUCCESS_ALL": "all_done", "UPLOAD_NUDGE": "nudge", "FINAL_NOTICE": "final_notice",
                      "STAFF_PENDING_LIST": "staff_list"}
 
 
@@ -162,6 +177,19 @@ def layout_values(template_key: str, csp, state, document_type: str) -> dict:
             raise ValueError("nothing left to upload")
         return {"doc_en": ", ".join(DOC_LABELS[t][0] for t in state.needs_upload),
                 "doc_hi": ", ".join(DOC_LABELS[t][1] for t in state.needs_upload)}
+    if kind == "final_notice":
+        # At send time: today's deadline, the documents still due and the live common link.
+        from sqlalchemy.orm import object_session
+        from .. import csp_common_link, final_notice
+        db = object_session(csp)
+        link = csp_common_link.current_url(db)
+        if link is None:
+            raise ValueError("the CSP common link is switched off")
+        if not state.needs_upload:
+            raise ValueError("nothing left to upload")
+        d, w = final_notice.documents(state), final_notice.when()
+        return {"doc_hi": d["docs_hi"], "doc_en": d["docs_en"], "when_hi": w["when_hi"], "when_en": w["when_en"],
+                "link": link, "rm_name": final_notice.rm_name(db, csp) or "-"}
     if kind in ("expired", "missing", "unreadable"):
         now = state.expired if kind == "expired" else state.needs_upload
         types = [t for t in asked if t in now] or asked or list(now)

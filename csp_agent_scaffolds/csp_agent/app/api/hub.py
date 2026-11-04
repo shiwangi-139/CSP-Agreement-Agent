@@ -287,14 +287,9 @@ def rm_pending_list(me: Principal = Depends(require_user), db: Session = Depends
     return {"rms": rm_pending.rm_list(db, None if me.is_admin else {me.user_id or -1})}
 
 
-# The same list as a table on the dashboard ("Pending by RM"), with filters
-# for the RM (admins), district and DC. An RM always gets only their own.
-@router.get("/rm-pending/rows")
-def rm_pending_rows(rm: Optional[int] = None, district: str = "", dc: str = "", q: str = "",
-                    me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+def _rmp_rows(db: Session, rm: Optional[int], district: str, dc: str, q: str) -> tuple[list, list, list]:
+    """Pending by RM's rows with its filters, and the district and DC lists to pick from."""
     from .. import rm_pending
-    if not me.is_admin:
-        rm = me.user_id or -1
     rows = rm_pending.pending_rows(db, rm)
     count = lambda key, rs: [{"name": k, "csps": n} for k, n in
                              sorted(Counter(r[key] for r in rs).items(),
@@ -308,6 +303,34 @@ def rm_pending_rows(rm: Optional[int] = None, district: str = "", dc: str = "", 
     if q.strip():
         n = q.strip().lower()
         rows = [r for r in rows if n in (r["code"] or "").lower() or n in r["name"].lower() or n in r["phone"]]
+    return rows, districts, dcs
+
+
+# Final notice (app/final_notice.py) for the CSPs Pending by RM shows with its
+# filters: one WhatsApp draft each, approved by a person in the Communication Hub.
+@router.post("/final-notice", dependencies=[Depends(require_admin)])
+def final_notice_drafts(body: dict = Body(...), db: Session = Depends(get_db)):
+    from .. import final_notice
+    rm = body.get("rm")
+    rows, _, _ = _rmp_rows(db, int(rm) if str(rm or "").isdigit() else None, str(body.get("district") or ""),
+                           str(body.get("dc") or ""), str(body.get("q") or ""))
+    try:
+        counts = final_notice.draft(db, [r["id"] for r in rows])
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    db.commit()
+    return counts
+
+
+# The same list as a table on the dashboard ("Pending by RM"), with filters
+# for the RM (admins), district and DC. An RM always gets only their own.
+@router.get("/rm-pending/rows")
+def rm_pending_rows(rm: Optional[int] = None, district: str = "", dc: str = "", q: str = "",
+                    me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from .. import rm_pending
+    if not me.is_admin:
+        rm = me.user_id or -1
+    rows, districts, dcs = _rmp_rows(db, rm, district, dc, q)
     return {"rms": rm_pending.rm_list(db) if me.is_admin else [], "rm": rm, "districts": districts, "dcs": dcs,
             "pending": {t: sum(t in r["to_upload"] for r in rows) for t in REQUIRED_TYPES},
             "total": len(rows), "rows": rows}
@@ -1256,6 +1279,29 @@ def master_link_create(me: Principal = Depends(require_user), db: Session = Depe
     url = master_link.create(db, me.name)
     db.commit()
     return {"url": url, **master_link.status(db)}
+
+
+# The CSP common link (app/csp_common_link.py), managed like the DC master link.
+@router.get("/csp-link", dependencies=[Depends(require_admin)])
+def csp_link_status(db: Session = Depends(get_db)):
+    from .. import csp_common_link
+    return csp_common_link.status(db)
+
+
+@router.post("/csp-link", dependencies=[Depends(require_admin)])
+def csp_link_create(me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    from .. import csp_common_link
+    url = csp_common_link.create(db, me.name)
+    db.commit()
+    return {"url": url, **csp_common_link.status(db)}
+
+
+@router.post("/csp-link/revoke", dependencies=[Depends(require_admin)])
+def csp_link_revoke(db: Session = Depends(get_db)):
+    from .. import csp_common_link
+    n = csp_common_link.revoke_all(db)
+    db.commit()
+    return {"revoked": n}
 
 
 @router.get("/dc-sheet-key", dependencies=[Depends(require_admin)])

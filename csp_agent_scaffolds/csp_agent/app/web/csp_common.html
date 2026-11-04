@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eko CSP Upload</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@600;700;800&family=JetBrains+Mono:wght@500&family=Noto+Sans+Devanagari:wght@400;600&display=swap">
+<style>
+  /* The CSP common link (app/csp_common_link.py): same look as the DC page. */
+  :root {
+    --primary: hsl(197 100% 40%); --forest: hsl(155 53% 24%); --cream: hsl(40 33% 94%); --ink: hsl(210 30% 7%);
+    --muted: hsl(210 10% 40%); --border: hsl(30 20% 85%); --mist: hsl(145 25% 93%); --card: #fff; --radius: .75rem;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--cream); color: var(--ink);
+         font: 16px/1.5 Inter, "Noto Sans Devanagari", system-ui, sans-serif; }
+  header { background: var(--forest); color: #fff; padding: 14px 16px; display: flex; align-items: center; gap: 14px; }
+  header .logo { height: 36px; width: auto; flex: none; }
+  header h1 { font: 800 1.25rem/1.2 "Plus Jakarta Sans", Inter, sans-serif; margin: 0 0 2px; }
+  header p { margin: 0; opacity: .85; font-size: .9rem; }
+  .trust { background: hsl(155 40% 18%); color: #fff; font-size: .82rem; padding: 6px 16px; }
+  .trust .en { color: hsl(150 30% 80%); }
+  main { max-width: 520px; margin: 0 auto; padding: 16px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
+  h2 { font: 700 1.05rem/1.3 "Plus Jakarta Sans", Inter, sans-serif; margin: 0 0 4px; }
+  .en { color: var(--muted); font-size: .88rem; }
+  label { display: block; font-weight: 600; margin: 14px 0 4px; font-size: .95rem; }
+  label .en { font-weight: 400; display: block; }
+  input { width: 100%; padding: 12px; font: 500 1.1rem "JetBrains Mono", monospace; letter-spacing: .05em;
+          border: 1px solid var(--border); border-radius: .6rem; background: #fff; color: var(--ink); }
+  input.short { width: 9rem; letter-spacing: .4em; }
+  button { width: 100%; margin-top: 18px; padding: 14px; font: 700 1.05rem "Plus Jakarta Sans", Inter, sans-serif;
+           background: var(--primary); color: #fff; border: 0; border-radius: var(--radius); cursor: pointer; }
+  button:disabled { opacity: .6; }
+  .err { color: hsl(0 70% 42%); font-size: .95rem; margin-top: 12px; }
+  .err .en { color: hsl(0 50% 45%); }
+  .safe { background: var(--mist); font-size: .9rem; }
+</style>
+</head>
+<body>
+<header>
+  <img class="logo" src="__LOGO__" alt="Eko">
+  <div>
+    <h1>CSP डॉक्यूमेंट अपलोड <span style="font-weight:600;opacity:.8">/ CSP document upload</span></h1>
+    <p>अपने डॉक्यूमेंट यहाँ जमा करें <span class="en" style="color:inherit">· Upload your documents here</span></p>
+  </div>
+</header>
+<div class="trust">Eko · SBI कियोस्क बैंकिंग पार्टनर <span class="en">· SBI Kiosk Banking partner</span></div>
+<main>
+  <form class="card" id="f" novalidate>
+    <h2>पहले अपनी पहचान दें <span class="en">/ First, tell us who you are</span></h2>
+    <label for="code">अपना KO कोड डालें <span class="en">Enter your KO code</span></label>
+    <input type="text" id="code" autocomplete="off" placeholder="1A85…" maxlength="12" autocapitalize="characters">
+    <label for="last4">रजिस्टर्ड मोबाइल के आखिरी 4 अंक <span class="en">Last 4 digits of your registered mobile</span></label>
+    <input type="tel" id="last4" class="short" inputmode="numeric" maxlength="4" placeholder="____" autocomplete="off">
+    <div id="err" class="err" role="alert"></div>
+    <button id="go" type="submit">आगे बढ़ें / Continue</button>
+  </form>
+  <section class="card safe">
+    🔒 हम कभी OTP, आधार या बैंक विवरण नहीं माँगते।
+    <div class="en">We never ask for OTP, Aadhaar or bank details.</div>
+  </section>
+</main>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const key = new URLSearchParams(location.search).get("c") || "";
+  const show = (m) => { $("err").innerHTML = ""; const hi = document.createElement("div"), en = document.createElement("div");
+    hi.textContent = m.hi; en.textContent = m.en; en.className = "en"; $("err").append(hi, en); };
+  $("last4").addEventListener("input", (e) => { e.target.value = e.target.value.replace(/\D/g, "").slice(0, 4); });
+  $("f").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const code = $("code").value.trim().toUpperCase(), last4 = $("last4").value.trim();
+    if (!code || last4.length !== 4) return show({hi: "अपना KO कोड और मोबाइल नंबर के आखिरी 4 अंक सही भरें।", en: "Enter your KO code and the last 4 digits of your mobile number."});
+    $("go").disabled = true;
+    const fd = new FormData();
+    fd.append("action", "csp_open"); fd.append("key", key); fd.append("code", code); fd.append("mobile", last4);
+    try {
+      const r = await fetch("upload", { method: "POST", body: fd });     // relative: next to the page
+      const j = await r.json();
+      if (j.ok && j.url) { location.replace(j.url); return; }
+      show(j.message || {hi: "कुछ गलत हुआ। दोबारा कोशिश करें।", en: "Something went wrong. Please try again."});
+    } catch (_) {
+      show({hi: "इंटरनेट कनेक्शन जाँचें और दोबारा कोशिश करें।", en: "Check your internet connection and try again."});
+    }
+    $("go").disabled = false;
+  });
+})();
+</script>
+</body>
+</html>

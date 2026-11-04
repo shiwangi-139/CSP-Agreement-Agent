@@ -385,7 +385,8 @@ def auto_approve(db: Session, now: Optional[datetime] = None) -> dict:
         q = (db.query(OutboundMessage)
              .filter(OutboundMessage.status == OutboundStatus.QUEUED_FOR_REVIEW,
                      OutboundMessage.channel == channel,
-                     (OutboundMessage.recipient_role == "CSP") | (OutboundMessage.template_name == "STAFF_PENDING_LIST"))
+                     (OutboundMessage.recipient_role == "CSP") | (OutboundMessage.template_name == "STAFF_PENDING_LIST"),
+                     OutboundMessage.template_name != "FINAL_NOTICE")      # a person approves every final notice
              .order_by(OutboundMessage.created_at, OutboundMessage.id).limit(500))
         for m in q.all():
             try:

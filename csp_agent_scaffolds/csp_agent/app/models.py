@@ -492,6 +492,30 @@ class MasterLink(Base):
     revoked_at = Column(DateTime)
 
 
+class CspCommonLink(Base):
+    """The CSP common link (app/csp_common_link.py): one link for every
+    working CSP, sent in the final notice. Only one is live."""
+    __tablename__ = "csp_common_links"
+    id = Column(Integer, primary_key=True)
+    token_hash = Column(String, unique=True, nullable=False)
+    token = Column(String)          # kept so admins always see the one link (dashboard only)
+    created_by = Column(String)
+    created_at = Column(DateTime, nullable=False)
+    revoked_at = Column(DateTime)
+
+
+class CommonLinkTry(Base):
+    """One try on the CSP common link: KO code + last 4 digits of the mobile.
+    Wrong tries lock the KO code and the web address for a while."""
+    __tablename__ = "common_link_tries"
+    id = Column(Integer, primary_key=True)
+    at = Column(DateTime, nullable=False, index=True)
+    code = Column(String, index=True)
+    ip = Column(String)
+    ok = Column(Boolean, nullable=False)
+    csp_id = Column(Integer, ForeignKey("csp.id"))
+
+
 class PvrApplication(Base):
     """A CSP has applied for a new police certificate (it can take a month):
     the application receipt uploaded in the PVR box. It is NOT a valid PVR,

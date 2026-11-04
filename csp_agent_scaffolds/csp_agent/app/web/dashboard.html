@@ -1073,7 +1073,7 @@
       const TYPES = {ONBOARD_ALL: "Onboarding (no documents)", UPLOAD_MISSING: "Documents pending", UPLOAD_EXPIRED: "Documents expired",
                      UNREADABLE_REUPLOAD: "Unreadable, re-upload", RENEWAL_NOTICE: "Renewal notice", RENEWAL_FOLLOWUP: "Renewal reminder",
                      RENEWAL_FINAL: "Renewal final", LINK_REQUEST: "Link the CSP asked for",
-                     UPLOAD_RECEIPT: "Reply after upload", UPLOAD_SUCCESS_ALL: "All documents recorded"};
+                     UPLOAD_RECEIPT: "Reply after upload", UPLOAD_SUCCESS_ALL: "All documents recorded", FINAL_NOTICE: "Final notice"};
       const m = a.periods.last_30_days, w = a.periods.last_7_days, t = a.periods.today;
       const days = a.days.slice().reverse();
       const rate = (n, d) => d ? Math.round(100 * n / d) : null;
@@ -1178,7 +1178,8 @@
         <label class="small">Search<br><input type="search" id="rmpq" placeholder="Code, name or mobile" value="${esc(f.q || "")}"></label>
         ${Object.keys(f).length ? `<button class="btn" data-rmpclear="1">Clear filters</button>` : ""}
         <span class="muted"><b>${d.total}</b> CSPs</span>
-        ${d.rm ? `<a class="btn" href="#" data-rmcsv="${d.rm}">Download ${esc(rmName)}'s list (CSV)</a>` : ""}</div>
+        ${d.rm ? `<a class="btn" href="#" data-rmcsv="${d.rm}">Download ${esc(rmName)}'s list (CSV)</a>` : ""}
+        ${isAdmin && d.total ? `<button class="btn primary" data-finalnotice="${d.total}" title="A firm WhatsApp message with the CSP common link and today's 6 PM deadline, for every CSP shown">Draft final notice (${d.total})</button>` : ""}</div>
       <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>District</th><th>State</th>${cols === 11 ? "<th>RM</th>" : ""}<th>DC</th><th>CSP</th><th>Mobile</th><th>Label</th>
         <th>Agreement</th><th>PVR / Character</th><th>IIBF</th><th>To upload</th></tr></thead><tbody>${body}</tbody></table>`
         : `<div class="empty">No CSPs pending${Object.keys(f).length ? " for these filters" : ""}.</div>`}</div>`;
@@ -1195,7 +1196,17 @@
       if (state.summary.me.role === "ADMIN") {
         const m = await api("/api/hub/master-link");
         m.sheetKey = (await api("/api/hub/dc-sheet-key")).key;
-        ml = `<div class="card" style="margin-bottom:12px"><div class="meta"><b>DC master link</b>
+        // CSP common link (app/csp_common_link.py): sent in the final notice.
+        const cl = await api("/api/hub/csp-link"), t = cl.last_24h || {};
+        ml = `<div class="card" style="margin-bottom:12px"><div class="meta"><b>CSP common link</b>
+          ${cl.active ? badge("VALID", "working") + ` <span class="small muted">made by ${esc(cl.created_by || "")} ${when(cl.created_at)} · never expires</span>` : badge("EXPIRED", "not made / switched off")}</div>
+          <p class="small muted">One link for all CSPs, sent in the final notice. The CSP types their KO code and the last 4 digits of their mobile on record, then lands on their own upload page. It shows nobody's details; 5 wrong tries lock that KO code for 30 minutes.</p>
+          ${cl.url ? `<div class="toolbar"><input type="text" id="clurl" readonly value="${esc(cl.url)}" style="flex:1" class="mono" onclick="this.select()">
+            <button class="btn primary" data-clink="copy">Copy</button></div>` : ""}
+          <div class="toolbar"><button class="btn" data-clink="new">${cl.active ? "Make a new link" : "Make the link"}</button>
+          ${cl.active ? `<button class="btn" data-clink="revoke">Switch it off</button>` : ""}
+          <span class="small muted">Last 24 h: <b>${t.opened || 0}</b> opened their page · <b>${t.wrong || 0}</b> wrong tries${(t.locked_codes || []).length ? ` · locked now: <span class="mono">${t.locked_codes.map(esc).join(", ")}</span>` : ""}</span></div></div>
+        ` + `<div class="card" style="margin-bottom:12px"><div class="meta"><b>DC master link</b>
           ${m.active ? badge("VALID", "working") + ` <span class="small muted">made by ${esc(m.created_by || "")} ${when(m.created_at)} · never expires</span>` : badge("EXPIRED", "not working")}</div>
           <p class="small muted">One link for all DCs: they type a KO code and upload for any CSP in Labels 1–4. It keeps working until you make a new one. Their uploads appear in the Review queue as "DC upload".</p>
           ${m.url ? `<div class="toolbar"><input type="text" id="mlurl" readonly value="${esc(m.url)}" style="flex:1" class="mono" onclick="this.select()">
@@ -1453,7 +1464,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-rmpclear],[data-attfilter],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-rmpclear],[data-clink],[data-finalnotice],[data-attfilter],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -1603,6 +1614,15 @@
       if (ds.sendnow) { if (!confirm("Send this WhatsApp message to the CSP now?")) return; const m = await post(`/api/hub/messages/${ds.sendnow}/send-now`); toast(`→ ${m.status.replaceAll("_", " ").toLowerCase()}${m.error ? ": " + m.error : ""}`); return refreshAfterAction(); }
       if (ds.findset) { e.preventDefault(); state.find = JSON.parse(ds.findset); state.page = 1; state.view = "find"; return render(); }
       if (ds.rmpclear) { state.rmp = {}; return render(); }
+      if (ds.clink === "copy") { const v = $("#clurl").value; try { await navigator.clipboard.writeText(v); } catch (_) { $("#clurl").select(); document.execCommand("copy"); } return toast("Link copied"); }
+      if (ds.clink === "new") { if ($("#clurl") && !confirm("Make a NEW CSP common link?\n\nThe link already sent in final notices will STOP working.")) return; await post("/api/hub/csp-link"); return render(); }
+      if (ds.clink === "revoke") { if (!confirm("Switch off the CSP common link? CSPs can no longer use it (their own links keep working).")) return; await post("/api/hub/csp-link/revoke"); return render(); }
+      if (ds.finalnotice) {
+        if (!confirm(`Draft the FINAL NOTICE for ${ds.finalnotice} CSPs shown here?\n\nThey go to the Communication Hub; nothing is sent until each one is approved.`)) return;
+        const c = await post("/api/hub/final-notice", state.rmp);
+        toast(`Final notice: ${c.drafted} drafted${c.already ? `, ${c.already} already drafted` : ""}${c.blocked ? `, ${c.blocked} blocked (no WhatsApp / inactive)` : ""}`);
+        return render();
+      }
       if (ds.rmcsv) {
         e.preventDefault();
         const r = await fetch(`api/hub/rm-pending/${ds.rmcsv}.csv`, {credentials: "same-origin", headers: H});
