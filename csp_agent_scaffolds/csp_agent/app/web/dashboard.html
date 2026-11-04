@@ -1149,7 +1149,12 @@
       const tile = (label, n, sub) => `<div class="card kpi" style="cursor:default"><div class="label">${label}</div><div class="n">${n}</div><div class="small muted">${sub}</div></div>`;
       const rmName = isAdmin ? (d.rms.find((r) => r.id === d.rm)?.name || "All RMs") : state.summary.me.name;
       const tone = (x) => `<span class="chip ${x.tone}">${esc(x.word)}</span>`;
-      const cols = isAdmin && !f.rm ? 12 : 11;
+      const cols = isAdmin && !f.rm ? 13 : 12;
+      // Send by hand: opens the staff member's WhatsApp with the number and the final notice filled in.
+      const handCell = (r) => !r.wa_text ? "—" : !r.wa_phone ? `<span class="small muted">no WhatsApp number</span>`
+        : `<a class="btn ${r.hand_sent ? "" : "primary"}" target="_blank" rel="noopener" data-handsent="${r.id}"
+            href="https://wa.me/91${esc(r.wa_phone)}?text=${encodeURIComponent(r.wa_text)}">${r.hand_sent ? "Send again" : "WhatsApp"}</a>
+          ${r.hand_sent ? `<div class="small muted">✓ sent by ${esc(r.hand_sent.by || "")} ${esc(r.hand_sent.at)}</div>` : ""}`;
       const planCell = (r) => r.plan === "closure" ? `<span class="chip bad">Closure list</span>` : r.plan ? `<span class="chip ${r.plan >= 5 ? "bad" : r.plan >= 3 ? "warn" : ""}">Week ${r.plan}</span>` : "—";
       let body = "", last = null;
       for (const r of d.rows) {
@@ -1159,12 +1164,13 @@
           last = r.district;
         }
         body += `<tr class="click" data-csp="${r.id}">
-          <td class="small">${esc(r.district)}</td><td class="small">${esc(r.state || "—")}</td>${cols === 12 ? `<td class="small">${esc(r.rm)}</td>` : ""}
+          <td class="small">${esc(r.district)}</td><td class="small">${esc(r.state || "—")}</td>${cols === 13 ? `<td class="small">${esc(r.rm)}</td>` : ""}
           <td class="small">${esc(r.dc)}</td><td><div class="mono">${esc(r.code || "")}</div><div>${esc(r.name)}</div></td>
           <td class="mono small">${esc(r.phone || "—")}</td><td>${badge("c" + r.category, r.sub_slab_label || "Label " + r.category)}</td>
           <td>${tone(r.docs.AGREEMENT)}</td><td>${tone(r.docs.POLICE_VERIFICATION)}</td><td>${tone(r.docs.IIBF_CERTIFICATE)}</td>
           <td class="small"><b>${esc(r.to_upload.map((t) => DOC[t]).join(", ") || "—")}</b></td>
-          <td class="small">${planCell(r)}<div class="muted">${r.reminders} msgs sent</div></td></tr>`;
+          <td class="small">${planCell(r)}<div class="muted">${r.reminders} msgs sent</div></td>
+          <td>${handCell(r)}</td></tr>`;
       }
       return `
       <div class="grid k4">
@@ -1183,8 +1189,8 @@
         <span class="muted"><b>${d.total}</b> CSPs</span>
         ${d.rm ? `<a class="btn" href="#" data-rmcsv="${d.rm}">Download ${esc(rmName)}'s list (CSV)</a>` : ""}
         ${isAdmin && d.total ? `<button class="btn primary" data-finalnotice="${d.total}" title="A firm WhatsApp message with the CSP common link and today's 6 PM deadline, for every CSP shown">Draft final notice (${d.total})</button>` : ""}</div>
-      <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>District</th><th>State</th>${cols === 12 ? "<th>RM</th>" : ""}<th>DC</th><th>CSP</th><th>Mobile</th><th>Label</th>
-        <th>Agreement</th><th>PVR / Character</th><th>IIBF</th><th>To upload</th><th>Plan</th></tr></thead><tbody>${body}</tbody></table>`
+      <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>District</th><th>State</th>${cols === 13 ? "<th>RM</th>" : ""}<th>DC</th><th>CSP</th><th>Mobile</th><th>Label</th>
+        <th>Agreement</th><th>PVR / Character</th><th>IIBF</th><th>To upload</th><th>Plan</th><th title="Opens your WhatsApp with this CSP's number and the final notice filled in: press Send">Send by hand</th></tr></thead><tbody>${body}</tbody></table>`
         : `<div class="empty">No CSPs pending${Object.keys(f).length ? " for these filters" : ""}.</div>`}</div>`;
     },
 
@@ -1467,7 +1473,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-rmpclear],[data-clink],[data-finalnotice],[data-attfilter],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-rmpclear],[data-clink],[data-finalnotice],[data-handsent],[data-attfilter],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -1617,6 +1623,13 @@
       if (ds.sendnow) { if (!confirm("Send this WhatsApp message to the CSP now?")) return; const m = await post(`/api/hub/messages/${ds.sendnow}/send-now`); toast(`→ ${m.status.replaceAll("_", " ").toLowerCase()}${m.error ? ": " + m.error : ""}`); return refreshAfterAction(); }
       if (ds.findset) { e.preventDefault(); state.find = JSON.parse(ds.findset); state.page = 1; state.view = "find"; return render(); }
       if (ds.rmpclear) { state.rmp = {}; return render(); }
+      if (ds.handsent) {
+        // The link opens WhatsApp (not stopped here); the click is recorded so the team sees who sent it.
+        post(`/api/hub/csp/${ds.handsent}/hand-sent`).catch(() => {});
+        t.classList.remove("primary"); t.textContent = "Send again";
+        if (!t.nextElementSibling) t.insertAdjacentHTML("afterend", `<div class="small muted">✓ opened just now</div>`);
+        return;
+      }
       if (ds.clink === "copy") { const v = $("#clurl").value; try { await navigator.clipboard.writeText(v); } catch (_) { $("#clurl").select(); document.execCommand("copy"); } return toast("Link copied"); }
       if (ds.clink === "new") { if ($("#clurl") && !confirm("Make a NEW CSP common link?\n\nThe link already sent in final notices will STOP working.")) return; await post("/api/hub/csp-link"); return render(); }
       if (ds.clink === "revoke") { if (!confirm("Switch off the CSP common link? CSPs can no longer use it (their own links keep working).")) return; await post("/api/hub/csp-link/revoke"); return render(); }

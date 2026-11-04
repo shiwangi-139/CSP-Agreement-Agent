@@ -114,3 +114,21 @@ def test_whatsapp_layout_gets_the_live_link_and_documents_at_send_time(client):
     assert v["link"].endswith(f"c={w['key']}") and "IIBF" in v["doc_en"] and v["rm_name"] == w["rm_name"]
     assert set(wabs.CLEAN_MAP["final_notice"].values()) <= {"name", "code", *v}
     s.close()
+
+
+def test_send_by_hand_carries_the_final_notice_and_records_who_sent_it(client, monkeypatch):
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    c, Session = client
+    w = _world(Session, n=1)
+    rows = c.get(f"/api/hub/rm-pending/rows?rm={w['rm']}", headers=HDR).json()["rows"]
+    r = rows[0]
+    assert r["wa_phone"] == "9876543210" and "अंतिम सूचना" in r["wa_text"] and f"c={w['key']}" in r["wa_text"]
+    assert r["hand_sent"] is None
+    assert c.post(f"/api/hub/csp/{r['id']}/hand-sent", headers=HDR).json() == {"ok": True}
+    again = c.get(f"/api/hub/rm-pending/rows?rm={w['rm']}", headers=HDR).json()["rows"][0]
+    assert again["hand_sent"]["at"]
+    s = Session()
+    csp_common_link.revoke_all(s)
+    s.commit()
+    s.close()
+    assert "wa_text" not in c.get(f"/api/hub/rm-pending/rows?rm={w['rm']}", headers=HDR).json()["rows"][0]

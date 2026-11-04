@@ -93,8 +93,12 @@ def _tone(t: str, s) -> str:
     return {"VALID": "ok", "EXPIRED": "bad", "UNREADABLE": "bad"}.get(s.status, "warn")
 
 
-def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date] = None) -> list[dict]:
-    """The list as rows for the dashboard, district by district, then DC and CSP code."""
+def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date] = None,
+                 hand_link: Optional[str] = None) -> list[dict]:
+    """The list as rows for the dashboard, district by district, then DC and CSP code.
+    With `hand_link` (the CSP common link), each row also carries the final
+    notice to send by hand from a staff phone ("wa_phone", "wa_text") and who
+    already did today ("hand_sent")."""
     from . import policy
     from .escalation import reminder_counts
     from .models import OutreachCycle
@@ -106,11 +110,28 @@ def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date]
     anchors = dict(db.query(OutreachCycle.csp_id, OutreachCycle.anchor_date).filter(
         OutreachCycle.csp_id.in_([c.id for c in csps] or [-1]), OutreachCycle.document_type == "ALL",
         OutreachCycle.kind == "UPLOAD", OutreachCycle.closed_at.is_(None)))
+    hand = {}
+    if hand_link:
+        from .models import AgreementEvent
+        from .config import local_now
+        since = local_now().replace(hour=0, minute=0, second=0, microsecond=0)
+        for e in (db.query(AgreementEvent).filter(AgreementEvent.event_type == "FINAL_NOTICE_BY_HAND",
+                                                  AgreementEvent.csp_id.in_([c.id for c in csps] or [-1]),
+                                                  AgreementEvent.sent_at >= since).order_by(AgreementEvent.sent_at)):
+            hand[e.csp_id] = {"by": (e.payload or {}).get("by"), "at": e.sent_at.strftime("%H:%M")}
     rows = []
     for c in csps:
         st = evaluate(db, c, today)
         if st.category == 1 and not st.expired:
             continue
+        extra = {}
+        if hand_link and st.needs_upload:
+            from . import final_notice
+            from .comms.outbound import allowed_destinations
+            from .comms.templates import render
+            phones = allowed_destinations(db, c, "CSP", "WHATSAPP")
+            extra = {"wa_phone": phones[0] if phones else None, "hand_sent": hand.get(c.id),
+                     "wa_text": render("FINAL_NOTICE", "WHATSAPP", final_notice.context(db, c, st, hand_link))["body"]}
         rows.append({
             "id": c.id, "district": district_of(c), "state": _clean(c.state) or "", "rm_id": c.rm_id,
             "rm": name(c.rm_id, "No RM"), "dc": name(c.dc_id, "No DC"), "code": c.current_code, "name": c.name,
@@ -122,6 +143,7 @@ def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date]
             "reminders": counts.get(c.id, (0, None))[0],
             "to_upload": [t for t in REQUIRED_TYPES
                           if not st.docs[t].in_review and st.docs[t].status in ("MISSING", "UNREADABLE", "EXPIRED")],
+            **extra,
         })
     rows.sort(key=lambda r: (r["district"] == NO_DISTRICT, r["district"].lower(), r["dc"].lower(), r["code"] or ""))
     return rows

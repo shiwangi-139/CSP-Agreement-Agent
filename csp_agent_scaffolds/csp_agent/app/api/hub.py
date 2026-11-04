@@ -287,10 +287,11 @@ def rm_pending_list(me: Principal = Depends(require_user), db: Session = Depends
     return {"rms": rm_pending.rm_list(db, None if me.is_admin else {me.user_id or -1})}
 
 
-def _rmp_rows(db: Session, rm: Optional[int], district: str, dc: str, q: str, plan: str = "") -> tuple[list, list, list]:
+def _rmp_rows(db: Session, rm: Optional[int], district: str, dc: str, q: str, plan: str = "",
+              hand_link: Optional[str] = None) -> tuple[list, list, list]:
     """Pending by RM's rows with its filters, and the district and DC lists to pick from."""
     from .. import rm_pending
-    rows = rm_pending.pending_rows(db, rm)
+    rows = rm_pending.pending_rows(db, rm, hand_link=hand_link)
     count = lambda key, rs: [{"name": k, "csps": n} for k, n in
                              sorted(Counter(r[key] for r in rs).items(),
                                     key=lambda x: (x[0] in (rm_pending.NO_DISTRICT, "No DC"), x[0].lower()))]
@@ -324,6 +325,17 @@ def final_notice_drafts(body: dict = Body(...), db: Session = Depends(get_db)):
     return counts
 
 
+# The final notice sent by hand from a staff phone (WhatsApp button on Pending
+# by RM, while Meta has not approved the template): who did it, and when.
+@router.post("/csp/{csp_id}/hand-sent")
+def final_notice_by_hand(csp_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    c = _own_csp(db, csp_id, me)
+    db.add(AgreementEvent(csp_id=c.id, event_type="FINAL_NOTICE_BY_HAND", source="DASHBOARD", channel="WHATSAPP",
+                          payload={"by": me.name}))
+    db.commit()
+    return {"ok": True}
+
+
 # The same list as a table on the dashboard ("Pending by RM"), with filters
 # for the RM (admins), district and DC. An RM always gets only their own.
 @router.get("/rm-pending/rows")
@@ -332,7 +344,8 @@ def rm_pending_rows(rm: Optional[int] = None, district: str = "", dc: str = "", 
     from .. import rm_pending
     if not me.is_admin:
         rm = me.user_id or -1
-    rows, districts, dcs = _rmp_rows(db, rm, district, dc, q, plan)
+    from .. import csp_common_link
+    rows, districts, dcs = _rmp_rows(db, rm, district, dc, q, plan, hand_link=csp_common_link.current_url(db))
     return {"rms": rm_pending.rm_list(db) if me.is_admin else [], "rm": rm, "districts": districts, "dcs": dcs,
             "pending": {t: sum(t in r["to_upload"] for r in rows) for t in REQUIRED_TYPES},
             "total": len(rows), "rows": rows}
