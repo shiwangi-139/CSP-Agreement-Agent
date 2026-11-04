@@ -19,7 +19,7 @@ from typing import Optional
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from .compliance import DOC_LABELS, REQUIRED_TYPES, evaluate, slab_label, sub_slab, sub_slab_label
+from .compliance import DOC_LABELS, RENEWAL_SOON_DAYS, REQUIRED_TYPES, evaluate, slab_label, sub_slab, sub_slab_label
 from .models import CSP, InternalUser
 
 LABELS = (2, 3, 4)
@@ -66,12 +66,17 @@ def rm_list(db: Session, rm_ids: Optional[set[int]] = None) -> list[dict]:
     return [{"id": u.id, "name": u.name, "csps": len(_csps(db, u.id))} for u in q.order_by(InternalUser.name)]
 
 
+def _renewal_soon(t: str, s) -> bool:
+    """An agreement ending within 60 days: shown with its date. Further off it is just "Submitted"."""
+    return t == "AGREEMENT" and s.days_left is not None and s.days_left <= RENEWAL_SOON_DAYS
+
+
 def _word(t: str, s) -> str:
     fmt = lambda d: d.strftime("%d-%m-%Y")
     if s.in_review:
         return "Being checked by Eko"
     if s.status == "VALID":
-        if s.expiry_date is None:
+        if s.expiry_date is None or t == "AGREEMENT" and not _renewal_soon(t, s):
             return "Submitted"
         return f"OK till {fmt(s.expiry_date)}"
     if s.status == "EXPIRED":
@@ -81,9 +86,9 @@ def _word(t: str, s) -> str:
     return "Pending"
 
 
-def _tone(s) -> str:
+def _tone(t: str, s) -> str:
     """How a document's word is shown on the dashboard: ok / warn / bad."""
-    if s.in_review:
+    if s.in_review or s.status == "VALID" and _renewal_soon(t, s):
         return "warn"
     return {"VALID": "ok", "EXPIRED": "bad", "UNREADABLE": "bad"}.get(s.status, "warn")
 
@@ -103,7 +108,7 @@ def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date]
             "rm": name(c.rm_id, "No RM"), "dc": name(c.dc_id, "No DC"), "code": c.current_code, "name": c.name,
             "phone": c.phone or "", "label": slab_label(st.category), "category": st.category,
             "sub_slab_label": sub_slab_label(sub_slab(st)),
-            "docs": {t: {"word": _word(t, st.docs[t]), "tone": _tone(st.docs[t])} for t in REQUIRED_TYPES},
+            "docs": {t: {"word": _word(t, st.docs[t]), "tone": _tone(t, st.docs[t])} for t in REQUIRED_TYPES},
             "to_upload": [t for t in REQUIRED_TYPES
                           if not st.docs[t].in_review and st.docs[t].status in ("MISSING", "UNREADABLE", "EXPIRED")],
         })
