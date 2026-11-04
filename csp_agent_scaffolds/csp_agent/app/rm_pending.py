@@ -95,11 +95,19 @@ def _tone(t: str, s) -> str:
 
 def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date] = None) -> list[dict]:
     """The list as rows for the dashboard, district by district, then DC and CSP code."""
+    from . import policy
+    from .escalation import reminder_counts
+    from .models import OutreachCycle
     today = today or date.today()
     staff = {u.id: u for u in db.query(InternalUser).filter(InternalUser.role.in_(("RM", "DC")))}
     name = lambda i, none: staff[i].name if i in staff else none
+    csps = _csps(db, rm_id)
+    counts = reminder_counts(db, [c.id for c in csps])
+    anchors = dict(db.query(OutreachCycle.csp_id, OutreachCycle.anchor_date).filter(
+        OutreachCycle.csp_id.in_([c.id for c in csps] or [-1]), OutreachCycle.document_type == "ALL",
+        OutreachCycle.kind == "UPLOAD", OutreachCycle.closed_at.is_(None)))
     rows = []
-    for c in _csps(db, rm_id):
+    for c in csps:
         st = evaluate(db, c, today)
         if st.category == 1 and not st.expired:
             continue
@@ -109,6 +117,9 @@ def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date]
             "phone": c.phone or "", "label": slab_label(st.category), "category": st.category,
             "sub_slab_label": sub_slab_label(sub_slab(st)),
             "docs": {t: {"word": _word(t, st.docs[t]), "tone": _tone(t, st.docs[t])} for t in REQUIRED_TYPES},
+            # The 45-day plan: this week (1-7) or "closure", and reminders actually sent.
+            "plan": (policy.plan_week(anchors[c.id], today) if policy.plan_on(today) and c.id in anchors else None),
+            "reminders": counts.get(c.id, (0, None))[0],
             "to_upload": [t for t in REQUIRED_TYPES
                           if not st.docs[t].in_review and st.docs[t].status in ("MISSING", "UNREADABLE", "EXPIRED")],
         })

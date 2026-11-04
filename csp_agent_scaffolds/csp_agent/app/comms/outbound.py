@@ -282,7 +282,7 @@ def _send_staff_list(db: Session, msg: OutboundMessage) -> OutboundMessage:
     try:
         from .wabs import send_clean
         v = payload.get("layout_values") or {}
-        r = send_clean("staff_list", [{"phone": f"91{_phone10(user.phone)}", "name": user.name,
+        r = send_clean(payload.get("layout") or "staff_list", [{"phone": f"91{_phone10(user.phone)}", "name": user.name,
                                        "count": str(v.get("count", "")), "codes": v.get("codes", "")}],
                        f"csp-agent-STAFF_PENDING_LIST-{msg.id}")
     except Exception as e:

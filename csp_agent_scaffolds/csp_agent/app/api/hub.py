@@ -287,7 +287,7 @@ def rm_pending_list(me: Principal = Depends(require_user), db: Session = Depends
     return {"rms": rm_pending.rm_list(db, None if me.is_admin else {me.user_id or -1})}
 
 
-def _rmp_rows(db: Session, rm: Optional[int], district: str, dc: str, q: str) -> tuple[list, list, list]:
+def _rmp_rows(db: Session, rm: Optional[int], district: str, dc: str, q: str, plan: str = "") -> tuple[list, list, list]:
     """Pending by RM's rows with its filters, and the district and DC lists to pick from."""
     from .. import rm_pending
     rows = rm_pending.pending_rows(db, rm)
@@ -303,6 +303,8 @@ def _rmp_rows(db: Session, rm: Optional[int], district: str, dc: str, q: str) ->
     if q.strip():
         n = q.strip().lower()
         rows = [r for r in rows if n in (r["code"] or "").lower() or n in r["name"].lower() or n in r["phone"]]
+    if plan:
+        rows = [r for r in rows if str(r["plan"]) == plan]
     return rows, districts, dcs
 
 
@@ -313,7 +315,7 @@ def final_notice_drafts(body: dict = Body(...), db: Session = Depends(get_db)):
     from .. import final_notice
     rm = body.get("rm")
     rows, _, _ = _rmp_rows(db, int(rm) if str(rm or "").isdigit() else None, str(body.get("district") or ""),
-                           str(body.get("dc") or ""), str(body.get("q") or ""))
+                           str(body.get("dc") or ""), str(body.get("q") or ""), str(body.get("plan") or ""))
     try:
         counts = final_notice.draft(db, [r["id"] for r in rows])
     except ValueError as e:
@@ -325,12 +327,12 @@ def final_notice_drafts(body: dict = Body(...), db: Session = Depends(get_db)):
 # The same list as a table on the dashboard ("Pending by RM"), with filters
 # for the RM (admins), district and DC. An RM always gets only their own.
 @router.get("/rm-pending/rows")
-def rm_pending_rows(rm: Optional[int] = None, district: str = "", dc: str = "", q: str = "",
+def rm_pending_rows(rm: Optional[int] = None, district: str = "", dc: str = "", q: str = "", plan: str = "",
                     me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     from .. import rm_pending
     if not me.is_admin:
         rm = me.user_id or -1
-    rows, districts, dcs = _rmp_rows(db, rm, district, dc, q)
+    rows, districts, dcs = _rmp_rows(db, rm, district, dc, q, plan)
     return {"rms": rm_pending.rm_list(db) if me.is_admin else [], "rm": rm, "districts": districts, "dcs": dcs,
             "pending": {t: sum(t in r["to_upload"] for r in rows) for t in REQUIRED_TYPES},
             "total": len(rows), "rows": rows}

@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from . import policy
 from .compliance import evaluate, working_clause
 from .comms import outbound
-from .comms.templates import staff_list_text
+from .comms.templates import plan_list_text, staff_list_text
 from .models import CSP, InternalUser, OutboundMessage, OutboundStatus
 
 logger = logging.getLogger(__name__)
@@ -40,9 +40,33 @@ def _now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+# Messages that answer the CSP (after an upload, or the link they asked for)
+# are not reminders.
+NOT_REMINDERS = ("UPLOAD_RECEIPT", "UPLOAD_SUCCESS_ALL", "UPLOAD_PARTIAL_REJECTED", "LINK_REQUEST")
+
+
+def reminder_counts(db: Session, csp_ids) -> dict[int, tuple[int, Optional[date]]]:
+    """Per CSP: how many reminders actually went to them on WhatsApp, and the
+    day of the first one (the 45-day plan's "reminded you M times in N days")."""
+    from sqlalchemy import func
+    rows = (db.query(OutboundMessage.csp_id, func.count(OutboundMessage.id), func.min(OutboundMessage.sent_at))
+            .filter(OutboundMessage.csp_id.in_(list(csp_ids) or [-1]), OutboundMessage.recipient_role == "CSP",
+                    OutboundMessage.channel == "WHATSAPP", OutboundMessage.status == OutboundStatus.SENT,
+                    OutboundMessage.template_name.notin_(NOT_REMINDERS))
+            .group_by(OutboundMessage.csp_id))
+    return {cid: (n, first.date() if first else None) for cid, n, first in rows}
+
+
+def reminder_values(db: Session, csp: CSP, today: Optional[date] = None) -> dict:
+    """{"count": "8", "days": "21"} for the plan's messages."""
+    today = today or date.today()
+    n, first = reminder_counts(db, [csp.id]).get(csp.id, (0, None))
+    return {"count": str(n), "days": str(max((today - first).days, 1) if first else 1)}
+
+
 def draft_nudges(db: Session, today: Optional[date] = None) -> dict:
     today = today or date.today()
-    if not (policy.ESCALATE_FROM <= today <= policy.CAMPAIGN_UNTIL):
+    if not (policy.ESCALATE_FROM <= today <= policy.CAMPAIGN_UNTIL) or policy.plan_on(today):
         return {"skipped": "not a nudge day"}
     since = _now() - timedelta(days=NUDGE_AFTER_DAYS)
     with_link = {cid for (cid,) in db.query(OutboundMessage.csp_id).filter(
@@ -79,17 +103,46 @@ def _codes(rows: list[tuple[CSP, list[str]]]) -> str:
     return out
 
 
+def _plan_rows(rows: list[tuple[CSP, list[str]]], counts: dict, dcs: dict, role: str) -> str:
+    """The plan's list: "1A850018 Putul Kumari Singh (A, P, I · 8 msgs) • …"
+    (one line: Meta allows no line breaks in a value), cut to fit."""
+    out, shown = "", 0
+    for csp, types in rows:
+        dc = f" · DC {dcs[csp.dc_id]}" if role == "RM" and csp.dc_id in dcs else ""
+        part = f"{csp.current_code} {csp.name} ({', '.join(SHORT[t] for t in types)} · {counts.get(csp.id, (0,))[0]} msgs{dc})"
+        if len(out) + len(part) + 3 > CODES_MAX_CHARS:
+            break
+        out, shown = (f"{out} • {part}" if out else part), shown + 1
+    if shown < len(rows):
+        out += f" … +{len(rows) - shown} more"
+    return out
+
+
+def _in_plan_list(db: Session, csp: CSP, role: str, today: date) -> bool:
+    """Under the 45-day plan: the DC hears from week 3, the RM from week 5 (and both on the closure list)."""
+    from .models import OutreachCycle
+    cycle = db.query(OutreachCycle).filter_by(csp_id=csp.id, document_type="ALL", kind="UPLOAD", closed_at=None).first()
+    if cycle is None:
+        return False
+    week = policy.plan_week(cycle.anchor_date, today)
+    return week == "closure" or policy.PLAN_WEEKS[week]["rm" if role == "RM" else "dc"]
+
+
 def draft_staff_lists(db: Session, role: str, today: Optional[date] = None) -> dict:
     """One list per RM or DC with a phone number on record."""
     today = today or date.today()
     if not policy.staff_list_due(role, today):
         return {"skipped": f"no {role} list today"}
+    plan = policy.plan_on(today)
     field = CSP.rm_id if role == "RM" else CSP.dc_id
     pending: dict[int, list] = {}
     for csp in db.query(CSP).filter(working_clause(), field.isnot(None)).order_by(CSP.current_code):
         state = evaluate(db, csp, today)
-        if state.needs_upload:
+        if state.needs_upload and (not plan or _in_plan_list(db, csp, role, today)):
             pending.setdefault(getattr(csp, "rm_id" if role == "RM" else "dc_id"), []).append((csp, state.needs_upload))
+    if plan:
+        counts = reminder_counts(db, [c.id for rows in pending.values() for c, _ in rows])
+        dcs = {u.id: u.name for u in db.query(InternalUser).filter(InternalUser.role == "DC")}
     drafted = 0
     for uid, rows in pending.items():
         user = db.get(InternalUser, uid)
@@ -99,11 +152,12 @@ def draft_staff_lists(db: Session, role: str, today: Optional[date] = None) -> d
         key = f"STAFF:{role}:{uid}:{today:%Y%m%d}"
         if db.query(OutboundMessage.id).filter(OutboundMessage.idempotency_key == key).first():
             continue
-        codes = _codes(rows)
+        codes = _plan_rows(rows, counts, dcs, role) if plan else _codes(rows)
+        body = plan_list_text(user.name, len(rows), codes) if plan else staff_list_text(user.name, len(rows), codes)
         msg = OutboundMessage(
             csp_id=None, template_name="STAFF_PENDING_LIST", channel="WHATSAPP", destination=phone or "-",
             payload_json={"staff_id": uid, "subject": f"{len(rows)} CSPs still to upload ({role} {user.name})",
-                          "body": staff_list_text(user.name, len(rows), codes),
+                          "body": body, "layout": "plan_list" if plan else "staff_list",
                           "layout_values": {"count": len(rows), "codes": codes},
                           "csp_codes": [c.current_code for c, _ in rows]},
             idempotency_key=key, stage=f"{role}-LIST-{today:%Y%m%d}", recipient_role=role, attempts=0,

@@ -129,6 +129,20 @@ CLEAN["final_notice"] = (
     "(enter your KO code and the last 4 digits of your registered mobile). If they are not uploaded in time, "
     "your CSP terminal will be closed, and you will be responsible for the service being stopped. "
     "For help, contact your DC or RM {{10}}.\n— Eko India Financial Services")
+# The 45-day plan's CSP messages (app/policy.py, PLAN_WEEKS; texts in templates.py).
+CLEAN['plan_reminded'] = 'नमस्ते {{1}} (KO {{2}}) 🙏\nहमने आपको पिछले {{4}} दिनों में {{3}} बार डॉक्यूमेंट जमा करने के लिए याद दिलाया है, लेकिन ये अभी तक नहीं मिले: {{5}}।\nकृपया जल्द से जल्द नीचे दिए लिंक पर अपलोड करें, ताकि आपका CSP बिना रुकावट चलता रहे।\n\nHello {{6}}, we have reminded you {{3}} times in the last {{4}} days, but we still have not received: {{7}}. Please upload them soon so your CSP keeps running without interruption.\n\n📎 अपलोड करें / Upload here:\n{{8}}\n— Eko'
+CLEAN['plan_warning'] = '⚠️ चेतावनी / WARNING\n{{1}} (KO {{2}}), {{3}} बार याद दिलाने के बाद भी आपके ये डॉक्यूमेंट नहीं मिले: {{5}}।\nआपके DC को भी इसकी जानकारी दे दी गई है। डॉक्यूमेंट जमा न होने पर आपके CSP पर कार्रवाई होगी। आज ही अपलोड करें।\n\n{{6}}, even after {{3}} reminders over {{4}} days, we have not received: {{7}}. Your DC has also been informed. If they are not submitted, action will be taken on your CSP. Upload today.\n\n📎 अपलोड करें / Upload here:\n{{8}}\n— Eko'
+CLEAN['plan_soon'] = '🚨 ज़रूरी सूचना / URGENT\n{{1}} (KO {{2}}), {{4}} दिनों में {{3}} संदेशों के बाद भी आपके डॉक्यूमेंट जमा नहीं हुए: {{5}}।\nअगर {{6}} तक (3 दिन में) अपलोड नहीं किए, तो आपका CSP टर्मिनल बंद कर दिया जाएगा और आपकी revenue line बंद हो जाएगी। इसकी पूरी ज़िम्मेदारी आपकी होगी। आपके RM और DC को भी सूचित कर दिया गया है।\n\n{{7}}, after {{3}} messages over {{4}} days your documents are still pending: {{8}}. If they are not uploaded by {{6}} (3 days), your CSP terminal will be closed and your revenue line will stop. You will be fully responsible. Your RM and DC have been informed.\n\n📎 अपलोड करें / Upload here:\n{{9}}\n— Eko'
+CLEAN['plan_now'] = '⛔ अंतिम सूचना / FINAL NOTICE\n{{1}} (KO {{2}}), {{4}} दिनों में {{3}} संदेशों के बाद भी आपके डॉक्यूमेंट जमा नहीं हुए: {{5}}।\nआपका CSP टर्मिनल और revenue line अब बंद की जा रही है। इसे रोकने का यह आखिरी मौका है — तुरंत अपलोड करें।\n\n{{6}}, after {{3}} messages over {{4}} days your documents are still not submitted: {{7}}. Your CSP terminal and revenue line are now being closed. This is your last chance to stop it: upload immediately.\n\n📎 अपलोड करें / Upload here:\n{{8}}\n— Eko'
+_PLAN = {"1": "name", "2": "code", "3": "count", "4": "days", "5": "doc_hi", "6": "name", "7": "doc_en", "8": "link"}
+_PLAN_DATED = {"1": "name", "2": "code", "3": "count", "4": "days", "5": "doc_hi", "6": "date", "7": "name", "8": "doc_en",
+               "9": "link"}         # week 5: "by <date>"
+CLEAN["plan_list"] = (
+    "नमस्ते {{1}} 🙏\n\nआपके {{2}} CSP के डॉक्यूमेंट अभी भी बाकी हैं, जबकि इन्हें कई बार WhatsApp पर याद दिलाया जा चुका है "
+    "(A = एग्रीमेंट, P = पुलिस वेरिफिकेशन, I = IIBF; msgs = भेजे गए संदेश):\n{{3}}\n\n"
+    "कृपया इन CSP से बात करके इस हफ़्ते डॉक्यूमेंट अपलोड करवाएँ।\n\n"
+    "Hello {{4}}, {{5}} of your CSPs still have documents pending despite repeated reminders (list above). "
+    "Please get them uploaded this week.\n— Eko")
 _RENEWAL = {"1": "name", "2": "code", "3": "doc_hi", "4": "date", "5": "name", "6": "doc_en", "7": "date",
             "8": "link", "9": "rm"}
 _DOCS = {"1": "name", "2": "code", "3": "doc_hi", "4": "name", "5": "doc_en", "6": "link", "7": "rm"}
@@ -142,6 +156,8 @@ CLEAN_MAP = {"onboard": {"1": "name", "2": "code", "3": "name", "4": "link", "5"
                          "7": "ok_en", "8": "check_en", "9": "bad_en", "10": "link", "11": "rm"},
              "all_done": {"1": "name", "2": "code", "3": "name", "4": "rm"},
              "nudge": {"1": "name", "2": "code", "3": "doc_hi", "4": "doc_en"},
+             **{f"plan_{k}": _PLAN for k in ("reminded", "warning", "now")}, "plan_soon": _PLAN_DATED,
+             "plan_list": {"1": "name", "2": "count", "3": "codes", "4": "name", "5": "count"},
              "final_notice": {"1": "name", "2": "code", "3": "doc_hi", "4": "when_hi", "5": "link", "6": "rm_name",
                               "7": "name", "8": "doc_en", "9": "when_en", "10": "rm_name"},
              "staff_list": {"1": "name", "2": "count", "3": "codes", "4": "name", "5": "count"}}
@@ -153,6 +169,8 @@ KIND_FOR_TEMPLATE = {"ONBOARD_ALL": "onboard", "LINK_REQUEST": "link",
                      "UPLOAD_MISSING": "missing", "UNREADABLE_REUPLOAD": "unreadable",
                      "UPLOAD_RECEIPT": "receipt", "UPLOAD_PARTIAL_REJECTED": "receipt",
                      "UPLOAD_SUCCESS_ALL": "all_done", "UPLOAD_NUDGE": "nudge", "FINAL_NOTICE": "final_notice",
+                     "PLAN_REMINDED": "plan_reminded", "PLAN_WARNING": "plan_warning",
+                     "PLAN_CLOSING_SOON": "plan_soon", "PLAN_CLOSING_NOW": "plan_now",
                      "STAFF_PENDING_LIST": "staff_list"}
 
 
@@ -177,6 +195,17 @@ def layout_values(template_key: str, csp, state, document_type: str) -> dict:
             raise ValueError("nothing left to upload")
         return {"doc_en": ", ".join(DOC_LABELS[t][0] for t in state.needs_upload),
                 "doc_hi": ", ".join(DOC_LABELS[t][1] for t in state.needs_upload)}
+    if kind in ("plan_reminded", "plan_warning", "plan_soon", "plan_now"):
+        # At send time: reminders sent so far, the documents still due, the 3-day date.
+        from datetime import date, timedelta
+        from sqlalchemy.orm import object_session
+        from .. import final_notice, policy
+        from ..escalation import reminder_values
+        if not state.needs_upload:
+            raise ValueError("nothing left to upload")
+        d = final_notice.documents(state)
+        return {**reminder_values(object_session(csp), csp), "doc_hi": d["docs_hi"], "doc_en": d["docs_en"],
+                "date": (date.today() + timedelta(days=policy.PLAN_CLOSING_SOON_DAYS)).strftime("%d-%m-%Y")}
     if kind == "final_notice":
         # At send time: today's deadline, the documents still due and the live common link.
         from sqlalchemy.orm import object_session

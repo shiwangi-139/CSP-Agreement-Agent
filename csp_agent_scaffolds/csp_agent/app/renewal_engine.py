@@ -238,6 +238,8 @@ def _run_upload_cycle(db: Session, csp: CSP, state: ComplianceState, today: date
         # unsent and held up the CSP's reminders. RM / DC now get a list.
         _supersede(staff, None, "RM / DC now get one daily list of their pending CSPs")
         stages = _stages(db, cycle)
+    if policy.plan_on(today):
+        return _run_plan_week(db, csp, state, cycle, stages, today)
     sent_pos = [i for i, st in enumerate(stages) if st["state"] == "SENT"]
     if sent_pos:
         # Unsent reminders drafted before one that already went out are stale.
@@ -292,6 +294,36 @@ def _run_upload_cycle(db: Session, csp: CSP, state: ComplianceState, today: date
           key_base=f"C{cycle.id}:{step['stage']}", cycle_id=cycle.id,
           document_type=",".join(needed), stage=step["stage"])
     return None
+
+
+def _run_plan_week(db: Session, csp: CSP, state: ComplianceState, cycle: OutreachCycle,
+                   stages: list[dict], today: date) -> Optional[date]:
+    """The 45-day plan (app/policy.py, PLAN_WEEKS): this week's message, once.
+    A message still waiting from an earlier week is replaced by this one."""
+    from .escalation import reminder_values
+    week = policy.plan_week(cycle.anchor_date, today)
+    _sync_counts(cycle, stages)
+    if week == "closure":
+        return None                       # on the closure list (Pending by RM)
+    stage = f"P-W{week}"
+    next_week = policy.plan_start(cycle.anchor_date) + timedelta(days=7 * week)
+    if any(st["stage"] == stage for st in stages):
+        return next_week
+    _supersede([st for st in stages if st["state"] == "PENDING"], None, "this week's message replaces it")
+    counts = reminder_values(db, csp, today)
+    template = policy.PLAN_WEEKS[week]["template"]
+    if template is None or counts["count"] == "0":
+        template = _upload_template(state)    # nothing sent yet: no "reminded you N times"
+    needed = state.needs_upload
+    link = issue_upload_link(db, csp, needed)
+    from .final_notice import documents
+    closing = today + timedelta(days=policy.PLAN_CLOSING_SOON_DAYS)
+    ctx = _ctx(db, csp, state, link, stage=stage, attempt=cycle.csp_messages, plan_week=week,
+               reminders=counts["count"], reminder_days=counts["days"], closing_date=closing.strftime("%d-%m-%Y"),
+               **documents(state))
+    draft(db, csp=csp, role="CSP", template_key=template, ctx=ctx, key_base=f"C{cycle.id}:{stage}",
+          cycle_id=cycle.id, document_type=",".join(needed), stage=stage)
+    return next_week
 
 
 # ------------------------------------------------------------ on upload

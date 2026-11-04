@@ -71,6 +71,7 @@ def _campaign_off(monkeypatch):
     from app import policy
     for name in ("CAMPAIGN_FROM", "ESCALATE_FROM", "ESCALATE_DC_FROM", "CAMPAIGN_UNTIL"):
         monkeypatch.setattr(policy, name, date(2000, 1, 1))
+    monkeypatch.setattr(policy, "PLAN_FROM", date(2999, 1, 1))      # the 45-day plan too
 
 
 @pytest.fixture(autouse=True)

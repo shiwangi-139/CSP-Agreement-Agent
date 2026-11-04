@@ -1143,13 +1143,14 @@
     // RM (or all); an RM sees only their own CSPs.
     async rmpending() {
       const f = state.rmp, isAdmin = state.summary.me.role === "ADMIN";
-      const d = await api(`/api/hub/rm-pending/rows?${["rm", "district", "dc", "q"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&")}`);
+      const d = await api(`/api/hub/rm-pending/rows?${["rm", "district", "dc", "q", "plan"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&")}`);
       const sel = (key, label, all, opts) => `<label class="small">${label}<br><select data-rmpkey="${key}"><option value="">${all}</option>${opts.map(([v, l]) =>
         `<option value="${esc(v)}" ${String(f[key] ?? "") === String(v) ? "selected" : ""}>${esc(l)}</option>`).join("")}</select></label>`;
       const tile = (label, n, sub) => `<div class="card kpi" style="cursor:default"><div class="label">${label}</div><div class="n">${n}</div><div class="small muted">${sub}</div></div>`;
       const rmName = isAdmin ? (d.rms.find((r) => r.id === d.rm)?.name || "All RMs") : state.summary.me.name;
       const tone = (x) => `<span class="chip ${x.tone}">${esc(x.word)}</span>`;
-      const cols = isAdmin && !f.rm ? 11 : 10;
+      const cols = isAdmin && !f.rm ? 12 : 11;
+      const planCell = (r) => r.plan === "closure" ? `<span class="chip bad">Closure list</span>` : r.plan ? `<span class="chip ${r.plan >= 5 ? "bad" : r.plan >= 3 ? "warn" : ""}">Week ${r.plan}</span>` : "—";
       let body = "", last = null;
       for (const r of d.rows) {
         if (r.district !== last) {
@@ -1158,11 +1159,12 @@
           last = r.district;
         }
         body += `<tr class="click" data-csp="${r.id}">
-          <td class="small">${esc(r.district)}</td><td class="small">${esc(r.state || "—")}</td>${cols === 11 ? `<td class="small">${esc(r.rm)}</td>` : ""}
+          <td class="small">${esc(r.district)}</td><td class="small">${esc(r.state || "—")}</td>${cols === 12 ? `<td class="small">${esc(r.rm)}</td>` : ""}
           <td class="small">${esc(r.dc)}</td><td><div class="mono">${esc(r.code || "")}</div><div>${esc(r.name)}</div></td>
           <td class="mono small">${esc(r.phone || "—")}</td><td>${badge("c" + r.category, r.sub_slab_label || "Label " + r.category)}</td>
           <td>${tone(r.docs.AGREEMENT)}</td><td>${tone(r.docs.POLICE_VERIFICATION)}</td><td>${tone(r.docs.IIBF_CERTIFICATE)}</td>
-          <td class="small"><b>${esc(r.to_upload.map((t) => DOC[t]).join(", ") || "—")}</b></td></tr>`;
+          <td class="small"><b>${esc(r.to_upload.map((t) => DOC[t]).join(", ") || "—")}</b></td>
+          <td class="small">${planCell(r)}<div class="muted">${r.reminders} msgs sent</div></td></tr>`;
       }
       return `
       <div class="grid k4">
@@ -1175,13 +1177,14 @@
         ${isAdmin ? sel("rm", "RM", "All RMs", d.rms.map((r) => [r.id, `${r.name} · ${r.csps}`])) : ""}
         ${sel("district", "District", "All districts", d.districts.map((x) => [x.name, `${x.name} · ${x.csps}`]))}
         ${sel("dc", "DC", "All DCs", d.dcs.map((x) => [x.name, `${x.name} · ${x.csps}`]))}
+        ${sel("plan", "45-day plan", "All weeks", [1, 2, 3, 4, 5, 6, 7].map((w) => [w, `Week ${w}`]).concat([["closure", "Closure list (45+ days)"]]))}
         <label class="small">Search<br><input type="search" id="rmpq" placeholder="Code, name or mobile" value="${esc(f.q || "")}"></label>
         ${Object.keys(f).length ? `<button class="btn" data-rmpclear="1">Clear filters</button>` : ""}
         <span class="muted"><b>${d.total}</b> CSPs</span>
         ${d.rm ? `<a class="btn" href="#" data-rmcsv="${d.rm}">Download ${esc(rmName)}'s list (CSV)</a>` : ""}
         ${isAdmin && d.total ? `<button class="btn primary" data-finalnotice="${d.total}" title="A firm WhatsApp message with the CSP common link and today's 6 PM deadline, for every CSP shown">Draft final notice (${d.total})</button>` : ""}</div>
-      <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>District</th><th>State</th>${cols === 11 ? "<th>RM</th>" : ""}<th>DC</th><th>CSP</th><th>Mobile</th><th>Label</th>
-        <th>Agreement</th><th>PVR / Character</th><th>IIBF</th><th>To upload</th></tr></thead><tbody>${body}</tbody></table>`
+      <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>District</th><th>State</th>${cols === 12 ? "<th>RM</th>" : ""}<th>DC</th><th>CSP</th><th>Mobile</th><th>Label</th>
+        <th>Agreement</th><th>PVR / Character</th><th>IIBF</th><th>To upload</th><th>Plan</th></tr></thead><tbody>${body}</tbody></table>`
         : `<div class="empty">No CSPs pending${Object.keys(f).length ? " for these filters" : ""}.</div>`}</div>`;
     },
 

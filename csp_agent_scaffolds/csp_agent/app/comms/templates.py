@@ -222,6 +222,48 @@ def _final_notice(c):
             f"service being stopped.\n\nFor help, contact your DC or RM {c['rm_name']}.")
 
 
+# The 45-day plan's messages (app/policy.py, PLAN_WEEKS), agreed 2026-11-04.
+# {m} = reminders actually sent, {d} = days since the first one.
+PLAN_HI = {
+    "PLAN_REMINDED": 'नमस्ते {n} (KO {k}) 🙏\nहमने आपको पिछले {d} दिनों में {m} बार डॉक्यूमेंट जमा करने के लिए याद दिलाया है, लेकिन ये अभी तक नहीं मिले: {doc}।\nकृपया जल्द से जल्द नीचे दिए लिंक पर अपलोड करें, ताकि आपका CSP बिना रुकावट चलता रहे।',
+    "PLAN_WARNING": '⚠️ चेतावनी / WARNING\n{n} (KO {k}), {m} बार याद दिलाने के बाद भी आपके ये डॉक्यूमेंट नहीं मिले: {doc}।\nआपके DC को भी इसकी जानकारी दे दी गई है। डॉक्यूमेंट जमा न होने पर आपके CSP पर कार्रवाई होगी। आज ही अपलोड करें।',
+    "PLAN_CLOSING_SOON": '🚨 ज़रूरी सूचना / URGENT\n{n} (KO {k}), {d} दिनों में {m} संदेशों के बाद भी आपके डॉक्यूमेंट जमा नहीं हुए: {doc}।\nअगर {date} तक (3 दिन में) अपलोड नहीं किए, तो आपका CSP टर्मिनल बंद कर दिया जाएगा और आपकी revenue line बंद हो जाएगी। इसकी पूरी ज़िम्मेदारी आपकी होगी। आपके RM और DC को भी सूचित कर दिया गया है।',
+    "PLAN_CLOSING_NOW": '⛔ अंतिम सूचना / FINAL NOTICE\n{n} (KO {k}), {d} दिनों में {m} संदेशों के बाद भी आपके डॉक्यूमेंट जमा नहीं हुए: {doc}।\nआपका CSP टर्मिनल और revenue line अब बंद की जा रही है। इसे रोकने का यह आखिरी मौका है — तुरंत अपलोड करें।',
+}
+PLAN_EN = {
+    "PLAN_REMINDED": 'Hello {n}, we have reminded you {m} times in the last {d} days, but we still have not received: {doc}. Please upload them soon so your CSP keeps running without interruption.',
+    "PLAN_WARNING": '{n}, even after {m} reminders over {d} days, we have not received: {doc}. Your DC has also been informed. If they are not submitted, action will be taken on your CSP. Upload today.',
+    "PLAN_CLOSING_SOON": '{n}, after {m} messages over {d} days your documents are still pending: {doc}. If they are not uploaded by {date} (3 days), your CSP terminal will be closed and your revenue line will stop. You will be fully responsible. Your RM and DC have been informed.',
+    "PLAN_CLOSING_NOW": '{n}, after {m} messages over {d} days your documents are still not submitted: {doc}. Your CSP terminal and revenue line are now being closed. This is your last chance to stop it: upload immediately.',
+}
+PLAN_SUBJECT = {
+    "PLAN_REMINDED": 'Reminder: documents still pending',
+    "PLAN_WARNING": 'Warning: documents still pending',
+    "PLAN_CLOSING_SOON": 'Urgent: terminal closes in 3 days',
+    "PLAN_CLOSING_NOW": 'Final notice: terminal being closed',
+}
+
+
+def _plan(key):
+    def build(c):
+        v = {"n": c["csp_name"], "k": c["csp_code"], "m": c.get("reminders", ""), "d": c.get("reminder_days", ""),
+             "date": c.get("closing_date", "")}
+        link = f"\n📎 {c['upload_link']}" if c.get("upload_link") else ""
+        return (f"{PLAN_SUBJECT[key]} | KO {c['csp_code']}",
+                PLAN_HI[key].format(**v, doc=c.get("docs_hi", "")),
+                PLAN_EN[key].format(**v, doc=c.get("docs_en", "")) + link)
+    return build
+
+
+def plan_list_text(name: str, count: int, rows: str) -> str:
+    """The 45-day plan's weekly DC / RM list (app/escalation.py), as it reads on WhatsApp."""
+    return (f"नमस्ते {name} 🙏\n\nआपके {count} CSP के डॉक्यूमेंट अभी भी बाकी हैं, जबकि इन्हें कई बार WhatsApp पर याद "
+            f"दिलाया जा चुका है (A = एग्रीमेंट, P = पुलिस वेरिफिकेशन, I = IIBF; msgs = भेजे गए संदेश):\n{rows}\n\n"
+            "कृपया इन CSP से बात करके इस हफ़्ते डॉक्यूमेंट अपलोड करवाएँ।\n\n"
+            f"Hello {name}, {count} of your CSPs still have documents pending despite repeated reminders (list above). "
+            "Please get them uploaded this week.\n— Eko")
+
+
 def staff_list_text(name: str, count: int, codes: str) -> str:
     """The RM / DC list (app/escalation.py), as it reads on WhatsApp."""
     return (f"नमस्ते {name} 🙏\n\nआपके {count} CSP के डॉक्यूमेंट अभी बाकी हैं "
@@ -247,6 +289,7 @@ TEMPLATES = {
     "ESCALATION_DC": _escalation("DC"),
     "UPLOAD_NUDGE": _upload_nudge,
     "FINAL_NOTICE": _final_notice,
+    **{k: _plan(k) for k in ("PLAN_REMINDED", "PLAN_WARNING", "PLAN_CLOSING_SOON", "PLAN_CLOSING_NOW")},
 }
 CSP_FACING = {"RENEWAL_NOTICE", "RENEWAL_FOLLOWUP", "RENEWAL_FINAL", "UPLOAD_MISSING",
               "UPLOAD_EXPIRED", "ONBOARD_ALL", "UNREADABLE_REUPLOAD", "LINK_REQUEST",

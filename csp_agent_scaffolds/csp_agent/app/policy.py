@@ -33,7 +33,7 @@ MAX_CSP_UPLOAD_MESSAGES = None
 #                                     weekly on STAFF_WEEKLY_DAY.
 # Each can be moved in .env (YYYY-MM-DD).
 import os as _os
-from datetime import date as _date
+from datetime import date as _date, timedelta as _timedelta
 
 
 def _day(name: str, default: str) -> _date:
@@ -52,13 +52,62 @@ STAFF_WEEKLY_DAY = 0                     # Monday
 STAFF_LIST_SKIP = {n.strip().lower() for n in (_os.getenv("STAFF_LIST_SKIP") or "Narottam").split(",") if n.strip()}
 
 
+# ------------------------------------------------------- the 45-day plan
+# Agreed 2026-11-04; replaces the daily campaign from PLAN_FROM. Each CSP with
+# a document pending or expired gets one WhatsApp a week for 7 weeks (days 0,
+# 7, ... 42 of their plan), firmer each week; their DC gets a weekly list from
+# week 3 and their RM from week 5 (app/escalation.py). After PLAN_DAYS the CSP
+# is on the closure list (Pending by RM). Day 0 is the day their upload
+# follow-up opened; CSPs already pending when the plan starts begin in week 2
+# (Day 0 = PLAN_FROM - PLAN_HEAD_START_DAYS): they had many messages already.
+PLAN_FROM = _day("PLAN_FROM", "2026-11-05")
+PLAN_DAYS = 45
+PLAN_HEAD_START_DAYS = 7
+# Week -> the CSP's message (None = the usual upload message for their
+# documents), and whether their DC / RM list includes them that week.
+PLAN_WEEKS = {
+    1: {"template": None, "dc": False, "rm": False},
+    2: {"template": "PLAN_REMINDED", "dc": False, "rm": False},
+    3: {"template": "PLAN_WARNING", "dc": True, "rm": False},
+    4: {"template": "PLAN_WARNING", "dc": True, "rm": False},
+    5: {"template": "PLAN_CLOSING_SOON", "dc": True, "rm": True},
+    6: {"template": "PLAN_CLOSING_NOW", "dc": True, "rm": True},
+    7: {"template": "PLAN_CLOSING_NOW", "dc": True, "rm": True},
+}
+PLAN_CLOSING_SOON_DAYS = 3        # week 5: "closed within 3 days"
+
+
+def plan_on(today) -> bool:
+    return today >= PLAN_FROM
+
+
+def plan_start(anchor):
+    """A follow-up's Day 0 under the plan."""
+    return max(anchor, PLAN_FROM - _timedelta(days=PLAN_HEAD_START_DAYS))
+
+
+def plan_week(anchor, today):
+    """1..7 while the plan runs, "closure" from PLAN_DAYS on."""
+    day = (today - plan_start(anchor)).days
+    if day >= PLAN_DAYS:
+        return "closure"
+    return min(max(day, 0) // 7 + 1, max(PLAN_WEEKS))
+
+
+def plan_list_day(today) -> bool:
+    """The DC / RM lists go weekly, on the plan's own weekday (the day the CSPs' weeks turn)."""
+    return plan_on(today) and today.weekday() == PLAN_FROM.weekday()
+
+
 def in_campaign(today) -> bool:
-    return CAMPAIGN_FROM <= today <= CAMPAIGN_UNTIL
+    return CAMPAIGN_FROM <= today <= CAMPAIGN_UNTIL and not plan_on(today)
 
 
 def staff_list_due(role: str, today) -> bool:
     """Is today a day for the RM / DC list? Daily during the escalation,
-    weekly after the campaign."""
+    weekly after the campaign; under the plan, on its weekday."""
+    if plan_on(today):
+        return plan_list_day(today)
     start = ESCALATE_FROM if role == "RM" else ESCALATE_DC_FROM
     if today < start:
         return False
@@ -148,6 +197,8 @@ def in_daily_push(today) -> bool:
     """True on the days of the daily push (DAILY_PUSH_FROM..DAILY_PUSH_UNTIL
     in .env): the upload cycle then sends the CSP one message a day."""
     from .config import DAILY_PUSH_FROM, DAILY_PUSH_UNTIL
+    if plan_on(today):
+        return False                     # the 45-day plan: weekly, never daily
     return in_campaign(today) or bool(DAILY_PUSH_FROM and DAILY_PUSH_UNTIL and DAILY_PUSH_FROM <= today <= DAILY_PUSH_UNTIL)
 
 
