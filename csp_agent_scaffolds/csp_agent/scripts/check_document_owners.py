@@ -49,7 +49,8 @@ def plan(db, use_model: bool = False) -> list[dict]:
         csp = by_id[d.csp_id]
         ex = {**ex, "readability": "READABLE"}
         ask = (lambda: read_owner_with_model(data, d.document_type)) if use_model else None
-        owner, _, review = check_owner(db, csp, ex, everyone, ask_model=ask, learned=learned)
+        owner, _, review = check_owner(db, csp, ex, everyone, ask_model=ask, learned=learned,
+                                        filename=d.original_filename)
         if owner.id != csp.id:
             action, reason = "MOVE", f"Document shows {owner.current_code} ({owner.name})."
         elif review:

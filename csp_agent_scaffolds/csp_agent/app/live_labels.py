@@ -16,7 +16,7 @@ by importing this module from app/models.py.
 """
 import logging
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger("app.live_labels")
@@ -42,6 +42,11 @@ def _note_changes(session: Session, flush_context, instances) -> None:
             if obj.csp_id is not None:
                 p = p or _pending(session)
                 p["csp"].add(obj.csp_id)
+            # Moved to another CSP: the one it left changes too.
+            for old in inspect(obj).attrs.csp_id.history.deleted or ():
+                if old is not None:
+                    p = p or _pending(session)
+                    p["csp"].add(old)
         elif isinstance(obj, ManualReviewQueue):
             if obj in session.dirty and not session.is_modified(obj):
                 continue

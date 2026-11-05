@@ -128,6 +128,8 @@ MSG = {
     "pvr_applied": ("पुलिस वेरिफिकेशन का आवेदन रिकॉर्ड हो गया। नया सर्टिफिकेट मिलते ही इसी लिंक से अपलोड करें।",
                     "Your police verification application is recorded. Upload the new certificate on this same "
                     "link as soon as you get it."),
+    "csp_other_csp": ("यह किसी दूसरे CSP का डॉक्यूमेंट है। अपना खुद का डॉक्यूमेंट अपलोड करें।",
+                      "This is another CSP's document. Please upload your own document."),
     "dc_other_csp": ("यह डॉक्यूमेंट किसी दूसरे CSP का है। सही KO कोड डालकर उसी CSP के लिए अपलोड करें।",
                      "This document belongs to another CSP. Enter that CSP's KO code and upload it there."),
     "dup_same": ("यह वही डॉक्यूमेंट है जो पहले से हमारे पास है। रिन्यू किया हुआ नया डॉक्यूमेंट अपलोड करें।",
@@ -262,7 +264,7 @@ def _on_record_elsewhere(db: Session, csp: CSP, data: bytes) -> bool:
     return db.query(Document.id).filter(Document.sha256 == sha, Document.csp_id != csp.id).first() is not None
 
 
-def _misfiled_note(db: Session, csp: CSP, data: bytes) -> str:
+def _misfiled_note(db: Session, csp: CSP, data: bytes, flag: bool = True) -> str:
     """The other CSPs a file is on record for, and their copies put in the
     Review queue (the document names this CSP: those were probably misfiled)."""
     sha = hashlib.sha256(data).hexdigest()
@@ -270,12 +272,12 @@ def _misfiled_note(db: Session, csp: CSP, data: bytes) -> str:
     for d in db.query(Document).filter(Document.sha256 == sha, Document.csp_id != csp.id):
         other = db.get(CSP, d.csp_id)
         codes.append(other.current_code if other else "?")
-        if not db.query(ManualReviewQueue).filter(ManualReviewQueue.document_id == d.id,
+        if flag and not db.query(ManualReviewQueue).filter(ManualReviewQueue.document_id == d.id,
                                                   ManualReviewQueue.status == ReviewStatus.PENDING).first():
             db.add(ManualReviewQueue(document_id=d.id, status=ReviewStatus.PENDING, reason=(
                 f"Probably misfiled: this same file was uploaded for {csp.current_code} {csp.name}, whose name is "
                 "on it. Reject it here if it isn't this CSP's document.")[:500]))
-    return ", ".join(dict.fromkeys(codes)) + " (that copy is in the Review queue)"
+    return ", ".join(dict.fromkeys(codes)) + (" (that copy is in the Review queue)" if flag else "")
 
 
 def _same_as_on_file(db: Session, csp: CSP, doc_type: str, ex: dict) -> bool:
@@ -285,19 +287,19 @@ def _same_as_on_file(db: Session, csp: CSP, doc_type: str, ex: dict) -> bool:
     return bool(s.document is not None and s.status == "VALID" and read and s.document.issue_date == read)
 
 
-def _other_owner(db: Session, csp: CSP, ex: dict) -> tuple[Optional[str], Optional[str]]:
+def _other_owner(db: Session, csp: CSP, ex: dict, filename: str = "") -> tuple[Optional[str], Optional[str]]:
     """Master link: whose document is this? (the Gmail check, without the
     model). Returns (KO code of the other CSP it shows, or "" when it names
     another CSP without a code; None when it is not another CSP's), and a note
     when neither this CSP's code nor name could be read on it."""
     from ..gmail_ingest import check_owner
     everyone = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).all()
-    owner, _, review = check_owner(db, csp, ex, everyone)
+    owner, _, review = check_owner(db, csp, ex, everyone, filename=filename)
     if owner.id != csp.id:
         return owner.current_code, None
     if review and review.startswith(("Document names", "Document shows CSP codes")):
-        m = re.search(r"\(([0-9A-Z]{6,12})\)|codes ([0-9A-Z, ]+), not", review)
-        return (m.group(1) or m.group(2).split(",")[0].strip()) if m else "", None
+        m = re.search(r"(?<![0-9A-Z])(\d[A-Z]\d{6})(?![0-9])", review)
+        return m.group(1) if m else "", None
     return None, ("name / KO code not confirmed on the document" if review else None)
 
 
@@ -965,9 +967,32 @@ def _read_section(db: Session, csp: CSP, res: dict, *, doc_type: str, data: byte
         turn_away("dup_same", data, mime)
         return
     owner_note = None
+    if not via_dc and ex.get("readability") == "READABLE":
+        # The CSP's own link or the common link (since 06-11-2026; before, only
+        # the DC link and Gmail were checked): a document showing another CSP's
+        # KO code, in its text or file name, is not this CSP's.
+        from ..gmail_ingest import check_owner
+        everyone = db.query(CSP).filter(CSP.is_active_in_calling_sheet.is_(True)).all()
+        owner, how, review = check_owner(db, csp, ex, everyone, filename=filename)
+        if owner.id != csp.id:
+            turn_away("csp_other_csp", data, mime)
+            hi, en = MSG["csp_other_csp"]
+            res["message"] = {"hi": f"{hi} (KO {owner.current_code})", "en": f"{en} (KO {owner.current_code})"}
+            return
+        if review and review.startswith("Document shows CSP codes"):
+            ex["owner_review"] = review
+        if _on_record_elsewhere(db, csp, data):
+            if review:
+                # Neither this CSP's code nor name on it, and the same file is on
+                # another CSP's record: a person decides whose it is.
+                ex["owner_review"] = " ".join(x for x in (ex.get("owner_review"), (
+                    "The same file is also on record for " + _misfiled_note(db, csp, data, flag=False)
+                    + ". Check whose document it is.")) if x)
+            else:
+                _misfiled_note(db, csp, data)       # it names this CSP: the other copy was misfiled
     if via_dc:
         # A wrong KO code typed by the DC: the document shows another CSP.
-        other, owner_note = _other_owner(db, csp, ex)
+        other, owner_note = _other_owner(db, csp, ex, filename)
         if elsewhere:
             if other is not None or owner_note:
                 turn_away("dup_other", data, mime)
@@ -1007,7 +1032,7 @@ def _read_section(db: Session, csp: CSP, res: dict, *, doc_type: str, data: byte
         db.flush()
         _list_for_review(db, doc, section, owner_note)
     held = (doc.extracted_fields or {}).get("safety_check")
-    said = "received_check" if ex.get("type_review") or held else ("review" if needs_review else "accepted")
+    said = "received_check" if ex.get("type_review") or ex.get("owner_review") or held else ("review" if needs_review else "accepted")
     res.update(ok=True, message=_msg(said), reason=said, document_id=doc.id)
     if not held:     # dates that cannot be right are not shown to the CSP
         res.update(issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))

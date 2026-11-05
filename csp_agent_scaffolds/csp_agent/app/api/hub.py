@@ -1001,7 +1001,9 @@ def review_queue(me: Principal = Depends(require_user), db: Session = Depends(ge
     rows = (_mine(db.query(ManualReviewQueue, Document, CSP).join(Document, Document.id == ManualReviewQueue.document_id)
                   .join(CSP, CSP.id == Document.csp_id), me).filter(ManualReviewQueue.status == ReviewStatus.PENDING)
             .order_by(ManualReviewQueue.created_at).all())
+    from ..owner_guard import warning
     return {"rows": [{"id": q.id, "reason": q.reason, "created_at": _iso(q.created_at), "document": _doc_json(d),
+                      "owner_warning": warning(db, d),
                       "csp": {"id": c.id, "code": c.current_code, "name": c.name}} for q, d, c in rows]}
 
 
@@ -1376,6 +1378,28 @@ def reread_review(item_id: int, me: Principal = Depends(require_user), db: Sessi
     return {"changed": r["changed"], "note": r["note"]}
 
 
+@router.post("/review/{item_id}/move")
+def move_review(item_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """The document belongs to the CSP whose KO code it shows: file it there.
+    It waits in the Review queue under that CSP ("Moved from ...") and counts
+    for them once accepted; this CSP is asked for their own document again."""
+    from ..owner_guard import move_document, warning
+    from ..renewal_engine import run_for_csp
+    q = db.get(ManualReviewQueue, item_id)
+    if q is None or q.status != ReviewStatus.PENDING:
+        raise HTTPException(404, "not waiting")
+    d = db.get(Document, q.document_id)
+    old = _own_csp(db, d.csp_id, me)
+    w = warning(db, d)
+    if not w or not w["move_to"]:
+        raise HTTPException(422, "This document doesn't show exactly one other CSP's KO code: reject it instead.")
+    to = db.get(CSP, w["move_to"]["id"])
+    result = move_document(db, d, to, me.name, w["text"])
+    run_for_csp(db, old)
+    db.commit()
+    return {"result": result, "to": {"code": to.current_code, "name": to.name}}
+
+
 # Validity a reviewer may pick, in months (what the document states). No
 # police certificate is valid for life: one that states no validity, a Police
 # Clearance Certificate too, is 1 year (the "no expiry" choice ended 02-11-2026).
@@ -1385,10 +1409,12 @@ VALIDITY_CHOICES = {"AGREEMENT": (12, 24, 36, 60), "POLICE_VERIFICATION": (6, 12
 @router.post("/review/{item_id}/resolve")
 def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept: bool = Body(True),
                    validity_months: Optional[int] = Body(None), document_type: Optional[str] = Body(None),
-                   expiry_date: Optional[str] = Body(None),
+                   expiry_date: Optional[str] = Body(None), owner_ok: bool = Body(False),
                    me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     """Accept (with the issue date, and optionally the validity the document
-    states and its real type) or reject a document waiting in the queue."""
+    states and its real type) or reject a document waiting in the queue. A
+    document showing another CSP's KO code is not accepted for this CSP
+    unless the reviewer says it is this CSP's (owner_ok): Move it instead."""
     from ..compliance import refresh_category
     from ..expiry_engine import add_months, add_years, calculate_document_expiry
     reviewer = me.name
@@ -1397,6 +1423,13 @@ def resolve_review(item_id: int, issue_date: Optional[str] = Body(None), accept:
         raise HTTPException(404, "not found")
     d = db.get(Document, q.document_id)
     _own_csp(db, d.csp_id, me)
+    if accept:
+        from ..owner_guard import warning
+        w = warning(db, d)
+        if w and not owner_ok:
+            raise HTTPException(409, w["text"] + " Move it to that CSP, or reject it.")
+        if w:
+            d.extracted_fields = {**(d.extracted_fields or {}), "owner_confirmed": f"by {reviewer}"}
     if accept and d.issue_date is None and not issue_date:
         raise HTTPException(422, "Enter the document's issue date before accepting it (or reject it if the date is blank).")
     new_type = canonical_type(document_type) if accept and document_type else None

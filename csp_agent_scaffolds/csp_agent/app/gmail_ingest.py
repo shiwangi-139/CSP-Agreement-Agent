@@ -177,12 +177,17 @@ def learned_names(db: Session) -> dict[int, list[str]]:
 
 def check_owner(db: Session, csp: CSP, ex: dict, everyone: list[CSP],
                 ask_model: Optional[Callable[[], Optional[dict]]] = None,
-                learned: Optional[dict[int, list[str]]] = None) -> tuple[CSP, Optional[str], Optional[str]]:
+                learned: Optional[dict[int, list[str]]] = None,
+                filename: Optional[str] = None) -> tuple[CSP, Optional[str], Optional[str]]:
     """Whose document is this? The email chose `csp`; the document itself
     decides. Returns (csp to file it under, how, reason to hold it for review).
       1. OCR shows this CSP's code, its name, or a name a reviewer accepted
          for it before                                    -> this CSP
       2. OCR shows exactly one other CSP's code            -> that CSP
+         no code read, the FILE NAME shows exactly one other CSP's code
+         ("1A850074 ASHWANI KUMAR.pdf" in an email about another CSP), and
+         the document doesn't show this CSP's name          -> that CSP
+         (the file name shows other codes, and this name)  -> held for review
       3. otherwise ask the vision model for the code and name (handwriting):
          this CSP's code or name                           -> this CSP
          another CSP's code AND that CSP's name            -> that CSP
@@ -207,7 +212,19 @@ def check_owner(db: Session, csp: CSP, ex: dict, everyone: list[CSP],
         return csp, None, f"Document shows CSP codes {shown}, not {csp.current_code}."
     text = _letters(ex.get("match_text"))
     known = [csp.name, *(learned or {}).get(csp.id, [])]
-    if any(_name_on_document(n, text) for n in known):
+    this_named = any(_name_on_document(n, text) for n in known)
+    from .owner_guard import codes_in_filename
+    in_name = {}
+    for code in codes_in_filename(filename):
+        other = _find_csp(db, code)
+        if other is not None:
+            in_name[other.id] = other
+    if in_name and csp.id not in in_name:
+        if len(in_name) == 1 and not this_named:
+            return next(iter(in_name.values())), "CODE_IN_FILENAME", None
+        shown = ", ".join(f"{c.current_code} {c.name}" for c in in_name.values())
+        return csp, None, f"Document shows CSP codes {shown} in its file name, not {csp.current_code}."
+    if this_named:
         return csp, None, None
     # Another CSP's full name (every word, any order: certificates often put the
     # surname first, "MISAL RAJESH VASANT").
@@ -406,7 +423,7 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
             else:
                 ex = extracted.get(att["attachment_id"]) or extract_document_fields_deterministic(data, att["filename"])
             owner, owner_how, review = check_owner(
-                db, csp, ex, everyone, learned=learned,
+                db, csp, ex, everyone, learned=learned, filename=att["filename"],
                 ask_model=(lambda: read_owner_with_model(data, ex.get("document_type") or "UNKNOWN"))
                 if MODEL_AUTO_FALLBACK else None)
             if review:

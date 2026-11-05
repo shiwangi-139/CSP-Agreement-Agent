@@ -34,6 +34,7 @@ SHORT_REASON = {
     "dc_valid": ("यह पहले से मान्य है", "already on file and valid"),
     "dc_in_review": ("यह अभी जाँच में है", "already being checked"),
     "dup_other": ("यह किसी दूसरे CSP का डॉक्यूमेंट है", "this file belongs to another CSP"),
+    "csp_other_csp": ("यह किसी दूसरे CSP का डॉक्यूमेंट है", "this document belongs to another CSP"),
     "dc_other_csp": ("यह किसी दूसरे CSP का डॉक्यूमेंट है", "this document belongs to another CSP"),
     "dup_rejected": ("यही फ़ाइल पहले सही नहीं पाई गई", "this same file was not accepted before"),
     "dup_unreadable": ("यही फ़ाइल पहले पढ़ी नहीं जा सकी", "this same file could not be read before"),
