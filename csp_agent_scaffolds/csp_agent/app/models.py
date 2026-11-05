@@ -668,3 +668,7 @@ class UploadJobFile(Base):
     mime = Column(String)
     n_files = Column(Integer, default=1)                     # photos joined into this PDF (1 for a PDF)
     data = Column(LargeBinary, nullable=False)
+
+
+# Labels kept live: refreshed in the same save as any document change (app/live_labels.py).
+from . import live_labels  # noqa: E402,F401

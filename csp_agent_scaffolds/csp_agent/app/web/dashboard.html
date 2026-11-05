@@ -835,7 +835,7 @@
           <div class="small" style="margin-top:6px">${Object.entries(s.sub_slabs || {}).filter(([x]) => x.startsWith(k + ".")).map(([x, v]) => `${x} ${esc(v.label)}: <b>${v.count}</b>`).join("<br>")}</div>
           ${k < 4 ? `<div class="small" style="margin-top:6px">${badge("EXPIRED", (s.categories_with_expired?.[k] ?? 0) + " with an expired document")}</div>` : ""}</div>`).join("")}
       </div>
-      <div class="small muted" style="margin-top:8px"><a href="#" data-cat="5"><b>Inactive: ${c[5] ?? 0} CSPs</b></a> · terminal Inactive on the calling sheet, not in Labels 1–4, never messaged
+      <div class="small muted" style="margin-top:8px"><a href="#" data-cat="5"><b>Inactive: ${c[5] ?? 0} CSP${(c[5] ?? 0) === 1 ? "" : "s"}</b></a> · terminal Inactive on the calling sheet, not in Labels 1–4, never messaged
       </div>
       <div class="grid k3" style="margin-top:14px">
         <div class="card"><h2>Waiting for your approval</h2>
@@ -880,7 +880,7 @@
       <div class="tabs small">${tags.map(([k, l]) => `<button data-tag="${k}" class="${(state.tag || "") === k ? "active" : ""}">${l}${k ? ` (${state.summary.tags?.[k] ?? 0} overall)` : ""}</button>`).join("")}</div>
       <div class="toolbar"><input type="search" id="q" placeholder="Search code, name or phone" value="${esc(state.q)}">
         ${state.cat < 4 ? `<label class="small"><input type="checkbox" id="expiredonly" ${state.expiredOnly ? "checked" : ""}> only with an expired document (${state.summary.categories_with_expired?.[state.cat] ?? 0})</label>` : ""}
-        <span class="muted small">${d.total} CSPs · ${CAT[state.cat][1]}</span>
+        <span class="muted small">${d.total} CSP${d.total === 1 ? "" : "s"} · ${CAT[state.cat][1]}</span>
         <a class="btn" href="#" data-xlsx="csp">Download CSP report (.xlsx)</a></div>
       ${state.cat === 5 && state.summary.me.role === "ADMIN" ? `<p class="small muted">If a CSP here is actually working, press <b>Make active</b>: they move to their Label and get reminders again, even though the calling sheet still says Inactive.</p>` : ""}
       <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>CSP</th><th>Agreement</th><th>PVR</th><th>IIBF</th><th>RM / DC</th><th>Next action</th>${state.cat === 5 ? "<th></th>" : ""}</tr></thead><tbody>
@@ -1128,7 +1128,7 @@
         <a class="btn" href="#" data-findxlsx="1">Download this list (.xlsx)</a></div>
       ${rmp.length ? `<div class="card" style="margin-bottom:12px"><div class="meta"><b>Pending list by RM (CSV)</b></div>
         <p class="small muted">Labels 2, 3 and 4, and Label 1 with an expired document: CSPs with a document pending or expired, district by district, with the DC and what to upload. Made fresh when you download.</p>
-        <div class="toolbar" style="flex-wrap:wrap">${rmp.map((r) => `<a class="btn" href="#" data-rmcsv="${r.id}">${esc(r.name)} · ${r.csps} CSPs</a>`).join("")}</div></div>` : ""}
+        <div class="toolbar" style="flex-wrap:wrap">${rmp.map((r) => `<a class="btn" href="#" data-rmcsv="${r.id}">${esc(r.name)} · ${r.csps} CSP${r.csps === 1 ? "" : "s"}</a>`).join("")}</div></div>` : ""}
       <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>CSP</th><th>Agreement</th><th>PVR</th><th>IIBF</th><th>RM / DC</th><th>Upload page</th></tr></thead><tbody>
         ${d.rows.map((r) => `<tr class="click" data-csp="${r.id}">
           <td><div class="mono">${esc(r.code)}</div><div>${esc(r.name)}</div><div class="small">${badge("c" + r.category, r.sub_slab_label)}</div></td>
@@ -1227,7 +1227,7 @@
           ${m.active ? `<button class="btn" data-mlink="revoke">Switch it off</button>` : ""}</div>
           <div class="meta" style="margin-top:14px"><b>Excel for one DC</b></div>
           <p class="small muted">That DC's CSPs in plain words: what is on file and what to upload, needs first, coloured green / yellow / red. Download it and share it with the DC yourself.</p>
-          <div class="toolbar"><select id="dcxl">${m.dcs.map((u) => `<option value="${u.id}">${esc(u.name)} (${u.csps} CSPs)</option>`).join("")}</select>
+          <div class="toolbar"><select id="dcxl">${m.dcs.map((u) => `<option value="${u.id}">${esc(u.name)} (${u.csps} CSP${u.csps === 1 ? "" : "s"})</option>`).join("")}</select>
           <button class="btn" data-dcxlsx="1" ${m.dcs.length ? "" : "disabled"}>Download DC Excel</button>
           <button class="btn" data-dctext="1" ${m.dcs.length ? "" : "disabled"}>Text summary</button>
           <button class="btn" data-dcprogress="1">Daily progress (all DCs)</button>
