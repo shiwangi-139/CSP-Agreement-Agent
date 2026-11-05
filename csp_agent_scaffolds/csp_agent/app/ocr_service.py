@@ -57,13 +57,36 @@ UNAUTHORIZED_SIGNATURES = [
 ]
 
 
+def page_text_layer(pdf_page) -> str:
+    """A PDF page's text layer. On a filled-in PDF form the typed values live
+    in form boxes, which get_text() leaves out or puts after everything else
+    ("Valid from ____ to ____" ... "16/10/2025 15/10/2027"): here each value
+    is put back where it stands on its line, the blanks under it dropped."""
+    widgets = [w for w in (pdf_page.widgets() or []) if str(w.field_value or "").strip()]
+    if not widgets:
+        return pdf_page.get_text() or ""
+    boxes = [w.rect for w in widgets]
+    inside = lambda x0, y0, x1, y1: any(b.contains(fitz.Point((x0 + x1) / 2, (y0 + y1) / 2)) for b in boxes)
+    words = [(x0, y0, x1, y1, t) for x0, y0, x1, y1, t, *_ in pdf_page.get_text("words")
+             if not inside(x0, y0, x1, y1) and t.strip("_.,:;-")]
+    words += [(w.rect.x0, w.rect.y0, w.rect.x1, w.rect.y1, " ".join(str(w.field_value).split())) for w in widgets]
+    lines: list[list] = []
+    for wd in sorted(words, key=lambda w: (w[1] + w[3]) / 2):
+        mid, height = (wd[1] + wd[3]) / 2, max(wd[3] - wd[1], 1)
+        if lines and abs(mid - lines[-1][0]) <= height * 0.6:
+            lines[-1][1].append(wd)
+        else:
+            lines.append([mid, [wd]])
+    return "\n".join(" ".join(w[4] for w in sorted(ws, key=lambda w: w[0])) for _, ws in lines)
+
+
 def extract_pdf_pages_text(pdf_bytes: bytes, max_pages: int = 5) -> str:
     """Extracts text using PyMuPDF embedded text layer."""
     try:
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         text = ""
         for idx in range(min(len(doc), max_pages)):
-            text += doc[idx].get_text() + "\n"
+            text += page_text_layer(doc[idx]) + "\n"
         return text.strip()
     except Exception as e:
         logger.warning(f"PyMuPDF text extraction failed: {e}")
@@ -823,6 +846,14 @@ def page_png(file_bytes: bytes, index: int, dpi: int = 150) -> Optional[bytes]:
         return None
 
 
+def _has_form_values(pdf_bytes: bytes) -> bool:
+    try:
+        return any(str(w.field_value or "").strip() for p in fitz.open(stream=pdf_bytes, filetype="pdf")
+                   for w in (p.widgets() or []))
+    except Exception:
+        return False
+
+
 def scan_document(file_bytes: bytes,
                   stop_when: Optional[Callable[[str], bool]] = None,
                   max_pages: int = OCR_MAX_PAGES) -> DocumentScan:
@@ -840,6 +871,8 @@ def scan_document(file_bytes: bytes,
     sha = hashlib.sha256(file_bytes).hexdigest()
     cached = _cache_load(sha)
     new_pages: List[PageScan] = []
+    if cached and mime == "application/pdf" and _has_form_values(file_bytes):
+        cached = {}             # read before form values were placed (page_text_layer): read again
 
     if mime.startswith("image/"):
         if "0" in cached:
@@ -876,7 +909,7 @@ def scan_document(file_bytes: bytes,
         if str(idx) in cached:
             return _from_cache(idx, cached[str(idx)]), None, None
         pdf_page = doc[idx]
-        layer = pdf_page.get_text() or ""
+        layer = page_text_layer(pdf_page)
         has_images = bool(pdf_page.get_images(full=False))
         w, h = int(pdf_page.rect.width * OCR_DPI / 72), int(pdf_page.rect.height * OCR_DPI / 72)
         poor_layer = has_images and text_layer_quality(layer) < TEXT_LAYER_MIN_QUALITY
