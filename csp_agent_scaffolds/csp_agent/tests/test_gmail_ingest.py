@@ -118,7 +118,7 @@ def _named_csp(db, name):
 
 def _owner_mail(db_session, mailbox, email_csp, pdf):
     mid = "w" + uuid.uuid4().hex[:8]
-    _mail(mailbox, mid, email_csp.current_code, email_csp.name, {"agreement.pdf": pdf})
+    _mail(mailbox, mid, email_csp.current_code, email_csp.name, {"document.pdf": pdf})
     assert gmail_ingest.process_message(db_session, None, mid) == "PROCESSED"
     return db_session.query(InboundMessage).filter_by(external_message_id=mid).one()
 

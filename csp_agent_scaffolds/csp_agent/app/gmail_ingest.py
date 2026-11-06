@@ -453,6 +453,9 @@ def process_message(db: Session, service, msg_id: str, known_anywhere: bool = Fa
                 continue
             else:
                 ex = extracted.get(att["attachment_id"]) or extract_document_fields_deterministic(data, att["filename"])
+            # The file name says another type ("... Agreement ....pdf" read as a PVR): read again as that.
+            from .type_hint import recheck_with_name
+            ex = recheck_with_name(data, att["filename"], ex)
             owner, owner_how, review = check_owner(
                 db, csp, ex, everyone, learned=learned, filename=att["filename"],
                 ask_model=(lambda: read_owner_with_model(data, ex.get("document_type") or "UNKNOWN"))

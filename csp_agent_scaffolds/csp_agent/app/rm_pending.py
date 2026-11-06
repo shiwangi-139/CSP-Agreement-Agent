@@ -19,7 +19,8 @@ from typing import Optional
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
-from .compliance import DOC_LABELS, RENEWAL_SOON_DAYS, REQUIRED_TYPES, evaluate, slab_label, sub_slab, sub_slab_label
+from .compliance import (DOC_LABELS, RENEWAL_SOON_DAYS, REQUIRED_TYPES, evaluate, slab_label, sub_slab, sub_slab_label,
+                         working_clause)
 from .models import CSP, InternalUser
 
 LABELS = (2, 3, 4)
@@ -53,7 +54,9 @@ def _csps(db: Session, rm_id: Optional[int] = None):
     # Label 1 with an expired document: the stored sub-group or reason says so
     # (pending_rows checks it again with today's evaluation).
     expired_1 = and_(CSP.category == 1, or_(CSP.sub_slab == "1.3", CSP.category_reason.ilike("%Expired:%")))
-    q = db.query(CSP).filter(or_(CSP.category.in_(LABELS), expired_1), CSP.is_active_in_calling_sheet.is_(True),
+    # Working terminals only (like the Labels tabs): an Inactive terminal is not
+    # asked for documents (messages to it are blocked), so not listed.
+    q = db.query(CSP).filter(or_(CSP.category.in_(LABELS), expired_1), working_clause(),
                              or_(CSP.state.is_(None), CSP.state != "TEST"))
     return (q if rm_id is None else q.filter(CSP.rm_id == rm_id)).all()
 

@@ -97,7 +97,7 @@ def store_extracted_document(
     db: Session, csp: CSP, data: bytes, filename: str, mime_type: Optional[str],
     extraction: dict, channel: str, source_message_id: Optional[str] = None,
     source_date: Optional[datetime] = None, sender_on_sheet: Optional[bool] = None,
-    expected_type: Optional[str] = None,
+    expected_type: Optional[str] = None, retype_note: Optional[str] = None,
 ) -> StoreOutcome:
     """expected_type: the upload page's box (AGREEMENT / POLICE_VERIFICATION /
     IIBF_CERTIFICATE). The same file already on record as ANOTHER type (an
@@ -202,7 +202,7 @@ def store_extracted_document(
         db.add(doc)
     else:
         doc = upgrade        # keeps its id, file, arrival time and channel
-        fields["read_again"] = (
+        fields["read_again"] = retype_note if (retyped_from and retype_note) else (
             f"Saved as {retyped_from.replace('_', ' ').lower()} when it arrived ({upgrade.upload_channel}); uploaded "
             f"again in the {doc_type.replace('_', ' ').lower()} box on {now:%d-%m-%Y} ({channel}) and read as one."
             if retyped_from else
