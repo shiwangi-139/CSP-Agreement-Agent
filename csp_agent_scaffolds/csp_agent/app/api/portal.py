@@ -45,7 +45,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..ai.extraction.deterministic_extractor import extract_document_fields_deterministic
-from ..compliance import DOC_LABELS, evaluate, refresh_category, slab_label, sub_slab_label
+from ..compliance import DOC_LABELS, canonical_type, evaluate, refresh_category, slab_label, sub_slab_label
 from ..config import MAX_UPLOAD_SIZE_BYTES, UPLOAD_WAIT_SECONDS, local_now
 from ..db import SessionLocal, get_db
 from ..document_service import store_extracted_document
@@ -1008,7 +1008,7 @@ def _read_section(db: Session, csp: CSP, res: dict, *, doc_type: str, data: byte
                 res["message"] = {"hi": f"{hi} (KO {other})", "en": f"{en} (KO {other})"}
             return
     out = store_extracted_document(db, csp, data, filename, mime, ex, channel=channel,
-                                   sender_on_sheet=True)
+                                   sender_on_sheet=True, expected_type=doc_type)
     if out.decision == "DUPLICATE":
         # The same file was sent before: say what became of it (a file that
         # was rejected or unreadable then doesn't count now either).
@@ -1019,6 +1019,17 @@ def _read_section(db: Session, csp: CSP, res: dict, *, doc_type: str, data: byte
         elif st == DocumentStatus.UNREADABLE:
             turn_away("dup_unreadable")
         elif st in (DocumentStatus.NEEDS_REVIEW, DocumentStatus.NEEDS_APPROVAL) and known.is_current is False:
+            res.update(message=_msg("dup_checking"), reason="received_check", ok=True)
+        elif known is not None and canonical_type(known.document_type) != doc_type:
+            # On record as another type (and it doesn't read as this box's
+            # document either): a person checks the type, not "we have it".
+            if not db.query(ManualReviewQueue.id).filter(ManualReviewQueue.document_id == known.id,
+                                                         ManualReviewQueue.status == ReviewStatus.PENDING).first():
+                box = DOC_LABELS[doc_type][0]
+                was = DOC_LABELS.get(canonical_type(known.document_type), (known.document_type,))[0]
+                db.add(ManualReviewQueue(document_id=known.id, status=ReviewStatus.PENDING, reason=(
+                    f"Uploaded again in the {box} box ({channel}), but it is on record as {was}. Check the type: "
+                    f"choose {box} in Type and accept if it is one (enter its dates), or reject it.")[:500]))
             res.update(message=_msg("dup_checking"), reason="received_check", ok=True)
         else:
             res.update(message=_msg("duplicate"), reason="duplicate", ok=True)

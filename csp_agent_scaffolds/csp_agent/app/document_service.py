@@ -97,7 +97,13 @@ def store_extracted_document(
     db: Session, csp: CSP, data: bytes, filename: str, mime_type: Optional[str],
     extraction: dict, channel: str, source_message_id: Optional[str] = None,
     source_date: Optional[datetime] = None, sender_on_sheet: Optional[bool] = None,
+    expected_type: Optional[str] = None,
 ) -> StoreOutcome:
+    """expected_type: the upload page's box (AGREEMENT / POLICE_VERIFICATION /
+    IIBF_CERTIFICATE). The same file already on record as ANOTHER type (an
+    agreement saved as a police certificate from an email: 1A850853 Mathura
+    Prasad) is read again in place when it now reads as the box's document,
+    instead of "we already have this file"."""
     decision = extraction.get("readability")
     sha = hashlib.sha256(data).hexdigest()
     if decision == "NOT_ALLOWED":
@@ -105,9 +111,17 @@ def store_extracted_document(
 
     dup = db.query(Document).filter(Document.csp_id == csp.id, Document.sha256 == sha).first()
     upgrade = None
+    retyped_from = None
     if dup is not None:
-        if dup.readability != "UNREADABLE" or decision != "READABLE":
+        new_type = canonical_type(extraction.get("document_type"))
+        retype = (decision == "READABLE" and expected_type is not None and new_type == canonical_type(expected_type)
+                  and canonical_type(dup.document_type) != new_type
+                  # a person's decision (accepted / rejected) is not overturned here
+                  and dup.status not in (DocumentStatus.MANUAL_VERIFIED, DocumentStatus.REJECTED))
+        if not retype and (dup.readability != "UNREADABLE" or decision != "READABLE"):
             return StoreOutcome("DUPLICATE", dup, "Same file already on record.")
+        if retype:
+            retyped_from = canonical_type(dup.document_type)
         # The same file was unreadable before and reads now (the rules have
         # improved, or the upload page sends it to a person): it is read again
         # in place, instead of being turned away on the old verdict.
@@ -188,8 +202,12 @@ def store_extracted_document(
         db.add(doc)
     else:
         doc = upgrade        # keeps its id, file, arrival time and channel
-        fields["read_again"] = (f"Unreadable when it arrived; read again with the current rules on {now:%d-%m-%Y} "
-                                f"when the same file came again ({channel}).")
+        fields["read_again"] = (
+            f"Saved as {retyped_from.replace('_', ' ').lower()} when it arrived ({upgrade.upload_channel}); uploaded "
+            f"again in the {doc_type.replace('_', ' ').lower()} box on {now:%d-%m-%Y} ({channel}) and read as one."
+            if retyped_from else
+            f"Unreadable when it arrived; read again with the current rules on {now:%d-%m-%Y} "
+            f"when the same file came again ({channel}).")
         for k, v in reading.items():
             setattr(doc, k, v)
     db.flush()
@@ -215,8 +233,16 @@ def store_extracted_document(
     else:
         from .accuracy import maybe_spot_check
         maybe_spot_check(db, doc)
+    if retyped_from and not db.query(ManualReviewQueue.id).filter(
+            ManualReviewQueue.document_id == doc.id, ManualReviewQueue.status == ReviewStatus.PENDING).first():
+        # It counts as read (like any upload); a person sees the type was corrected.
+        db.add(ManualReviewQueue(document_id=doc.id, status=ReviewStatus.PENDING, reason=(
+            f"Spot check: type corrected, already counted. {fields['read_again']} Check it is a "
+            f"{doc_type.replace('_', ' ').lower()} and its dates.")[:500]))
     if decision == "READABLE":
         recompute_current(db, csp, doc_type)
+        if retyped_from:
+            recompute_current(db, csp, retyped_from)
         sync_agreement_row(db, csp)
     vault.place_csp(db, csp)
     return StoreOutcome(decision, doc, extraction.get("readability_reason"))
