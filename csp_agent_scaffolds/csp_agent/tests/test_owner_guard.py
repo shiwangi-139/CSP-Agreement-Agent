@@ -219,3 +219,17 @@ def test_unconfirmed_owner_gets_a_suggestion(db_session):
     owner, _, review = check_owner(s, manoj, ex, [singh, manoj])
     assert owner.id == manoj.id and review.startswith("Could not confirm")
     assert ex["owner_suggestion"]["best"]["id"] == manoj.id           # its district is on it
+
+
+def test_another_csps_full_name_and_district_decide_it(db_session):
+    s = db_session
+    singh, manoj = _manojs(s)
+    ex = {"readability": "READABLE", "match_text": CERT}
+    owner, how, review = check_owner(s, singh, ex, [singh, manoj])
+    assert (owner.id, how) == (manoj.id, "NAME_AND_ADDRESS") and "check once" in review
+    # This CSP's district not known: not sure enough, a person decides.
+    singh.district, singh.kiosk_location = None, None
+    s.flush()
+    ex = {"readability": "READABLE", "match_text": CERT}
+    owner, how, review = check_owner(s, singh, ex, [singh, manoj])
+    assert owner.id == singh.id and ex["owner_suggestion"]["best"]["id"] == manoj.id

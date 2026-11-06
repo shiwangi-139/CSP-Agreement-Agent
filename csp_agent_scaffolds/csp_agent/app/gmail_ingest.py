@@ -183,11 +183,24 @@ def check_owner(db: Session, csp: CSP, ex: dict, everyone: list[CSP],
     suggested owner from the name and the address on the document, among this
     CSP and the CSPs the check names (ex["owner_suggestion"], app/owner_guard.py)."""
     owner, how, review = _check_owner(db, csp, ex, everyone, ask_model=ask_model, learned=learned, filename=filename)
-    if review:
-        from .owner_guard import KO, csp_by_code, suggest_owner
+    if review and owner.id == csp.id:
+        from .owner_guard import KO, csp_by_code, decisive_other, suggest_owner
         try:
             named = [csp_by_code(db, code) for code in dict.fromkeys(KO.findall(review))]
+            tokens = set(_letters(ex.get("match_text")).split())      # exact words only: quick over every CSP
+            for o in everyone:
+                ws = {w for w in _letters(o.name).split() if len(w) >= 3}
+                if o.id != csp.id and len(ws) >= 2 and ws <= tokens:
+                    named.append(o)
+            named = named[:8]
             ex["owner_suggestion"] = suggest_owner(ex.get("match_text"), [csp, *named])
+            other = decisive_other(ex["owner_suggestion"], csp.id)
+            if other is not None:
+                # Another CSP's full name and district, not this CSP's: theirs.
+                to = db.get(CSP, other["id"])
+                return to, "NAME_AND_ADDRESS", (
+                    f"Filed under {to.current_code} {to.name} by name and address ({other['why']}), not "
+                    f"{csp.current_code} {csp.name}: check once, then accept.")
         except Exception:
             logger.exception("owner_suggestion_failed csp=%s", csp.current_code)
     return owner, how, review

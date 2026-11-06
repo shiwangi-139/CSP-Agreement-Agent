@@ -162,13 +162,14 @@ def _upper_words(s: Optional[str]) -> list[str]:
     return re.sub(r"[^A-Z0-9]+", " ", (s or "").upper()).split()
 
 
-def _evidence(c: CSP, text: str, words: set[str]) -> tuple[int, list[str]]:
+def _evidence(c: CSP, text: str, words: set[str]) -> tuple[int, list[str], dict]:
     from .gmail_ingest import _letters, _name_on_document
     from .rm_pending import district_from_address
-    score, why = 0, []
+    score, why, flags = 0, [], {"full_name": False, "district": None}
     name_words = [w for w in dict.fromkeys(_letters(c.name).split()) if len(w) >= 3]
     if name_words and _name_on_document(c.name, _letters(text)):
         score += 3
+        flags["full_name"] = True
         why.append(f"full name {c.name} on it")
     elif name_words:
         got = [w for w in name_words if w in words]
@@ -183,8 +184,10 @@ def _evidence(c: CSP, text: str, words: set[str]) -> tuple[int, list[str]]:
     if d_words:
         if all(w in words for w in d_words):
             score += 2
+            flags["district"] = True
             why.append(f"district {district.strip().title()} on it")
         else:
+            flags["district"] = False
             why.append(f"district {district.strip().title()} not on it")
     address = c.kiosk_location or ""
     if set(PIN.findall(address)) & set(PIN.findall(text)):
@@ -196,7 +199,7 @@ def _evidence(c: CSP, text: str, words: set[str]) -> tuple[int, list[str]]:
     if hit:
         score += len(hit)
         why.append("place " + ", ".join(w.title() for w in hit) + " on it")
-    return score, why
+    return score, why, flags
 
 
 def suggest_owner(text: Optional[str], candidates: list[CSP]) -> Optional[dict]:
@@ -211,12 +214,30 @@ def suggest_owner(text: Optional[str], candidates: list[CSP]) -> Optional[dict]:
         return None
     words = set(_upper_words(text))
     rows = sorted(((*_evidence(c, text, words), c) for c in cands), key=lambda r: -r[0])
-    top, why, best = rows[0]
+    top, why, _, best = rows[0]
     second = rows[1][0] if len(rows) > 1 else 0
     clear = top >= 3 and top - second >= 2 if len(rows) > 1 else top >= 2
     return {"best": {"id": best.id, "code": best.current_code, "name": best.name} if clear else None,
-            "candidates": [{"id": c.id, "code": c.current_code, "name": c.name, "score": s, "why": "; ".join(w)}
-                           for s, w, c in rows]}
+            "candidates": [{"id": c.id, "code": c.current_code, "name": c.name, "score": s, "why": "; ".join(w), **f}
+                           for s, w, f, c in rows]}
+
+
+def decisive_other(sug: Optional[dict], csp_id: int) -> Optional[dict]:
+    """Another CSP the document is surely not this CSP's but theirs (decided
+    with the team on 06-11-2026): that CSP's FULL NAME and DISTRICT are on it,
+    while this CSP's full name is not and its district (known) is different.
+    Then it is moved / rejected without a person; anything less stays a
+    suggestion (police certificates carry the home address, the sheet the shop)."""
+    if not sug or not sug.get("best") or sug["best"]["id"] == csp_id:
+        return None
+    by_id = {c["id"]: c for c in sug["candidates"]}
+    other, this = by_id.get(sug["best"]["id"]), by_id.get(csp_id)
+    if not other or not this:
+        return None
+    if other.get("full_name") and other.get("district") is True \
+            and not this.get("full_name") and this.get("district") is False:
+        return other
+    return None
 
 
 def suggestion_for_review(db: Session, doc: Document) -> Optional[dict]:
