@@ -1309,6 +1309,11 @@
           <span class="small muted" style="margin-left:auto">waiting ${ago(r.created_at)}</span></div>
         <div class="rv-dates">issued <span class="mono">${fmt(r.document.issue_date)}</span>${r.document.expiry_date ? ` · expires <span class="mono">${fmt(r.document.expiry_date)}</span>` : ""}</div>
         <p class="rv-reason">${esc(r.reason)}</p>
+        ${!r.owner_warning && r.owner_suggestion ? `<div class="rv-suggest"><b>${r.owner_suggestion.best
+            ? (r.owner_suggestion.best.action === "this" ? `Name and address point to this CSP (${esc(r.owner_suggestion.best.code)} ${esc(r.owner_suggestion.best.name)})`
+              : `Name and address point to ${esc(r.owner_suggestion.best.code)} ${esc(r.owner_suggestion.best.name)}`)
+            : "Name and address don't clearly point to one CSP"}</b> <span class="small muted">(a suggestion: check the document)</span>
+          <ul class="small">${r.owner_suggestion.candidates.map((c) => `<li><span class="mono">${esc(c.code)}</span> ${esc(c.name)}: ${esc(c.why)}</li>`).join("")}</ul></div>` : ""}
         ${r.owner_warning ? `<p class="rv-owner">⚠ ${esc(r.owner_warning.text)} Don't accept it for ${esc(r.csp.name)}: ${r.owner_warning.move_to ? "move it to that CSP" : "reject it"}.</p>` : ""}
         ${whyBox(r.document, true)}
         ${aiHint(r.document.model_suggestion)}
@@ -1325,7 +1330,10 @@
             ? `${r.owner_warning.move_to ? `<button class="btn primary" data-rvmove="${r.id}" data-rvto="${esc(r.owner_warning.move_to.code + " " + r.owner_warning.move_to.name)}">Move to ${esc(r.owner_warning.move_to.code)} ${esc(r.owner_warning.move_to.name)}</button>` : ""}
                <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button>
                <a href="#" class="small" data-resolve="${r.id}" data-accept="1" data-ownerok="1" title="Only if the document really is this CSP's (e.g. the other code is their old one)">It is ${esc(r.csp.name)}'s: accept</a>`
-            : `<button class="btn primary" data-resolve="${r.id}" data-accept="1">Accept</button>
+            : `${r.owner_suggestion?.best && r.owner_suggestion.best.action !== "this"
+                ? `<button class="btn primary" data-rvmove="${r.id}" data-rvtoid="${r.owner_suggestion.best.id}" data-rvact="${r.owner_suggestion.best.action}" data-rvto="${esc(r.owner_suggestion.best.code + " " + r.owner_suggestion.best.name)}">${r.owner_suggestion.best.action === "reject"
+                  ? `Reject here: it's ${esc(r.owner_suggestion.best.name)}'s` : `Move to ${esc(r.owner_suggestion.best.code)} ${esc(r.owner_suggestion.best.name)}`}</button>` : ""}
+          <button class="btn ${r.owner_suggestion?.best && r.owner_suggestion.best.action !== "this" ? "" : "primary"}" data-resolve="${r.id}" data-accept="1">Accept</button>
           <button class="btn danger" data-resolve="${r.id}" data-accept="0">Reject document</button>`}</div></div></div>`).join("") || `<div class="card empty">Nothing to review. ✓</div>`}`;
     },
   };
@@ -1705,8 +1713,10 @@
       }
       if (ds.cc) { await post(`/api/hub/contact-changes/${ds.cc}`); return render(); }
       if (ds.rvmove) {
-        if (!confirm(`Move this document to ${ds.rvto}?\n\nIt waits in the Review queue under that CSP and counts for them once accepted. This CSP is asked for their own document.`)) return;
-        const r = await post(`/api/hub/review/${ds.rvmove}/move`);
+        if (!confirm(ds.rvact === "reject"
+          ? `Reject this copy here? ${ds.rvto} already has the same file.\n\nThis CSP is asked for their own document.`
+          : `Move this document to ${ds.rvto}?\n\nIt waits in the Review queue under that CSP and counts for them once accepted. This CSP is asked for their own document.`)) return;
+        const r = await post(`/api/hub/review/${ds.rvmove}/move`, ds.rvtoid ? {to_id: Number(ds.rvtoid)} : {});
         toast(r.result === "MOVED" ? `Moved to ${r.to.code} ${r.to.name}: it is in the Review queue under them.` : `${r.to.code} already has this file: rejected here.`);
         return render();
       }

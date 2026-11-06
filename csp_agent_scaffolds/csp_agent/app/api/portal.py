@@ -988,6 +988,9 @@ def _read_section(db: Session, csp: CSP, res: dict, *, doc_type: str, data: byte
                 ex["owner_review"] = " ".join(x for x in (ex.get("owner_review"), (
                     "The same file is also on record for " + _misfiled_note(db, csp, data, flag=False)
                     + ". Check whose document it is.")) if x)
+                from ..owner_guard import holders_of_same_file, suggest_owner
+                ex["owner_suggestion"] = suggest_owner(ex.get("match_text"), [
+                    csp, *holders_of_same_file(db, hashlib.sha256(data).hexdigest(), csp.id)])
             else:
                 _misfiled_note(db, csp, data)       # it names this CSP: the other copy was misfiled
     if via_dc:

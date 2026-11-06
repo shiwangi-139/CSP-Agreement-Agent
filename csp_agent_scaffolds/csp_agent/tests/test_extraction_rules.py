@@ -946,3 +946,17 @@ def test_a_blank_valid_upto_still_takes_no_date_from_the_next_clause():
     text = ("Term: This Agreement shall be valid upto ____ or until terminated. B. Termination by either Eko or CSP "
             "by giving 30 days notice 2210412027")
     assert find_end_date(text, date(2024, 4, 23)) is None
+
+
+def test_agreement_end_date_after_a_typed_ellipsis():
+    """'And ending on…20/10/2027' (one '…' character, as Word types it) is the
+    last day; the '12 months' written above it is reported for a person."""
+    from datetime import date as _date
+    from app.ai.extraction.rules.agreement import extract_agreement
+    text = ("CUSTOMER SERVICE POINT AGREEMENT\nOn this day of, 21/10/2024\n"
+            "B. Eko hereby appoints SUSHIL KUMAR SINHA as a Customer Service Point of Eko at NAGAR PARISAD BUXAR\n"
+            "C. Eko and CSP have recorded the terms of theirrelationship. For a period of 12 months\n"
+            "commencing from 21/10/2024………………… And ending on…20/10/2027…………………\n")
+    r = extract_agreement(text, today=_date(2026, 11, 6))
+    assert r["explicit_expiry"] == _date(2027, 10, 20)
+    assert "21-10-2025" in r["validity_conflict"]

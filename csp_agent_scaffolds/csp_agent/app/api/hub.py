@@ -1001,9 +1001,9 @@ def review_queue(me: Principal = Depends(require_user), db: Session = Depends(ge
     rows = (_mine(db.query(ManualReviewQueue, Document, CSP).join(Document, Document.id == ManualReviewQueue.document_id)
                   .join(CSP, CSP.id == Document.csp_id), me).filter(ManualReviewQueue.status == ReviewStatus.PENDING)
             .order_by(ManualReviewQueue.created_at).all())
-    from ..owner_guard import warning
+    from ..owner_guard import suggestion_for_review, warning
     return {"rows": [{"id": q.id, "reason": q.reason, "created_at": _iso(q.created_at), "document": _doc_json(d),
-                      "owner_warning": warning(db, d),
+                      "owner_warning": warning(db, d), "owner_suggestion": suggestion_for_review(db, d),
                       "csp": {"id": c.id, "code": c.current_code, "name": c.name}} for q, d, c in rows]}
 
 
@@ -1379,11 +1379,14 @@ def reread_review(item_id: int, me: Principal = Depends(require_user), db: Sessi
 
 
 @router.post("/review/{item_id}/move")
-def move_review(item_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
-    """The document belongs to the CSP whose KO code it shows: file it there.
-    It waits in the Review queue under that CSP ("Moved from ...") and counts
-    for them once accepted; this CSP is asked for their own document again."""
-    from ..owner_guard import move_document, warning
+def move_review(item_id: int, to_id: Optional[int] = Body(None, embed=True),
+                me: Principal = Depends(require_user), db: Session = Depends(get_db)):
+    """The document belongs to the CSP whose KO code it shows (or, with to_id,
+    the CSP its name and address point to): file it there. It waits in the
+    Review queue under that CSP ("Moved from ...") and counts for them once
+    accepted; if that CSP already has the same file, it is rejected here.
+    This CSP is asked for their own document again."""
+    from ..owner_guard import move_document, suggestion_for_review, warning
     from ..renewal_engine import run_for_csp
     q = db.get(ManualReviewQueue, item_id)
     if q is None or q.status != ReviewStatus.PENDING:
@@ -1391,10 +1394,19 @@ def move_review(item_id: int, me: Principal = Depends(require_user), db: Session
     d = db.get(Document, q.document_id)
     old = _own_csp(db, d.csp_id, me)
     w = warning(db, d)
-    if not w or not w["move_to"]:
+    sug = suggestion_for_review(db, d)
+    if to_id is not None:
+        best = (sug or {}).get("best")
+        if not best or best["id"] != to_id or best["action"] == "this":
+            raise HTTPException(422, "That CSP is not the one the document points to.")
+        to = db.get(CSP, to_id)
+        why = f"Its name and address point to {to.current_code} {to.name} (" + next(
+            (c["why"] for c in sug["candidates"] if c["id"] == to_id), "") + ")."
+    elif w and w["move_to"]:
+        to, why = db.get(CSP, w["move_to"]["id"]), w["text"]
+    else:
         raise HTTPException(422, "This document doesn't show exactly one other CSP's KO code: reject it instead.")
-    to = db.get(CSP, w["move_to"]["id"])
-    result = move_document(db, d, to, me.name, w["text"])
+    result = move_document(db, d, to, me.name, why)
     run_for_csp(db, old)
     db.commit()
     return {"result": result, "to": {"code": to.current_code, "name": to.name}}

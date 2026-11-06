@@ -141,6 +141,8 @@ def store_extracted_document(
     if owner_review:
         fields["owner_check"] = owner_review
         fields["owner_seen_name"] = extraction.get("owner_seen_name")
+        if extraction.get("owner_suggestion"):
+            fields["owner_suggestion"] = extraction["owner_suggestion"]
     # Upload page: readable, but type or date not confirmed by the rules.
     type_review = extraction.get("type_review") if decision == "READABLE" else None
     if type_review:

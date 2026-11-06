@@ -181,7 +181,10 @@ END_DATE = re.compile(
     r"|effective\s*date\W{0,2}\s*\)"
     # 'On this day of, 11-06-2026, effected date 10-06-2029' (typed for "end date")
     r"|effected\s*date)\s*", re.I)
-BETWEEN_LABEL_AND_DATE = re.compile(r"^[\s:\-–—_.,(‘’“”'\"`]{0,12}$")
+# Dots typed as one character ("ending on…20/10/2027", Word's "…") count like "..."
+# (Sushil Kumar Sinha: "For a period of 12 months commencing from 21/10/2024……
+# And ending on…20/10/2027" was read as 12 months, expired 21-10-2025).
+BETWEEN_LABEL_AND_DATE = re.compile(r"^[\s:\-–—_.,(‘’“”'\"`…‥·•]{0,12}$")
 # A date right after the label that a highlighter, underline or stamp has
 # blurred: separators read as | \ l I or 1 ("22|04|2027", "2210412027",
 # "22104/2027"), or the year split ("22/04/20 27"). Only tried there.

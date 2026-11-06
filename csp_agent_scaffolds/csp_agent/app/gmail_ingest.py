@@ -179,6 +179,24 @@ def check_owner(db: Session, csp: CSP, ex: dict, everyone: list[CSP],
                 ask_model: Optional[Callable[[], Optional[dict]]] = None,
                 learned: Optional[dict[int, list[str]]] = None,
                 filename: Optional[str] = None) -> tuple[CSP, Optional[str], Optional[str]]:
+    """_check_owner, and when it can't confirm the owner (held for review), a
+    suggested owner from the name and the address on the document, among this
+    CSP and the CSPs the check names (ex["owner_suggestion"], app/owner_guard.py)."""
+    owner, how, review = _check_owner(db, csp, ex, everyone, ask_model=ask_model, learned=learned, filename=filename)
+    if review:
+        from .owner_guard import KO, csp_by_code, suggest_owner
+        try:
+            named = [csp_by_code(db, code) for code in dict.fromkeys(KO.findall(review))]
+            ex["owner_suggestion"] = suggest_owner(ex.get("match_text"), [csp, *named])
+        except Exception:
+            logger.exception("owner_suggestion_failed csp=%s", csp.current_code)
+    return owner, how, review
+
+
+def _check_owner(db: Session, csp: CSP, ex: dict, everyone: list[CSP],
+                ask_model: Optional[Callable[[], Optional[dict]]] = None,
+                learned: Optional[dict[int, list[str]]] = None,
+                filename: Optional[str] = None) -> tuple[CSP, Optional[str], Optional[str]]:
     """Whose document is this? The email chose `csp`; the document itself
     decides. Returns (csp to file it under, how, reason to hold it for review).
       1. OCR shows this CSP's code, its name, or a name a reviewer accepted

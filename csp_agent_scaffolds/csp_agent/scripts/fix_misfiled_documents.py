@@ -9,6 +9,13 @@ accepted documents too.
     .venv/bin/python -m scripts.fix_misfiled_documents                 # dry run: Excel list in logs/, nothing changed
     .venv/bin/python -m scripts.fix_misfiled_documents --csp 1A851437  # only documents filed under / belonging to one CSP
     .venv/bin/python -m scripts.fix_misfiled_documents --apply
+    sudo .venv/bin/python -m scripts.fix_misfiled_documents --suggest           # list suggested owners
+    sudo .venv/bin/python -m scripts.fix_misfiled_documents --suggest --apply   # save them on the Review items
+
+--suggest: for the Review items asking whose a document is (and those whose
+owner could not be confirmed), the CSP the name and the address on the
+document point to, with the reasons (app/owner_guard.py suggest_owner). It
+reads the files (sudo: they belong to the app); nothing moves.
 
 What --apply does:
   MOVE    the document shows exactly one other CSP's KO code (in it or in its
@@ -29,7 +36,8 @@ from pathlib import Path
 
 from app.db import SessionLocal
 from app.models import CSP, Document, DocumentStatus, ManualReviewQueue, ReviewStatus
-from app.owner_guard import codes_in_filename, codes_shown, move_document, other_owners, own_codes
+from app.owner_guard import (KO, codes_in_filename, codes_shown, csp_by_code, holders_of_same_file, move_document,
+                              other_owners, own_codes, suggest_owner)
 
 ASK_PREFIX = "Whose document is it?"
 BY = "fix_misfiled_documents"
@@ -129,13 +137,59 @@ def apply(db, rows: list[dict]) -> dict:
     return dict(done)
 
 
+def suggest_pending(db, apply_: bool, only: str = "") -> int:
+    """Suggested owners for the waiting "whose document is it?" items."""
+    from app import vault
+    from app.ai.extraction.deterministic_extractor import extract_document_fields_deterministic
+    rows = (db.query(ManualReviewQueue, Document).join(Document, Document.id == ManualReviewQueue.document_id)
+            .filter(ManualReviewQueue.status == ReviewStatus.PENDING).order_by(Document.id).all())
+    n = 0
+    for q, d in rows:
+        f = d.extracted_fields or {}
+        asking = (q.reason or "").startswith(ASK_PREFIX)
+        if not (asking or f.get("owner_check")) or f.get("owner_suggestion"):
+            continue
+        csp = db.get(CSP, d.csp_id)
+        if only and csp.current_code != only.strip().upper():
+            continue
+        path = vault.abs_path(d.storage_path)
+        if path is None or not path.exists():
+            print(f"  doc {d.id}: file not found ({d.storage_path})")
+            continue
+        ex = extract_document_fields_deterministic(path.read_bytes(), d.original_filename or "", allow_llm_fallback=False)
+        cands = [csp, *holders_of_same_file(db, d, csp.id),
+                 *(csp_by_code(db, c) for c in dict.fromkeys(KO.findall(f.get("owner_check") or "")))]
+        sug = suggest_owner(ex.get("match_text"), cands)
+        if not sug:
+            continue
+        n += 1
+        best = sug["best"]
+        print(f"  doc {d.id:<6} on {_who(csp)[:30]:30} -> "
+              f"{(best['code'] + ' ' + best['name']) if best else 'no clear owner'}")
+        for c in sug["candidates"]:
+            print(f"        {c['code']} {c['name']}: {c['why']}")
+        if apply_:
+            d.extracted_fields = {**f, "owner_suggestion": sug}
+            db.commit()
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--csp", default="", help="only documents filed under, or belonging to, this KO code")
+    ap.add_argument("--suggest", action="store_true", help="suggested owners for the waiting Review items")
     a = ap.parse_args()
     db = SessionLocal()
     try:
+        if a.suggest:
+            n = suggest_pending(db, a.apply, a.csp)
+            if a.apply:
+                print(f"\n{n} suggestion(s) saved: they show on the Review items.")
+            else:
+                db.rollback()
+                print(f"\n{n} suggestion(s). Dry run: nothing saved. Add --apply to show them on the Review items.")
+            return
         rows = plan(db, a.csp)
         for r in rows:
             d = r["doc"]

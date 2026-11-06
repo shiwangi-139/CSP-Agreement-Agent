@@ -156,3 +156,66 @@ def test_script_moves_rejects_and_asks(db_session, test_engine, monkeypatch, tmp
     assert ask.reason.startswith("Whose document is it?") and d2.current_code in ask.reason
     assert s.get(Document, ask1.id).status == DocumentStatus.VALID     # asking changes nothing else
     assert s.get(Document, kept.id).csp_id == e.id
+
+
+CERT = ("Character Certificate It is certified that Mr./Miss/Mrs. Manoj Kumar , Son/Daughter/Wife/Guardian Mr. Ram Dayal, "
+        "Vill. Pyasee Po. Kuin.bazar, resident -Vill. Pyasee Po. Kuin.bazar Police station- Khorabar, District- Gorakhpur "
+        "no adverse entry was found against the said candidate. This certificate is valid only for one year.")
+
+
+def _manojs(s):
+    tag = uuid.uuid4().hex[:6]
+    n = int(tag, 16) % 1000000
+    singh = CSP(name="Manoj Kumar Singh", current_code=f"7M{n:06d}", district="Deoria", is_active_in_calling_sheet=True,
+                kiosk_location="Main Road, Bhatni Bazar, Dist. Deoria 274701")
+    manoj = CSP(name="Manoj Kumar", current_code=f"7N{n:06d}", district="Gorakhpur", is_active_in_calling_sheet=True,
+                kiosk_location="Kuin Bazar, Khorabar, Gorakhpur 273010")
+    s.add_all([singh, manoj])
+    s.flush()
+    return singh, manoj
+
+
+def test_name_and_address_point_to_the_owner(db_session):
+    from app.owner_guard import suggest_owner
+    singh, manoj = _manojs(db_session)
+    sug = suggest_owner(CERT, [singh, manoj])
+    assert sug["best"]["id"] == manoj.id
+    why = {c["code"]: c["why"] for c in sug["candidates"]}
+    assert "full name Manoj Kumar" in why[manoj.current_code] and "district Gorakhpur on it" in why[manoj.current_code]
+    assert "Singh not on it" in why[singh.current_code] and "district Deoria not on it" in why[singh.current_code]
+    assert suggest_owner("CHARACTER CERTIFICATE nothing readable", [singh, manoj])["best"] is None
+
+
+def test_review_offers_reject_here_when_the_owner_has_the_same_file(client, monkeypatch):
+    from app.owner_guard import suggest_owner
+    monkeypatch.setattr(auth, "ADMIN_API_KEY", "k")
+    c, Session = client
+    s = Session()
+    singh, manoj = _manojs(s)
+    sha = uuid.uuid4().hex
+    _doc(s, manoj, "New Doc 07-23-2025 12.24.pdf", sha=sha, t="POLICE_VERIFICATION")
+    wrong = _doc(s, singh, "Manoj PVR.pdf", sha=sha, t="POLICE_VERIFICATION")
+    wrong.extracted_fields = {"owner_suggestion": suggest_owner(CERT, [singh, manoj])}
+    q = ManualReviewQueue(document_id=wrong.id, status=ReviewStatus.PENDING, reason="Whose document is it? same file")
+    s.add(q)
+    s.commit()
+    q_id, d_id, m_id, s_id = q.id, wrong.id, manoj.id, singh.id
+    s.close()
+    row = next(r for r in c.get("/api/hub/review", headers=HDR).json()["rows"] if r["id"] == q_id)
+    assert row["owner_suggestion"]["best"]["id"] == m_id and row["owner_suggestion"]["best"]["action"] == "reject"
+    assert c.post(f"/api/hub/review/{q_id}/move", json={"to_id": s_id}, headers=HDR).status_code == 422
+    r = c.post(f"/api/hub/review/{q_id}/move", json={"to_id": m_id}, headers=HDR)
+    assert r.status_code == 200 and r.json()["result"] == "REJECTED"
+    s = Session()
+    d = s.get(Document, d_id)
+    assert d.status == DocumentStatus.REJECTED and d.csp_id == s_id and "Gorakhpur" in d.extracted_fields["owner_check"]
+    s.close()
+
+
+def test_unconfirmed_owner_gets_a_suggestion(db_session):
+    s = db_session
+    singh, manoj = _manojs(s)
+    ex = {"readability": "READABLE", "match_text": "Police verification ... District- Gorakhpur ... valid one year"}
+    owner, _, review = check_owner(s, manoj, ex, [singh, manoj])
+    assert owner.id == manoj.id and review.startswith("Could not confirm")
+    assert ex["owner_suggestion"]["best"]["id"] == manoj.id           # its district is on it
