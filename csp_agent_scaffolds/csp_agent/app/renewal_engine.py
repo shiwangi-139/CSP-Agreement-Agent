@@ -156,6 +156,17 @@ def _pick_step(cycle: OutreachCycle, due: list[dict], sent: set[str]) -> Optiona
     return step
 
 
+def _reminded_recently(db: Session, csp: CSP, today: date) -> Optional[date]:
+    """The day the next reminder may go, if one went to this CSP within
+    policy.REMINDER_GAP_DAYS (any kind, any follow-up); else None."""
+    from .escalation import last_reminder
+    last = last_reminder(db, csp.id)
+    if last is None:
+        return None
+    nxt = last.sent_at.date() + timedelta(days=policy.REMINDER_GAP_DAYS)
+    return nxt if nxt > today else None
+
+
 # ------------------------------------------------------------------ renewal
 def _run_renewals(db: Session, csp: CSP, state: ComplianceState, today: date) -> list[date]:
     next_dates = []
@@ -175,6 +186,10 @@ def _run_renewals(db: Session, csp: CSP, state: ComplianceState, today: date) ->
             next_dates.append(s.expiry_date - timedelta(days=upcoming[0]["days_before"]))
         due = policy.due_renewal_steps(key, days_left)
         if not due:
+            continue
+        wait = _reminded_recently(db, csp, today)
+        if wait is not None:
+            next_dates.append(wait)        # one reminder in any 7 days
             continue
         if cycle is None:
             cycle = OutreachCycle(csp_id=csp.id, document_type=doc_type, kind="RENEWAL", ladder=key,
@@ -226,8 +241,20 @@ def _run_upload_cycle(db: Session, csp: CSP, state: ComplianceState, today: date
             _close(cycle, "ALL_DOCUMENTS_RECEIVED")
         return None
     if cycle is None:
+        anchor = today
+        if policy.plan_on(today):
+            # Closed a few days ago (documents sent, then rejected): the plan
+            # goes on from the same week, it does not start again at week 1.
+            prev = (db.query(OutreachCycle)
+                    .filter(OutreachCycle.csp_id == csp.id, OutreachCycle.kind == "UPLOAD",
+                            OutreachCycle.closed_at.isnot(None),
+                            OutreachCycle.closed_at >= datetime.combine(
+                                today - timedelta(days=policy.PLAN_CONTINUE_DAYS), datetime.min.time()))
+                    .order_by(OutreachCycle.closed_at.desc()).first())
+            if prev is not None and prev.anchor_date:
+                anchor = prev.anchor_date
         cycle = OutreachCycle(csp_id=csp.id, document_type="ALL", kind="UPLOAD", ladder="UPLOAD",
-                              anchor_date=today, csp_messages=0, rm_messages=0, dc_messages=0)
+                              anchor_date=anchor, csp_messages=0, rm_messages=0, dc_messages=0)
         db.add(cycle)
         db.flush()
 
@@ -309,6 +336,9 @@ def _run_plan_week(db: Session, csp: CSP, state: ComplianceState, cycle: Outreac
     next_week = policy.plan_start(cycle.anchor_date) + timedelta(days=7 * week)
     if any(st["stage"] == stage for st in stages):
         return next_week
+    wait = _reminded_recently(db, csp, today)
+    if wait is not None:
+        return wait                       # one reminder in any 7 days: this week's waits for that
     _supersede([st for st in stages if st["state"] == "PENDING"], None, "this week's message replaces it")
     counts = reminder_values(db, csp, today)
     template = policy.PLAN_WEEKS[week]["template"]

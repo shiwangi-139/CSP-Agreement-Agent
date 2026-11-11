@@ -8,6 +8,8 @@ import pytest
 from app.comms import outbound, wabs
 from app.models import CSP, OutboundMessage, OutboundStatus
 
+pytestmark = pytest.mark.usefixtures("common_link")   # CSP messages carry the common link
+
 
 @pytest.fixture()
 def wabs_mode(monkeypatch):
@@ -52,7 +54,7 @@ def test_approve_sends_the_approved_layout_to_the_csp(db_session, wabs_mode, mon
     kind, contacts, _ = wabs_mode[0]
     assert kind == "onboard" and contacts[0]["phone"] == "919876543210"
     assert contacts[0]["code"] == csp.current_code
-    assert "/upload?token=" in contacts[0]["link"] and contacts[0]["link"] != "https://x/upload?token=t"  # dead link replaced
+    assert contacts[0]["link"].endswith("/upload?c=COMMONTEST")       # the common link, not the personal one
 
 
 def test_daily_limit_stops_a_mass_send(db_session, wabs_mode, monkeypatch):
@@ -110,7 +112,9 @@ def test_parked_messages_still_obey_the_rules(db_session, wabs_mode, monkeypatch
 
 
 # ------------------------------------------------- live links, auto mode
-def test_expired_link_is_replaced_at_send_time(db_session, wabs_mode, monkeypatch):
+def test_csp_messages_carry_the_common_link_at_send_time(db_session, wabs_mode, monkeypatch, common_link):
+    """The personal link drafted into a CSP message is replaced by the common link
+    when it is sent (decided 11-11-2026), in the text and in the layout's link."""
     from datetime import timedelta
     from app.models import PortalToken
     from app.portal_tokens import issue_upload_link
@@ -122,7 +126,7 @@ def test_expired_link_is_replaced_at_send_time(db_session, wabs_mode, monkeypatc
     outbound.approve(db_session, m, "tester")
     outbound.send(db_session, m)
     new = m.payload_json["link"]
-    assert new != old and old not in m.payload_json["body"] and m.payload_json["body"].count(new) == 2
+    assert new == common_link and old not in m.payload_json["body"] and m.payload_json["body"].count(new) == 2
     assert wabs_mode[0][1][0]["link"] == new and m.status == OutboundStatus.SENT
 
 

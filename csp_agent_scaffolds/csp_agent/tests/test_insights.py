@@ -12,6 +12,9 @@ from app.models import (AgreementEvent, CSP, CspQuestion, Document, DocumentStat
                         OutboundMessage, OutboundStatus, ReviewStatus, UserAction)
 from tests.test_login import CSRF, PW, world  # noqa: F401  (fixture)
 from tests.test_portal_and_api import client  # noqa: F401  (fixture)
+import pytest
+
+pytestmark = pytest.mark.usefixtures("common_link")   # CSP messages carry the common link
 
 HDR = {"X-API-Key": "k", "X-Requested-With": auth.CSRF_HEADER_VALUE}
 

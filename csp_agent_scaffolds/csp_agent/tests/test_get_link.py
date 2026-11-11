@@ -13,6 +13,8 @@ from app.db import get_db
 from app.main import app
 from app.models import CSP, OutboundMessage, OutboundStatus
 
+pytestmark = pytest.mark.usefixtures("common_link")   # CSP messages carry the common link
+
 PUBLIC = {"X-Forwarded-For": "203.0.113.9", "X-Real-IP": "203.0.113.9"}
 
 
@@ -82,7 +84,7 @@ def test_the_link_message_goes_to_the_typed_number_without_review(world, monkeyp
     [m] = s.query(OutboundMessage).filter_by(csp_id=w["id"], template_name="LINK_REQUEST").all()
     assert m.status == OutboundStatus.SENT and m.destination == "9876501234"
     assert sent[0][0] == "link" and sent[0][1][0]["phone"] == "919876501234"
-    assert "/upload?token=" in sent[0][1][0]["link"]
+    assert "/upload?c=" in sent[0][1][0]["link"]                  # the common link (KO code + last 4 digits)
     s.close()
 
 

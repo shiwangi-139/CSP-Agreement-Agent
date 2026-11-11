@@ -57,6 +57,21 @@ def reminder_counts(db: Session, csp_ids) -> dict[int, tuple[int, Optional[date]
     return {cid: (n, first.date() if first else None) for cid, n, first in rows}
 
 
+def last_reminder(db: Session, csp_id: int, exclude: Optional[OutboundMessage] = None) -> Optional[OutboundMessage]:
+    """The latest reminder that actually went to this CSP (any channel), not
+    counting `exclude`'s own step (its WhatsApp / email twin)."""
+    q = (db.query(OutboundMessage)
+         .filter(OutboundMessage.csp_id == csp_id, OutboundMessage.recipient_role == "CSP",
+                 OutboundMessage.status == OutboundStatus.SENT, OutboundMessage.sent_at.isnot(None),
+                 OutboundMessage.template_name.notin_(NOT_REMINDERS)))
+    if exclude is not None and exclude.stage:
+        from sqlalchemy import and_, not_
+        q = q.filter(not_(and_(OutboundMessage.stage == exclude.stage,
+                               OutboundMessage.cycle_id.is_(exclude.cycle_id) if exclude.cycle_id is None
+                               else OutboundMessage.cycle_id == exclude.cycle_id)))
+    return q.order_by(OutboundMessage.sent_at.desc()).first()
+
+
 def reminder_values(db: Session, csp: CSP, today: Optional[date] = None) -> dict:
     """{"count": "8", "days": "21"} for the plan's messages."""
     today = today or date.today()

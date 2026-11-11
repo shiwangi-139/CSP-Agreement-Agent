@@ -101,6 +101,15 @@ def decide(db: Session, msg: OutboundMessage, now: Optional[datetime] = None) ->
               .order_by(OutboundMessage.sent_at.desc()).first())
     if repeat is not None:
         return "cancel", f"the same message already went to this number within {config.REPEAT_HOURS} hours (#{repeat[0]})", None
+    if (msg.recipient_role or "CSP") == "CSP" and msg.csp_id and msg.stage != "MANUAL" \
+            and msg.template_name not in ("FINAL_NOTICE",):
+        from .. import policy
+        from ..escalation import NOT_REMINDERS, last_reminder
+        if msg.template_name not in NOT_REMINDERS:
+            last = last_reminder(db, msg.csp_id, exclude=msg)
+            if last is not None and last.sent_at >= now - timedelta(days=policy.REMINDER_GAP_DAYS):
+                return "cancel", (f"one reminder a week: the last went on {last.sent_at:%d-%m-%Y} "
+                                  f"(#{last.id}, {last.template_name})"), None
     return "send", None, None
 
 

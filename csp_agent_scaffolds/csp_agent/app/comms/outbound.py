@@ -215,7 +215,11 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
         logger.warning("outbound_blocked_by_recipient_guard message_id=%s", msg.id)
         return msg
 
-    payload = _with_live_link(db, csp, msg)
+    try:
+        payload = _with_live_link(db, csp, msg)
+    except CommonLinkOff as e:
+        msg.next_retry_at, msg.error_log = _now() + timedelta(minutes=30), f"Waiting: {e}."
+        return msg
     msg.attempts = (msg.attempts or 0) + 1
     try:
         if msg.channel == "EMAIL":
@@ -305,6 +309,10 @@ def _send_staff_list(db: Session, msg: OutboundMessage) -> OutboundMessage:
     return msg
 
 
+class CommonLinkOff(Exception):
+    """The common link is switched off: CSP messages wait for it."""
+
+
 def _with_live_link(db: Session, csp: CSP, msg: OutboundMessage) -> dict:
     """The message's payload, with its upload link swapped for a live one if
     the old link expired or was closed while the message waited."""
@@ -312,9 +320,19 @@ def _with_live_link(db: Session, csp: CSP, msg: OutboundMessage) -> dict:
     old = payload.get("link")
     if not old:
         return payload
-    fallback = [t for t in (msg.document_type or "").split(",") if t] or \
-        ["AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"]
-    new = live_link(db, csp, old, fallback)
+    if (msg.recipient_role or "CSP") == "CSP":
+        # Every CSP message carries the common link (decided 11-11-2026): it
+        # never expires, and only the CSP's KO code + the last 4 digits of
+        # their mobile open their page (a forwarded message shows nobody's
+        # documents). The personal link stays for staff use on the dashboard.
+        from ..csp_common_link import current_url
+        new = current_url(db)
+        if new is None:
+            raise CommonLinkOff("the CSP common link is switched off: make it on Form uploads & DC link")
+    else:
+        fallback = [t for t in (msg.document_type or "").split(",") if t] or \
+            ["AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"]
+        new = live_link(db, csp, old, fallback)
     if new and new != old:
         for k in ("body", "html"):
             if isinstance(payload.get(k), str):

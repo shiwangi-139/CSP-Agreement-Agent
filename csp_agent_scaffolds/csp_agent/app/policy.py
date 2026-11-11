@@ -74,6 +74,15 @@ PLAN_WEEKS = {
     6: {"template": "PLAN_CLOSING_NOW", "dc": True, "rm": True},
     7: {"template": "PLAN_CLOSING_NOW", "dc": True, "rm": True},
 }
+# One reminder to a CSP in any REMINDER_GAP_DAYS, whatever its kind (plan, upload,
+# renewal), across all its follow-ups (decided 11-11-2026: the CSPs had many
+# messages already; weekly and firmer, never daily). Upload receipts and the
+# link a CSP asks for are replies, not reminders. A reminder a person sends
+# by hand (Today: send reminder) or the final notice still goes, and counts.
+REMINDER_GAP_DAYS = 7
+# A follow-up that closed (e.g. documents sent, then rejected) and opens again
+# within this many days carries on the plan from the same week (no restart).
+PLAN_CONTINUE_DAYS = 14
 PLAN_CLOSING_SOON_DAYS = 3        # week 5: "closed within 3 days"
 
 

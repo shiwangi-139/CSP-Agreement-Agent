@@ -96,3 +96,12 @@ def _upload_answered_in_the_request(monkeypatch):
     Tests of the "still being read" answer set a short wait themselves."""
     from app.api import portal
     monkeypatch.setattr(portal, "UPLOAD_WAIT_SECONDS", 600)
+
+
+@pytest.fixture()
+def common_link(monkeypatch):
+    """A live CSP common link: every CSP message carries it (app/comms/outbound.py)."""
+    from app import csp_common_link
+    url = "https://example.test/csp-agreement-agent/upload?c=COMMONTEST"
+    monkeypatch.setattr(csp_common_link, "current_url", lambda db: url)
+    return url

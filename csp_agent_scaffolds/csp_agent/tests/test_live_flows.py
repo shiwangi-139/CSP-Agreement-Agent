@@ -14,6 +14,9 @@ from app.comms.whatsapp import SendOutcome
 from app.models import (ContactChangeRequest, CspQuestion, CSP, Document, InternalUser, OutboundMessage,
                         OutboundStatus, PortalToken)
 from tests.test_portal_and_api import _csp, _pvr_pdf, client  # noqa: F401  (fixture)
+import pytest
+
+pytestmark = pytest.mark.usefixtures("common_link")   # CSP messages carry the common link
 
 ISSUE = date.today() - timedelta(days=20)
 

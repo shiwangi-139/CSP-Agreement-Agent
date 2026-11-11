@@ -112,7 +112,9 @@ def test_agreement_ladder_order_and_caps(db_session):
     agr = [m for m in _msgs(db, csp) if m.document_type == "AGREEMENT" and m.channel == "WHATSAPP"]
     roles = [m.recipient_role for m in agr]
     stages = [m.stage for m in agr]
-    assert stages == ["T-60", "T-53", "T-46", "T-39", "T-32-RM1", "T-25", "T-18-RM2", "T-11-DC", "T-7", "T-3", "T-1"]
+    # One reminder to a CSP in any 7 days (policy.REMINDER_GAP_DAYS, 11-11-2026): the T-3 and
+    # T-1 steps fall within a week of T-7 and are not drafted (staff messages don't count).
+    assert stages == ["T-60", "T-53", "T-46", "T-39", "T-32-RM1", "T-25", "T-18-RM2", "T-11-DC", "T-7"]
     assert roles.index("RM") >= 2              # at least 2 CSP messages first
     assert roles.count("RM") == 2 and roles.count("DC") == 1
     assert roles.index("DC") > len(roles) - 1 - roles[::-1].index("RM")  # DC after the 2nd RM message
