@@ -448,7 +448,13 @@ def csp_detail(csp_id: int, me: Principal = Depends(require_user), db: Session =
                    for y in cycles],
         "emails": [{"id": i.id, "subject": i.subject, "sender": i.sender, "received_at": _iso(i.received_at),
                     "status": i.status, "decisions": i.attachment_decisions or []} for i in inbound],
+        "terminals": _terminals_for(db, c.id),
     }
+
+
+def _terminals_for(db: Session, csp_id: int) -> list:
+    from .. import terminals
+    return terminals.for_csp(db, csp_id)
 
 
 @router.post("/csp/{csp_id}/active", dependencies=[Depends(require_admin)])
@@ -573,7 +579,14 @@ MESSAGE_KINDS = {
     "onboard": ("ONBOARD_ALL",),
     "escalation": ("ESCALATION_RM", "ESCALATION_DC"),
     "upload_reply": ("UPLOAD_RECEIPT", "UPLOAD_SUCCESS_ALL", "UPLOAD_PARTIAL_REJECTED"),
+    "terminal": ("TERMINAL_EXTENSION_LHO", "TERMINAL_EXTENSION_RM"),       # Agent 2 (app/terminals.py)
 }
+
+
+def _bank_email_check(m: OutboundMessage, me: Principal) -> None:
+    """Only an admin approves, edits or rejects an email to the bank's LHO (Agent 2)."""
+    if m.recipient_role == "LHO" and not me.is_admin:
+        raise HTTPException(403, "Only an admin can approve or change an email to the LHO.")
 
 
 @router.get("/messages")
@@ -624,6 +637,7 @@ def _get_msg(db: Session, message_id: int, me: Principal) -> OutboundMessage:
 @router.post("/messages/{message_id}/approve")
 def approve_message(message_id: int, me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     m = _get_msg(db, message_id, me)
+    _bank_email_check(m, me)
     reviewer = me.name
     try:
         outbound.approve(db, m, reviewer)
@@ -653,7 +667,8 @@ def approve_bulk(ids: list[int] = Body(..., embed=True), me: Principal = Depends
         m = db.query(OutboundMessage).filter(OutboundMessage.id == mid).with_for_update().first()   # see _get_msg
         if m is None or m.status != OutboundStatus.QUEUED_FOR_REVIEW:
             continue
-        if not me.is_admin and (m.csp_id is None or not _can_see(me, db.get(CSP, m.csp_id))):
+        if not me.is_admin and (m.csp_id is None or not _can_see(me, db.get(CSP, m.csp_id))
+                                or m.recipient_role == "LHO"):
             continue
         try:
             outbound.approve(db, m, reviewer)
@@ -670,6 +685,7 @@ def approve_bulk(ids: list[int] = Body(..., embed=True), me: Principal = Depends
 def reject_message(message_id: int, reason: str = Body("", embed=True), me: Principal = Depends(require_user),
                    db: Session = Depends(get_db)):
     m = _get_msg(db, message_id, me)
+    _bank_email_check(m, me)
     reviewer = me.name
     try:
         outbound.reject(db, m, reviewer, reason)
@@ -684,6 +700,7 @@ def edit_message(message_id: int, subject: Optional[str] = Body(None), body: Opt
                  me: Principal = Depends(require_user), db: Session = Depends(get_db)):
     """Text only: the recipient can never be changed from the dashboard."""
     m = _get_msg(db, message_id, me)
+    _bank_email_check(m, me)
     try:
         outbound.edit_text(m, subject, body)
     except ValueError as e:

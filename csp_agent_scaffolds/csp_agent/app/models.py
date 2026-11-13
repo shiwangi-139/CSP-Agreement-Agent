@@ -670,5 +670,101 @@ class UploadJobFile(Base):
     data = Column(LargeBinary, nullable=False)
 
 
+# ---------------------------------------------------------------------------
+# Agent 2 - Terminal Extension (app/terminals.py). A terminal's validity is
+# its own date, set by SBI's LHO; it is not the documents' validity.
+
+
+class TerminalImport(Base):
+    """One terminal expiry report uploaded on the dashboard (Bank reports)."""
+    __tablename__ = "terminal_report_imports"
+    id = Column(Integer, primary_key=True)
+    file_name = Column(String)
+    sha256 = Column(String, index=True)
+    report_date = Column(Date, nullable=False, index=True)    # the date the report is "as of"
+    uploaded_by = Column(String)
+    uploaded_at = Column(DateTime, default=func.now(), nullable=False)
+    rows_read = Column(Integer, default=0)
+    rows_linked = Column(Integer, default=0)
+    rows_not_linked = Column(Integer, default=0)
+    rows_skipped = Column(Integer, default=0)                 # no date or no KO code / terminal ID
+    renewed = Column(Integer, default=0)                      # expiry dates that moved later
+    columns = Column(JSONB)                                   # which column was read as what
+    problems = Column(JSONB)                                  # the first rows that could not be read, and why
+
+
+class Terminal(Base):
+    """One SBI terminal and its current expiry date, linked to a CSP by KO code."""
+    __tablename__ = "terminals"
+    id = Column(Integer, primary_key=True)
+    # The terminal ID from the report, or "KO:<code>" when the report has none.
+    terminal_key = Column(String, unique=True, nullable=False)
+    terminal_id = Column(String, index=True)
+    ko_code = Column(String, index=True)                      # as written in the report (upper case)
+    csp_id = Column(Integer, ForeignKey("csp.id"), nullable=True, index=True)
+    link_state = Column(String, default="NOT_LINKED", nullable=False)   # LINKED, NOT_LINKED, TWO_CSPS, MANUAL
+    linked_by = Column(String)
+    linked_at = Column(DateTime)
+    lho = Column(String)                                      # from the report, else the CSP's LHO (calling sheet)
+    branch = Column(String)
+    name_in_report = Column(String)
+    expiry_date = Column(Date, index=True)
+    expiry_report_date = Column(Date)                         # the report that gave the current expiry date
+    first_import_id = Column(Integer, ForeignKey("terminal_report_imports.id"))
+    last_import_id = Column(Integer, ForeignKey("terminal_report_imports.id"))
+    last_report_date = Column(Date)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class TerminalExpiry(Base):
+    """Every expiry date a terminal had: a later date than the one before is a renewal."""
+    __tablename__ = "terminal_expiry_history"
+    id = Column(Integer, primary_key=True)
+    terminal_pk = Column(Integer, ForeignKey("terminals.id", ondelete="CASCADE"), nullable=False, index=True)
+    expiry_date = Column(Date, nullable=False)
+    previous_expiry_date = Column(Date)
+    report_date = Column(Date)
+    import_id = Column(Integer, ForeignKey("terminal_report_imports.id"))
+    seen_at = Column(DateTime, default=func.now(), nullable=False)
+
+
+class LhoContact(Base):
+    """An LHO's verified email addresses. No verified address: no email to that LHO."""
+    __tablename__ = "lho_contacts"
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    name_key = Column(String, unique=True, nullable=False)    # "LHO Patna" and "patna" are the same LHO
+    emails = Column(JSONB)                                    # ["..."], the first is the To address
+    cc = Column(JSONB)
+    active = Column(Boolean, default=True, nullable=False)
+    verified_by = Column(String)
+    verified_at = Column(DateTime)
+    notes = Column(String)
+
+
+class TerminalRequest(Base):
+    """One extension request: one terminal, one expiry date. The LHO is emailed
+    once for it, the RM followed up once, and it ends renewed or expired."""
+    __tablename__ = "terminal_extension_requests"
+    id = Column(Integer, primary_key=True)
+    terminal_pk = Column(Integer, ForeignKey("terminals.id", ondelete="CASCADE"), nullable=False, index=True)
+    csp_id = Column(Integer, ForeignKey("csp.id"), nullable=True, index=True)
+    expiry_date = Column(Date, nullable=False)                # the date the extension is asked for
+    lho = Column(String)
+    documents = Column(JSONB)                                 # each document's status and expiry when emailed
+    lho_message_id = Column(Integer, ForeignKey("outbound_messages.id"))
+    lho_drafted_at = Column(DateTime)
+    blocked_reason = Column(String)                           # e.g. no verified LHO email
+    rm_message_id = Column(Integer, ForeignKey("outbound_messages.id"))
+    rm_drafted_at = Column(DateTime)
+    alert_at = Column(DateTime)                               # 3 days left and not renewed
+    outcome = Column(String, default="OPEN", nullable=False, index=True)   # OPEN, RENEWED, EXPIRED
+    new_expiry_date = Column(Date)
+    closed_at = Column(DateTime)
+    created_at = Column(DateTime, default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("terminal_pk", "expiry_date", name="uq_terminal_request_expiry"),)
+
+
 # Labels kept live: refreshed in the same save as any document change (app/live_labels.py).
 from . import live_labels  # noqa: E402,F401

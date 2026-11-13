@@ -79,6 +79,10 @@ def decide(db: Session, msg: OutboundMessage, now: Optional[datetime] = None) ->
             now + timedelta(minutes=PAUSE_RECHECK_MINUTES)
     if msg.template_name in REPLIES:
         return "send", None, None
+    from ..terminals import TEMPLATES as AGENT2, settings as agent2_settings
+    if msg.template_name in AGENT2 and not agent2_settings(db).get("on"):
+        return "wait", "Agent 2 (terminal extension) is switched off on the Bank reports page.", \
+            now + timedelta(minutes=60)
     until = quiet_until(now)
     if until is not None:
         return "wait", f"Quiet hours ({config.QUIET_HOURS[0]}:00-{config.QUIET_HOURS[1]}:00): goes in the morning.", until
@@ -94,6 +98,8 @@ def decide(db: Session, msg: OutboundMessage, now: Optional[datetime] = None) ->
             return "cancel", "the CSP needs no document any more (received, or waiting for a person)", None
         if msg.document_type in REQUIRED_TYPES and msg.document_type not in needed:
             return "cancel", f"the CSP no longer needs to send the {msg.document_type.replace('_', ' ').lower()}", None
+    if msg.template_name in AGENT2:
+        return "send", None, None          # one per terminal and expiry date (its key); many CSPs share one LHO
     repeat = (db.query(OutboundMessage.id)
               .filter(OutboundMessage.id != msg.id, OutboundMessage.template_name == msg.template_name,
                       OutboundMessage.destination == msg.destination, OutboundMessage.status == OutboundStatus.SENT,

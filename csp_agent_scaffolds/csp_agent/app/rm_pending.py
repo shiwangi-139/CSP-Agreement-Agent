@@ -122,6 +122,12 @@ def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date]
                                                   AgreementEvent.csp_id.in_([c.id for c in csps] or [-1]),
                                                   AgreementEvent.sent_at >= since).order_by(AgreementEvent.sent_at)):
             hand[e.csp_id] = {"by": (e.payload or {}).get("by"), "at": e.sent_at.strftime("%H:%M")}
+    # Agent 2: the soonest terminal expiry of each CSP, so RMs push those first.
+    from sqlalchemy import func as _f
+    from .models import Terminal
+    term_ends = dict(db.query(Terminal.csp_id, _f.min(Terminal.expiry_date))
+                     .filter(Terminal.csp_id.in_([c.id for c in csps] or [-1]), Terminal.expiry_date >= today)
+                     .group_by(Terminal.csp_id))
     rows = []
     for c in csps:
         st = evaluate(db, c, today)
@@ -144,6 +150,8 @@ def pending_rows(db: Session, rm_id: Optional[int] = None, today: Optional[date]
             # The 45-day plan: this week (1-7) or "closure", and reminders actually sent.
             "plan": (policy.plan_week(anchors[c.id], today) if policy.plan_on(today) and c.id in anchors else None),
             "reminders": counts.get(c.id, (0, None))[0],
+            "terminal_ends": term_ends[c.id].isoformat() if term_ends.get(c.id) else None,
+            "terminal_days": (term_ends[c.id] - today).days if term_ends.get(c.id) else None,
             "to_upload": [t for t in REQUIRED_TYPES
                           if not st.docs[t].in_review and st.docs[t].status in ("MISSING", "UNREADABLE", "EXPIRED")],
             **extra,

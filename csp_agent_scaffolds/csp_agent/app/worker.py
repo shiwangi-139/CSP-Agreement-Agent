@@ -22,6 +22,7 @@ Schedule (Asia/Kolkata):
   Campaign: RM / DC lists of pending CSPs (app/escalation.py)    daily 11:00 (weekly after it)
   Campaign: CSPs' short evening nudge                            daily 17:00
   Reading evaluation (scripts/eval_reading.py, both sets)        daily 02:30, low priority
+  Agent 2: LHO emails, RM follow-ups, 3-day alerts (app/terminals.py)  daily 09:15
   The agent's own warning signs (app/signals.py)                 daily 03:00
 Missed runs while the worker was running late are run once (coalesce + 6 h
 grace). Daily runs missed while it was stopped (09:00 run, 11:00 lists,
@@ -353,6 +354,19 @@ def job_nudges():
     return _run("nudges", go)
 
 
+def job_terminals():
+    """Agent 2 (app/terminals.py): LHO emails due, RM follow-ups, 3-day alerts."""
+    from . import terminals
+
+    def go():
+        db = SessionLocal()
+        try:
+            return terminals.run(db)
+        finally:
+            db.close()
+    return _run("terminals", go)
+
+
 def build_scheduler():
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.cron import CronTrigger
@@ -382,6 +396,7 @@ def build_scheduler():
     sched.add_job(job_findings, CronTrigger(hour=3, minute=20), id="findings")
     sched.add_job(job_reference_batch, CronTrigger(hour=3, minute=30), id="reference_batch")
     sched.add_job(job_nudges, CronTrigger(hour=17, minute=0), id="nudges")
+    sched.add_job(job_terminals, CronTrigger(hour=9, minute=15), id="terminals")
     return sched
 
 

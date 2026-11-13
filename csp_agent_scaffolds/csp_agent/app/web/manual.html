@@ -226,6 +226,25 @@ joined into one PDF. The page answers at once: accepted, being checked by our te
 There is also a "Have a question?" box and a field to correct contact details (a person approves each change). A DC uses the
 same page through the master link, choosing the CSP by KO code.</p>
 
+<h3>3.11 Terminals: Agent 2, terminal extension</h3>
+<p>A terminal's validity is its own date, set by SBI's LHO; it is not the documents' validity. Agent 2 makes sure no
+terminal expires.</p>
+<ul><li><b>Bank (SBI) → Bank reports</b> (admins): upload the terminal expiry report (Excel or CSV with a KO code column and
+a terminal expiry date column) with its date. Each terminal is linked to its CSP by KO code (old codes too); the ones that
+match no CSP are listed with a <b>Link</b> box. Save each LHO's email addresses here: an LHO with no saved address gets
+no email. Agent 2 is <b>off</b> until an admin switches it on here.</li>
+<li><b>The rules</b>: 15 days before a terminal expires, if every document of the CSP is valid beyond that date, ONE
+email goes to the LHO (a person approves it in the Communication Hub while "a person approves" is ticked). 5 days later,
+if a report dated on or after the email still shows the old date, ONE email goes to the RM. 3 days before expiry and not
+renewed: the terminal is flagged <b>Act now</b>. A CSP whose documents are not ready gets nothing new: Agent 1 is already
+reminding them.</li>
+<li><b>Renewed</b> = a later report shows a later date. The new date is taken as the report shows it: the LHO decides the
+period, never the documents.</li>
+<li><b>Bank (SBI) → Terminals</b>: the same terminals as a <b>List</b>, a <b>Board</b> by days left, or counts <b>By RM /
+DC / LHO</b> (click a number to open those terminals); the tiles and status chips filter, <b>Excel</b> downloads what is
+shown. An RM sees only their own CSPs' terminals. The CSP page shows each terminal with its expiry history, and Pending
+by RM shows when each CSP's terminal ends.</li></ul>
+
 <!-- ======================================================= 4 -->
 <h2>4. How the agent decides: rules for each document</h2>
 <div class="simple">The agent reads with <b>written rules</b> (like a checklist), not with guesses. Each rule was taught from real

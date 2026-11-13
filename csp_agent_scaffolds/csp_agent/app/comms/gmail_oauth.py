@@ -289,7 +289,7 @@ def mark_email_as_seen(msg_id: str):
     ).execute()
 
 
-def send_email_oauth(to_email: str, subject: str, body_text: str) -> dict:
+def send_email_oauth(to_email: str, subject: str, body_text: str, cc: list[str] | None = None) -> dict:
     """
     Sends an email using the Gmail API (OAuth 2.0).
     No SMTP password required.
@@ -299,6 +299,8 @@ def send_email_oauth(to_email: str, subject: str, body_text: str) -> dict:
     message.set_content(body_text)
     message["To"] = to_email
     message["Subject"] = subject
+    if cc:
+        message["Cc"] = ", ".join(cc)
 
     encoded_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
     create_message = {"raw": encoded_message}

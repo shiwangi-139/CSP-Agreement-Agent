@@ -63,6 +63,11 @@ def _staff(db: Session, csp: CSP, role: str) -> Optional[InternalUser]:
 
 def allowed_destinations(db: Session, csp: CSP, role: str, channel: str) -> list[str]:
     """Destinations the calling sheet permits for this CSP / RM / DC."""
+    if role == "LHO":
+        # Agent 2 (app/terminals.py): only the verified addresses of the LHOs
+        # of this CSP's terminals (Bank reports page), and only by email.
+        from ..terminals import lho_emails_for_csp
+        return [e for e in dict.fromkeys(_email(x) for x in lho_emails_for_csp(db, csp)) if e] if channel == "EMAIL" else []
     if role == "CSP":
         phones = [csp.whatsapp_number, csp.phone, csp.alt_phone]
         if channel == "WHATSAPP" and getattr(csp, "preferred_phone", None):
@@ -224,7 +229,13 @@ def send(db: Session, msg: OutboundMessage) -> OutboundMessage:
     try:
         if msg.channel == "EMAIL":
             from .gmail_oauth import send_email_oauth
-            resp = send_email_oauth(msg.destination, payload.get("subject", ""), payload.get("body", ""))
+            cc = [c for c in (payload.get("cc") or []) if _email(c)]
+            if cc and any(not recipient_allowed(db, csp, msg.recipient_role or "CSP", "EMAIL", c) for c in cc):
+                msg.status = OutboundStatus.BLOCKED
+                msg.error_log = "Recipient guard: a CC address is not a verified address for this message."
+                return msg
+            resp = send_email_oauth(msg.destination, payload.get("subject", ""), payload.get("body", ""),
+                                    cc=[_email(c) for c in cc])
             msg.status, msg.provider_message_id = OutboundStatus.SENT, resp.get("id")
             msg.delivery_status, msg.sent_at, msg.error_log = "SENT", _now(), None
             extend_for_sent_message(db, payload.get("link"))

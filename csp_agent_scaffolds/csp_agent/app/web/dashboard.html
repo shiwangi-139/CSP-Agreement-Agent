@@ -38,6 +38,8 @@
   <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
   <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 2.6 17.2A2 2 0 0 0 4.3 20h15.4a2 2 0 0 0 1.7-2.8L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4m0 3h.01"/></symbol>
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M9 6h6v4H9zM9 14h.01M12 14h.01M15 14h.01M9 17.5h.01M12 17.5h.01M15 17.5h.01"/></symbol>
+  <symbol id="i-bank" viewBox="0 0 24 24"><path d="M3 10 12 4l9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"/></symbol>
 </svg>
 
 <div id="login" class="login card" style="display:none">
@@ -71,6 +73,10 @@
       <button class="nav" data-view="formuploads" title="Form uploads & DC link"><svg><use href="#i-upload"/></svg><span class="navtext">Form uploads &amp; DC link</span><span class="count" id="n-form"></span></button>
       <button class="nav" data-view="links" title="Links"><svg><use href="#i-link"/></svg><span class="navtext">Links</span></button>
       <button class="nav" data-view="documents" title="Latest documents"><svg><use href="#i-file"/></svg><span class="navtext">Latest documents</span></button>
+    </div>
+    <div class="navgroup"><div class="navlabel">Bank (SBI)</div>
+      <button class="nav" data-view="terminals" title="Terminals"><svg><use href="#i-terminal"/></svg><span class="navtext">Terminals</span><span class="count" id="n-terms"></span></button>
+      <button class="nav admin-only" data-view="bankreports" title="Bank reports"><svg><use href="#i-bank"/></svg><span class="navtext">Bank reports</span></button>
     </div>
     <div class="navgroup"><div class="navlabel">Messages</div>
       <button class="nav" data-view="comms" title="Communication Hub"><svg><use href="#i-message"/></svg><span class="navtext">Communication Hub</span><span class="count" id="n-drafts"></span></button>
@@ -248,6 +254,8 @@
     formuploads: ["Documents", "Form uploads & DC link", "What CSPs and DCs sent through the upload page, the DC master link and DC reports"],
     links: ["Documents", "Links", "Every upload link: sent, opened, used, refused, and where CSPs get stuck"],
     documents: ["Documents", "Latest documents", "Current documents per CSP, and every file uploaded through the links"],
+    terminals: ["Bank (SBI)", "Terminals", "Agent 2 · every CSP terminal and its expiry date: the LHO is emailed once, 15 days before, when the CSP's documents outlast it"],
+    bankreports: ["Bank (SBI)", "Bank reports", "Agent 2 · upload the terminal report, LHO email addresses, terminals not linked, and Agent 2's switch"],
     comms: ["Messages", "Communication Hub", "Drafts, sent and failed messages to CSPs, RMs and DCs"],
     questions: ["Messages", "CSP questions", "Questions CSPs asked on their upload page"],
     analytics: ["Messages", "Messaging analytics", "From message to documents"],
@@ -638,11 +646,92 @@
   };
 
   // ------------------------------------------------------------- views
+  // ------------------------------------------------ Agent 2: terminals
+  const TDOCS = ["AGREEMENT", "POLICE_VERIFICATION", "IIBF_CERTIFICATE"];
+  const TSHORT = {AGREEMENT: "Agr", POLICE_VERIFICATION: "PVR", IIBF_CERTIFICATE: "IIBF"};
+  const TBK = {expired: "bad", d15: "bad", d30: "warn"};
+  const tDays = (r) => r.days_left == null ? `<span class="muted">no date</span>`
+    : r.days_left < 0 ? `<b class="bad">${-r.days_left} day${r.days_left === -1 ? "" : "s"} ago</b>`
+    : `<b class="${r.days_left <= 15 ? "bad" : r.days_left <= 30 ? "warnc" : ""}">${r.days_left} day${r.days_left === 1 ? "" : "s"}</b>`;
+  const tBar = (r) => r.days_left == null ? "" : `<div class="t-bar" title="${r.days_left} days left of 90"><span class="${TBK[r.bucket] || ""}" style="width:${r.days_left < 0 ? 100 : Math.max(4, Math.min(100, r.days_left / 90 * 100))}%"></span></div>`;
+  const tStatus = (r) => `<span class="t-st s-${esc(r.status)}">${esc(r.status_label)}</span>${r.alert && r.status !== "expired" ? ` <span class="chip bad" title="Expires within the alert days and not renewed">act now</span>` : ""}${r.renewed ? `<div class="small okc">renewed ${fmt(r.renewed.on)}: ${fmt(r.renewed.from)} → ${fmt(r.renewed.to)}${r.renewed.months ? ` (+${r.renewed.months} months)` : ""}</div>` : ""}`;
+  const tDocs = (r) => TDOCS.map((t) => {
+    const x = (r.docs || {})[t]; if (!x) return "";
+    const ok = x.status === "VALID" && (!x.expiry || !r.expiry_date || x.expiry > r.expiry_date);
+    const cls = ok ? "ok" : x.status === "IN_REVIEW" ? "" : x.status === "VALID" ? "warn" : "bad";
+    const what = x.status === "VALID" ? (x.expiry ? `valid till ${fmt(x.expiry)}` : "valid, no expiry date") : x.status.replace("_", " ").toLowerCase();
+    return `<span class="t-doc ${cls}" title="${esc(DOC[t])}: ${esc(what)}">${TSHORT[t]}</span>`;
+  }).join("");
+  const tMsg = (m) => !m ? `<span class="muted">—</span>`
+    : m.status === "SENT" ? `<span class="okc">✓ sent ${fmt(m.sent_at)}</span>`
+    : m.status === "QUEUED_FOR_REVIEW" ? `<a href="#" data-go="comms" class="warnc">waiting for approval</a>`
+    : m.status === "APPROVED" ? `<span class="warnc" title="${esc(m.error || "")}">approved, going out</span>`
+    : `<span class="bad" title="${esc(m.error || "")}">${esc(m.status.replaceAll("_", " ").toLowerCase())}</span>`;
+  const tWho = (r) => r.csp ? `<a href="#" data-csp="${r.csp.id}"><b>${esc(r.csp.name)}</b></a><div class="mono small muted">KO ${esc(r.csp.code || r.ko_code || "")}</div>`
+    : `<b>${esc(r.name_in_report || "Name not in report")}</b><div class="mono small muted">KO ${esc(r.ko_code || "—")}</div>`;
+  function tList(rows, isAdmin) {
+    return `<div class="card tablewrap t-list"><table><thead><tr><th>Days left</th><th>Terminal ends</th><th>CSP</th><th>Terminal</th>
+      ${isAdmin ? "<th>RM · DC</th>" : "<th>DC</th>"}<th>LHO</th><th>Documents</th><th>LHO email</th><th>RM follow-up</th><th>Status</th></tr></thead><tbody>
+      ${rows.map((r) => `<tr class="t-row s-${esc(r.status)}">
+        <td>${tDays(r)}${tBar(r)}</td><td class="mono small">${fmt(r.expiry_date)}</td><td>${tWho(r)}</td>
+        <td class="mono small">${esc(r.terminal_id || "—")}</td>
+        <td class="small">${isAdmin ? esc(r.rm) + "<br>" : ""}<span class="muted">${esc(r.dc)}</span></td>
+        <td class="small">${esc(r.lho)}</td>
+        <td>${tDocs(r)}<div class="small ${r.ready ? "okc" : "muted"}">${esc(r.reason)}</div>${r.blocked_reason ? `<div class="small bad">${esc(r.blocked_reason)}</div>` : ""}</td>
+        <td class="small">${tMsg(r.lho_email)}</td><td class="small">${tMsg(r.rm_followup)}</td><td>${tStatus(r)}</td></tr>`).join("")}
+      </tbody></table></div>`;
+  }
+  function tBoard(rows) {
+    const cols = [["expired", "Expired"], ["d15", "0–15 days"], ["d30", "16–30 days"], ["d60", "31–60 days"], ["d90", "61–90 days"], ["later", "Later"]];
+    return `<div class="t-board">${cols.map(([k, label]) => {
+      const rs = rows.filter((r) => r.bucket === k);
+      return `<section class="t-col b-${k}"><div class="t-colhead"><span>${label}</span><span class="count-chip">${rs.length}</span></div>
+        ${rs.slice(0, 60).map((r) => `<article class="t-card s-${esc(r.status)}" ${r.csp ? `data-csp="${r.csp.id}" role="button" tabindex="0"` : ""}>
+          <div class="nm">${esc(r.csp ? r.csp.name : (r.name_in_report || r.ko_code))}</div>
+          <div class="sm mono">KO ${esc(r.csp ? r.csp.code : r.ko_code)}${r.terminal_id ? " · " + esc(r.terminal_id) : ""}</div>
+          <div class="sm">Ends <b>${fmt(r.expiry_date)}</b> · ${tDays(r)}</div>
+          <div style="margin:6px 0 4px">${tDocs(r)}</div><span class="t-st s-${esc(r.status)}">${esc(r.status_label)}</span></article>`).join("")}
+        ${rs.length > 60 ? `<button class="btn" data-tbucket="${k}" data-tviewto="list" style="width:100%">+${rs.length - 60} more in the list</button>` : ""}
+        ${rs.length ? "" : `<div class="small muted" style="padding:8px">None</div>`}</section>`;
+    }).join("")}</div>`;
+  }
+  function tGroups(groups, key) {
+    const cols = [["expired", "Expired", "hot"], ["d15", "0–15", "hot"], ["d30", "16–30", "warmc"], ["d60", "31–60", "some"], ["d90", "61–90", "some"], ["later", "Later", "some"]];
+    const label = {rm: "RM", dc: "DC", lho: "LHO"}[key];
+    const cell = (g, k, cls) => g[k] ? `<td class="n ${cls}" data-tgroup="${esc(key)}" data-tname="${esc(g.name)}" data-tb="${k}" title="Open these terminals">${g[k]}</td>` : `<td class="n muted">·</td>`;
+    return `<div class="card tablewrap"><table class="t-heat"><thead><tr><th>${label}</th>${cols.map(([, l]) => `<th class="num">${l}</th>`).join("")}<th class="num">Not ready</th><th class="num">Total</th></tr></thead><tbody>
+      ${groups.map((g) => `<tr><td><a href="#" data-tgroup="${esc(key)}" data-tname="${esc(g.name)}" data-tb="">${esc(g.name)}</a></td>
+        ${cols.map(([k, , cls]) => cell(g, k, cls)).join("")}
+        <td class="n ${g.not_ready ? "warmc" : "muted"}">${g.not_ready || "·"}</td><td class="n"><b>${g.total}</b></td></tr>`).join("")}</tbody></table>
+      <p class="small muted" style="margin:10px 0 0">Click a number to open those terminals as a list.</p></div>`;
+  }
+  function tTermCard(r) {
+    return `<div class="t-term"><div class="meta" style="justify-content:space-between;display:flex;gap:8px;flex-wrap:wrap">
+        <div><b>Terminal ${esc(r.terminal_id || "(no ID in report)")}</b> <span class="small muted">· ${esc(r.lho)}${r.branch ? " · " + esc(r.branch) : ""}</span></div>${tStatus(r)}</div>
+      <div class="docline"><span>Terminal ends</span><b class="mono">${fmt(r.expiry_date)}</b></div>
+      <div class="docline"><span>Left</span>${tDays(r)}</div>
+      <div class="docline"><span>Documents</span><span>${tDocs(r)}</span></div>
+      <div class="small ${r.ready ? "okc" : "muted"}" style="margin:4px 0 8px">${esc(r.reason)}</div>
+      <div class="docline"><span>LHO email</span><span class="small">${tMsg(r.lho_email)}</span></div>
+      <div class="docline"><span>RM follow-up</span><span class="small">${tMsg(r.rm_followup)}</span></div>
+      ${(r.history || []).length > 1 ? `<details class="why"><summary>Expiry dates seen (${r.history.length})</summary>${r.history.map((h) =>
+        `<div class="why-line">${fmt(h.expiry_date)}${h.from ? ` <span class="muted">(was ${fmt(h.from)})</span>` : ""} <span class="small muted">· report of ${fmt(h.report_date)}</span></div>`).join("")}</details>` : ""}</div>`;
+  }
+
   const views = {
     async today() {
       const isAdmin = state.summary.me.role === "ADMIN";
-      const [d, j, rc] = await Promise.all([api("/api/hub/today"), api("/api/hub/journey?days=14"),
-                                            isAdmin ? api("/api/hub/reading-check").catch(() => null) : null]);
+      const [d, j, rc, ts] = await Promise.all([api("/api/hub/today"), api("/api/hub/journey?days=14"),
+                                            isAdmin ? api("/api/hub/reading-check").catch(() => null) : null,
+                                            api("/api/hub/terminals/summary").catch(() => ({any: false}))]);
+      const tk = (go, label, n, tone, foot) => `<article class="card kpi" data-tgo="${go}" role="button" tabindex="0"><div class="kpitop"><span class="kpilabel">${label}</span><span class="kpiicon ${tone}"><svg><use href="#i-terminal"/></svg></span></div><div class="kpival">${n}</div><div class="kpifoot">${foot}</div></article>`;
+      const tstrip = !ts.any ? "" : `<div class="sectionhead"><div class="sectionleft"><h2>Terminals · Agent 2</h2>${ts.on ? `<span class="chip ok">on</span>` : `<span class="chip warn">off · no emails</span>`}</div>
+          <span class="small muted">terminal report of ${fmt(ts.last_import?.report_date)} · <a href="#" data-go="terminals">open Terminals →</a></span></div>
+        <div class="kpis">${tk("status:alert", `Expiring in ${ts.alert_days} days, not renewed`, ts.alerts, ts.alerts ? "bad" : "ok", ts.alerts ? "<span class=\"bad\">ask the LHO today</span>" : "none ✓")}
+          ${tk("status:approval", "LHO / RM emails waiting for approval", ts.approval, ts.approval ? "warn" : "ok", ts.approval ? "approve in the Communication Hub" : "none waiting ✓")}
+          ${tk("status:rm", "RM following up with the LHO", ts.rm, "", "LHO emailed, not renewed yet")}
+          ${tk("status:not_ready|bucket:d15", "Due in 15 days, documents not ready", ts.not_ready_15, ts.not_ready_15 ? "warn" : "ok", "Agent 1 is reminding these CSPs")}</div>`;
+      if (ts.any) $("#n-terms").textContent = (ts.alerts + ts.expired) || "";
       const g = d.goal, t = d.tiles;
       $("#n-today").textContent = d.attention_total || "";
       const hour = new Date().getHours();
@@ -689,6 +778,7 @@
         <article class="card kpi" data-go="comms" role="button" tabindex="0"><div class="kpitop"><span class="kpilabel">WhatsApp sent today</span><span class="kpiicon ok"><svg><use href="#i-message"/></svg></span></div><div class="kpival">${t.whatsapp_sent_today}</div><div class="kpifoot">${esc(state.summary.modes.outbound === "review" ? "review mode" : "auto mode")} · approved layouts only</div></article>
         <article class="card kpi" data-go="comms" role="button" tabindex="0"><div class="kpitop"><span class="kpilabel">CSPs whose WhatsApp failed today</span><span class="kpiicon bad"><svg><use href="#i-alert"/></svg></span></div><div class="kpival">${t.whatsapp_failed_today}</div><div class="kpifoot">${t.whatsapp_failed_today ? `<span class="bad">look at the reason</span> in Communication Hub` : "none ✓"}</div></article>
       </div>
+      ${tstrip}
       <div class="sectionhead"><div class="sectionleft"><h2>Needs attention today</h2><span class="count-chip">${d.attention_total} open</span></div>
         <div class="filters">${[["all", `All · ${d.attention.length}`], ["urgent", `Urgent · ${d.attention.filter((a) => a.priority === 1).length}`],
           ...kinds.map((k) => [k, `${KIND[k] || k} · ${d.attention.filter((a) => a.kind === k).length}`])].map(([k, l]) =>
@@ -1149,7 +1239,7 @@
       const tile = (label, n, sub) => `<div class="card kpi" style="cursor:default"><div class="label">${label}</div><div class="n">${n}</div><div class="small muted">${sub}</div></div>`;
       const rmName = isAdmin ? (d.rms.find((r) => r.id === d.rm)?.name || "All RMs") : state.summary.me.name;
       const tone = (x) => `<span class="chip ${x.tone}">${esc(x.word)}</span>`;
-      const cols = isAdmin && !f.rm ? 13 : 12;
+      const cols = isAdmin && !f.rm ? 14 : 13;
       // Send by hand: opens the staff member's WhatsApp with the number and the final notice filled in.
       const handCell = (r) => !r.wa_text ? "—" : !r.wa_phone ? `<span class="small muted">no WhatsApp number</span>`
         : `<a class="btn ${r.hand_sent ? "" : "primary"}" target="_blank" rel="noopener" data-handsent="${r.id}"
@@ -1170,6 +1260,7 @@
           <td>${tone(r.docs.AGREEMENT)}</td><td>${tone(r.docs.POLICE_VERIFICATION)}</td><td>${tone(r.docs.IIBF_CERTIFICATE)}</td>
           <td class="small"><b>${esc(r.to_upload.map((t) => DOC[t]).join(", ") || "—")}</b></td>
           <td class="small">${planCell(r)}<div class="muted">${r.reminders} msgs sent</div></td>
+          <td class="small">${r.terminal_ends ? `<span class="mono">${fmt(r.terminal_ends)}</span><div class="${r.terminal_days <= 15 ? "bad" : r.terminal_days <= 30 ? "warnc" : "muted"}">${r.terminal_days} days</div>` : `<span class="muted">—</span>`}</td>
           <td>${handCell(r)}</td></tr>`;
       }
       return `
@@ -1190,8 +1281,87 @@
         ${d.rm ? `<a class="btn" href="#" data-rmcsv="${d.rm}">Download ${esc(rmName)}'s list (CSV)</a>` : ""}
         ${isAdmin && d.total ? `<button class="btn primary" data-finalnotice="${d.total}" title="A firm WhatsApp message with the CSP common link and today's 6 PM deadline, for every CSP shown">Draft final notice (${d.total})</button>` : ""}</div>
       <div class="card tablewrap">${d.rows.length ? `<table><thead><tr><th>District</th><th>State</th>${cols === 13 ? "<th>RM</th>" : ""}<th>DC</th><th>CSP</th><th>Mobile</th><th>Label</th>
-        <th>Agreement</th><th>PVR / Character</th><th>IIBF</th><th>To upload</th><th>Plan</th><th title="Opens your WhatsApp with this CSP's number and the final notice filled in: press Send">Send by hand</th></tr></thead><tbody>${body}</tbody></table>`
+        <th>Agreement</th><th>PVR / Character</th><th>IIBF</th><th>To upload</th><th>Plan</th><th title="The CSP's terminal expiry date (Agent 2): push those that end first">Terminal ends</th><th title="Opens your WhatsApp with this CSP's number and the final notice filled in: press Send">Send by hand</th></tr></thead><tbody>${body}</tbody></table>`
         : `<div class="empty">No CSPs pending${Object.keys(f).length ? " for these filters" : ""}.</div>`}</div>`;
+    },
+
+    async terminals() {
+      const f = state.term || (state.term = {}), isAdmin = state.summary.me.role === "ADMIN", v = state.tview || "list";
+      const grp = ["rm", "dc", "lho"].includes(v) ? v : "";
+      const qs = ["bucket", "status", "rm", "dc", "lho", "q"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`);
+      if (grp) qs.push(`group=${grp}`);
+      const d = await api(`/api/hub/terminals?${qs.join("&")}`);
+      const urgent = d.buckets.filter((b) => b.key === "expired" || b.key === "d15").reduce((a, b) => a + b.n, 0);
+      $("#n-terms").textContent = urgent || "";
+      if (!d.total) return `<div class="card empty"><b>No terminals yet.</b><br>${isAdmin
+        ? `Upload the terminal expiry report on <a href="#" data-go="bankreports">Bank reports</a>: each terminal is linked to its CSP by KO code.`
+        : "They appear here once an admin uploads the terminal expiry report."}</div>`;
+      const s = d.settings, li = d.last_import;
+      const age = li ? Math.round((Date.now() - new Date(li.report_date)) / 864e5) : null;
+      const head = `<div class="card t-head">
+        <div class="t-report"><span class="t-dot ${age != null && age > 3 ? "warn" : ""}"></span><div><b>Terminal report of ${fmt(li?.report_date)}</b>
+          <div class="small muted">${age != null && age > 3 ? `<span class="warnc">${age} days old</span> · ` : ""}uploaded by ${esc(li?.uploaded_by || "—")}</div></div></div>
+        <div class="t-agent">${s.on ? `<span class="chip ok">Agent 2 on</span>` : `<span class="chip warn">Agent 2 off · no emails go out</span>`}
+          ${s.approval ? `<span class="chip">a person approves each email</span>` : `<span class="chip ok">emails go automatically</span>`}
+          <span class="small muted">LHO email ${s.lead_days} days before · RM after ${s.rm_after_days} days · alert ${s.alert_days} days before</span></div>
+        <div class="t-actions"><button class="btn" data-txlsx="1"><svg><use href="#i-file"/></svg>Excel</button>${isAdmin ? `<button class="btn" data-go="bankreports">Bank reports</button>` : ""}</div></div>`;
+      const tiles = `<div class="t-buckets">${d.buckets.filter((b) => b.n || !["later", "nodate"].includes(b.key)).map((b) =>
+        `<button class="t-bucket b-${b.key} ${f.bucket === b.key ? "active" : ""}" data-tbucket="${b.key}" aria-pressed="${f.bucket === b.key}"><span class="t-bn">${b.n}</span><span class="t-bl">${esc(b.label)}</span></button>`).join("")}</div>`;
+      const chips = `<div class="filters t-statuses">${d.alerts ? `<button class="filter t-alert ${f.status === "alert" ? "active" : ""}" data-tstatus="alert">Act now · ${s.alert_days} days left, not renewed · ${d.alerts}</button>` : ""}
+        ${d.statuses.filter((x) => x.n).map((x) => `<button class="filter ${f.status === x.key ? "active" : ""}" data-tstatus="${x.key}"><span class="t-sdot s-${x.key}"></span>${esc(x.label)} · ${x.n}</button>`).join("")}</div>`;
+      const sel = (key, label, all) => `<label class="small">${label}<br><select data-tkey="${key}"><option value="">${all}</option>${d.options[key].map((o) =>
+        `<option value="${esc(o.name)}" ${f[key] === o.name ? "selected" : ""}>${esc(o.name)} · ${o.n}</option>`).join("")}</select></label>`;
+      const VW = [["list", "List"], ["board", "Board"], ...(isAdmin ? [["rm", "By RM"]] : []), ["dc", "By DC"], ["lho", "By LHO"]];
+      const bar = `<div class="toolbar t-tools">${isAdmin ? sel("rm", "RM", "All RMs") : ""}${sel("dc", "DC", "All DCs")}${sel("lho", "LHO", "All LHOs")}
+        <label class="small">Search<br><input type="search" id="tq" placeholder="KO code, terminal or name" value="${esc(f.q || "")}"></label>
+        ${Object.keys(f).length ? `<button class="btn" data-tclear="1">Clear filters</button>` : ""}
+        <div class="t-seg" role="tablist" aria-label="How to show the terminals">${VW.map(([k, l]) => `<button role="tab" aria-selected="${v === k}" class="${v === k ? "active" : ""}" data-tview="${k}">${l}</button>`).join("")}</div></div>`;
+      const main = !d.rows.length ? `<div class="card empty">No terminals for these filters.</div>`
+        : grp ? tGroups(d.groups, grp) : v === "board" ? tBoard(d.rows) : tList(d.rows, isAdmin);
+      return head + tiles + chips + bar + `<div class="small muted t-count"><b>${d.shown}</b> of ${d.total} terminals${d.shown > d.rows.length ? ` · first ${d.rows.length} shown` : ""}</div>` + main;
+    },
+
+    async bankreports() {
+      const d = await api("/api/hub/bank-reports"), s = d.settings;
+      const today = new Date().toLocaleDateString("en-CA");
+      const agent = `<div class="card t-switch ${s.on ? "on" : ""}"><div class="t-switchrow">
+          <div><div class="overline">Agent 2 · Terminal Extension</div><h2 style="margin:4px 0">${s.on ? "On: emails the LHO and follows up" : "Off: nothing is sent"}</h2>
+            <div class="small muted">${s.changed_by ? `Last changed by ${esc(s.changed_by)} ${when(s.changed_at + "Z")}` : "Never switched on."} Runs every day at 09:15 and after each report.</div></div>
+          <button class="btn ${s.on ? "" : "primary"}" data-tset="on" data-tval="${s.on ? 0 : 1}">${s.on ? "Switch off" : "Switch on"}</button></div>
+        <div class="t-rules">
+          <label class="small"><input type="checkbox" id="tsapproval" ${s.approval ? "checked" : ""}> A person approves every LHO and RM email (Communication Hub)</label>
+          <label class="small">LHO email <input type="number" id="tslead" min="1" max="90" value="${s.lead_days}"> days before expiry</label>
+          <label class="small">RM follow-up <input type="number" id="tsrm" min="1" max="30" value="${s.rm_after_days}"> days after the LHO email</label>
+          <label class="small">Alert <input type="number" id="tsalert" min="0" max="30" value="${s.alert_days}"> days before expiry</label>
+          <div class="small">Documents that must be valid beyond the terminal's expiry:
+            ${TDOCS.map((t) => `<label style="margin-left:8px"><input type="checkbox" class="tsreq" value="${t}" ${s.required.includes(t) ? "checked" : ""}> ${esc(DOC[t])}</label>`).join("")}</div>
+          <div><button class="btn" data-tset="save">Save rules</button> <button class="btn" data-trun="1">Run now</button></div></div></div>`;
+      const upload = `<div class="card"><h2>Upload the terminal expiry report</h2>
+        <p class="small muted">Excel (.xlsx) or CSV with a KO code column and a terminal expiry date column; terminal ID, LHO, branch and name are read when present. Every report is kept. A later date than before = renewed.</p>
+        <form id="timport" class="toolbar" style="flex-wrap:wrap;gap:12px;align-items:flex-end">
+          <label class="small">File<br><input type="file" name="file" accept=".xlsx,.xlsm,.csv" required></label>
+          <label class="small">Report date (as of)<br><input type="date" name="report_date" value="${today}" max="${today}" required></label>
+          <button class="btn primary" type="submit"><svg><use href="#i-upload"/></svg>Upload and read</button></form><div id="tresult"></div></div>`;
+      const hist = `<div class="card tablewrap"><h2>Reports uploaded</h2>${d.imports.length ? `<table><thead><tr><th>Report date</th><th>File</th><th class="num">Terminals</th><th class="num">Linked</th><th class="num">Not linked</th><th class="num">Skipped</th><th class="num">Renewed</th><th>By</th></tr></thead><tbody>
+        ${d.imports.map((i) => `<tr><td class="mono">${fmt(i.report_date)}</td><td class="small" title="${esc(Object.entries(i.columns).map(([k, c]) => `${k} ← ${c}`).join("\n"))}">${esc(i.file_name)}</td>
+          <td class="num">${i.rows}</td><td class="num">${i.linked}</td><td class="num ${i.not_linked ? "warnc" : ""}">${i.not_linked}</td>
+          <td class="num ${i.skipped ? "warnc" : ""}" title="${esc((i.problems || []).map((p) => `row ${p.row}: ${p.reason}`).join("\n"))}">${i.skipped}</td>
+          <td class="num okc">${i.renewed}</td><td class="small">${esc(i.uploaded_by)}<br><span class="muted">${when(i.uploaded_at)}</span></td></tr>`).join("")}</tbody></table>` : `<div class="empty">No report uploaded yet.</div>`}</div>`;
+      const nl = `<div class="card tablewrap"><h2>Terminals not linked to a CSP (${d.not_linked.length})</h2>
+        <p class="small muted">The KO code in the report matches no CSP (or two). Type the CSP's KO code to link it; nothing is sent for a terminal that is not linked.</p>
+        ${d.not_linked.length ? `<table><thead><tr><th>KO code in report</th><th>Terminal</th><th>Name in report</th><th>LHO</th><th>Expires</th><th>Link to CSP</th></tr></thead><tbody>
+        ${d.not_linked.map((t) => `<tr><td class="mono">${esc(t.ko_code || "—")}${t.state === "TWO_CSPS" ? ` <span class="chip warn">two CSPs</span>` : ""}</td><td class="mono small">${esc(t.terminal_id || "—")}</td>
+          <td>${esc(t.name || "—")}</td><td class="small">${esc(t.lho || "—")}</td><td class="mono small">${fmt(t.expiry_date)}</td>
+          <td><input type="text" id="tl${t.id}" placeholder="CSP KO code" class="mono" style="width:120px"> <button class="btn" data-tlink="${t.id}">Link</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">Every terminal is linked. ✓</div>`}</div>`;
+      const lho = `<div class="card tablewrap"><h2>LHO email addresses</h2>
+        <p class="small muted">An LHO gets an extension email only to the addresses saved here; saving them is your confirmation that they are the LHO's own. The first address is "To", the rest and the CCs are copied. Separate addresses with commas.</p>
+        ${d.lhos.length ? `<table><thead><tr><th>LHO</th><th class="num">Terminals</th><th>Email (To)</th><th>CC</th><th>Verified</th><th></th></tr></thead><tbody>
+        ${d.lhos.map((l, i) => `<tr><td><b>${esc(l.name)}</b>${l.emails.length ? "" : ` <span class="chip bad">no email</span>`}</td><td class="num">${l.terminals}</td>
+          <td><input type="text" id="le${i}" value="${esc(l.emails.join(", "))}" placeholder="name@sbi.co.in" style="width:100%;min-width:200px"></td>
+          <td><input type="text" id="lc${i}" value="${esc(l.cc.join(", "))}" placeholder="optional" style="width:100%;min-width:160px"></td>
+          <td class="small">${l.verified_by ? `${esc(l.verified_by)}<br><span class="muted">${when(l.verified_at + "Z")}</span>` : `<span class="muted">—</span>`}</td>
+          <td><button class="btn" data-lhosave="${i}" data-lhoname="${esc(l.name)}">Save</button></td></tr>`).join("")}</tbody></table>` : `<div class="empty">LHOs appear after the first report (from the report's LHO column, or the calling sheet's LHO).</div>`}</div>`;
+      return agent + [upload, hist, nl, lho].map((x) => `<div style="margin-top:14px">${x}</div>`).join("");
     },
 
     async formuploads() {
@@ -1429,6 +1599,7 @@
       <div class="drawerbody">
       <div class="sectionhead tight"><h2>Documents</h2><span class="small muted">3 required</span></div>
       <div class="docgrid">${Object.entries(d.current).map(([t, s]) => docCard(t, s)).join("")}</div>
+      ${(d.terminals || []).length ? `<div class="sectionhead tight" style="margin-top:16px"><h2>Terminal</h2><span class="small muted">Agent 2 · report of ${fmt(d.terminals[0].last_report_date)}</span></div>${d.terminals.map(tTermCard).join("")}` : ""}
       <h2 class="section-title">Quick actions</h2>
       <div class="quick">
         ${d.category !== 5 || c.active_override ? `<button class="btn primary" data-remind="${c.id}"><svg><use href="#i-send"/></svg>Send reminder now</button>` : ""}
@@ -1486,7 +1657,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-rvmove],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-rmpclear],[data-clink],[data-finalnotice],[data-handsent],[data-attfilter],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-rvmove],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-rmpclear],[data-clink],[data-finalnotice],[data-handsent],[data-attfilter],[data-tview],[data-tbucket],[data-tstatus],[data-tclear],[data-txlsx],[data-tgroup],[data-tgo],[data-tset],[data-trun],[data-tlink],[data-lhosave],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -1697,6 +1868,59 @@
         if (!confirm(`Approve ${ids.length} drafts?`)) return;
         const r = await post("/api/hub/messages/approve-bulk", {ids}); toast("Done: " + JSON.stringify(r.result)); return render();
       }
+      // Agent 2: Terminals and Bank reports
+      if (ds.tview) { state.tview = ds.tview; return render(); }
+      if (ds.tbucket !== undefined && t.matches("[data-tbucket]")) {
+        state.term = {...(state.term || {})};
+        if (state.term.bucket === ds.tbucket && !ds.tviewto) delete state.term.bucket; else state.term.bucket = ds.tbucket;
+        if (ds.tviewto) state.tview = ds.tviewto;
+        return render();
+      }
+      if (ds.tstatus) { state.term = {...(state.term || {})}; if (state.term.status === ds.tstatus) delete state.term.status; else state.term.status = ds.tstatus; return render(); }
+      if (ds.tclear) { state.term = {}; return render(); }
+      if (ds.tgroup) {
+        e.preventDefault();
+        state.term = {...(state.term || {}), [ds.tgroup]: ds.tname}; if (ds.tb) state.term.bucket = ds.tb; else delete state.term.bucket;
+        state.tview = "list"; return render();
+      }
+      if (ds.tgo) {
+        e.preventDefault(); state.term = {};
+        for (const kv of ds.tgo.split("|")) { const [k, val] = kv.split(":"); state.term[k] = val; }
+        state.tview = "list"; state.view = "terminals"; return render();
+      }
+      if (ds.txlsx) {
+        const f = state.term || {};
+        const r = await fetch(`api/hub/terminals.xlsx?${["bucket", "status", "rm", "dc", "lho", "q"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&")}`, {credentials: "same-origin", headers: H});
+        if (!r.ok) return alert("Download failed: " + r.status);
+        const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
+        a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "terminals.xlsx"; a.click(); return;
+      }
+      if (ds.tset) {
+        let body;
+        if (ds.tset === "on") {
+          const on = ds.tval === "1";
+          if (on && !confirm("Switch Agent 2 on?\n\nIt drafts an email to the LHO for every terminal due in the next days whose CSP's documents are ready" +
+                             ($("#tsapproval")?.checked ? " (a person approves each one in the Communication Hub)." : ", and sends it without approval."))) return;
+          body = {on};
+        } else {
+          body = {approval: $("#tsapproval").checked, lead_days: Number($("#tslead").value), rm_after_days: Number($("#tsrm").value),
+                  alert_days: Number($("#tsalert").value), required: [...document.querySelectorAll(".tsreq:checked")].map((x) => x.value)};
+        }
+        const r = await post("/api/hub/terminals/settings", body);
+        toast(r.run && !r.run.skipped ? `Saved. ${r.run.lho_drafted} LHO email(s) drafted, ${r.run.rm_drafted} RM follow-up(s).` : "Saved.");
+        return render();
+      }
+      if (ds.trun) { const r = await post("/api/hub/terminals/run"); toast(r.skipped ? r.skipped : `${r.lho_drafted} LHO email(s) drafted, ${r.rm_drafted} RM follow-up(s), ${r.not_ready} not ready.`); return render(); }
+      if (ds.tlink) {
+        const r = await post(`/api/hub/terminals/${ds.tlink}/link`, {code: $(`#tl${ds.tlink}`).value});
+        toast(`Linked to ${r.csp.code} ${r.csp.name}.`); return render();
+      }
+      if (ds.lhosave) {
+        const split = (v) => v.split(/[,;\s]+/).map((x) => x.trim()).filter(Boolean);
+        const r = await post("/api/hub/lho-contacts", {name: ds.lhoname, emails: split($(`#le${ds.lhosave}`).value), cc: split($(`#lc${ds.lhosave}`).value)});
+        toast(r.emails.length ? `${r.name}: ${r.emails.length + r.cc.length} address(es) saved and verified by you.` : `${r.name}: no address, no email will go.`);
+        return render();
+      }
       if (ds.run) { await post(`/api/hub/run/${ds.run}`); toast(`Started: ${ds.run}. Refresh in a moment.`); return; }
       if (ds.wanum) {
         try {
@@ -1734,6 +1958,8 @@
     if (e.key === "Escape") { closeDrawer(); closeCoach(); closeNav(); $("#gresults").classList.remove("open"); }
     if (e.key === "/" && !/input|textarea|select/i.test(document.activeElement.tagName)) { e.preventDefault(); $("#gsearch").focus(); }
     if (e.key === "Enter" && e.target.matches(".kpi[data-go]")) e.target.click();
+    if (e.key === "Enter" && e.target.id === "tq") { state.term = {...(state.term || {}), q: e.target.value.trim()}; if (!state.term.q) delete state.term.q; render(); }
+    if (e.key === "Enter" && e.target.matches(".kpi[data-tgo], .t-card[data-csp]")) e.target.click();
     if (e.key === "Enter" && e.target.id === "rmpq") { state.rmp = {...state.rmp, q: e.target.value.trim()}; if (!state.rmp.q) delete state.rmp.q; render(); }
     if (e.key === "Enter" && e.target.id === "q") { state.q = e.target.value; state.page = 1; render(); }
   });
@@ -1747,11 +1973,32 @@
       if (e.target.dataset.rmpkey === "district") delete f.dc;
       state.rmp = f; render();
     }
+    if (e.target.dataset.tkey) {
+      state.term = {...(state.term || {}), [e.target.dataset.tkey]: e.target.value};
+      if (!e.target.value) delete state.term[e.target.dataset.tkey];
+      render();
+    }
     if (e.target.dataset.fkey) {
       const f = {...state.find, [e.target.dataset.fkey]: e.target.value};
       if (!e.target.value) delete f[e.target.dataset.fkey];
       state.find = f; state.page = 1; render();
     }
+  });
+  document.addEventListener("submit", async (e) => {
+    if (e.target.id !== "timport") return;
+    e.preventDefault();
+    const btn = e.target.querySelector("button[type=submit]"); btn.disabled = true; btn.lastChild.textContent = "Reading…";
+    try {
+      const r = await fetch("api/hub/terminals/import", {method: "POST", body: new FormData(e.target), credentials: "same-origin", headers: H});
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) { $("#tresult").innerHTML = `<p class="bad small">${esc(j.detail || r.statusText)}</p>`; return; }
+      const a = j.agent || {};
+      toast(`Read ${j.rows} terminals: ${j.linked} linked, ${j.not_linked} not linked, ${j.renewed} renewed.`);
+      await render();
+      $("#tresult").innerHTML = `<div class="small" style="margin-top:8px"><b>${j.rows}</b> terminals read (${j.new} new) · <b>${j.linked}</b> linked · <b class="${j.not_linked ? "warnc" : ""}">${j.not_linked}</b> not linked ·
+        <b class="okc">${j.renewed}</b> renewed · ${j.skipped} rows skipped${a.skipped ? ` · <span class="warnc">${esc(a.skipped)}</span>` : ` · ${a.lho_drafted || 0} LHO email(s) drafted`}
+        ${(j.problems || []).length ? `<details class="why"><summary>Rows not read (${j.problems.length})</summary>${j.problems.map((p) => `<div class="why-line">Row ${p.row} ${esc(p.ko || "")}: ${esc(p.reason)}</div>`).join("")}</details>` : ""}</div>`;
+    } finally { btn.disabled = false; btn.lastChild.textContent = "Upload and read"; }
   });
   async function refreshAfterAction() { if ($("#drawer").classList.contains("open")) closeDrawer(); render(); }
 
@@ -1821,7 +2068,7 @@
       state.summary = await api("/api/hub/summary");
       const s = state.summary;
       const me = s.me || {}, isAdmin = me.role === "ADMIN";
-      if (!views[state.view] || (!isAdmin && ["activity", "monitoring", "accuracy", "contacts", "ingestion"].includes(state.view))) state.view = "today";
+      if (!views[state.view] || (!isAdmin && ["activity", "monitoring", "accuracy", "contacts", "ingestion", "bankreports"].includes(state.view))) state.view = "today";
       const drafts = s.drafts_pending.EMAIL + s.drafts_pending.WHATSAPP;
       $("#n-drafts").textContent = drafts || ""; $("#n-review").textContent = s.review_pending || "";
       $("#m-review").textContent = s.review_pending || "";
