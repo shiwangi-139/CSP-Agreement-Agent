@@ -12,7 +12,7 @@ from app import vault
 from app import auth
 from app.db import get_db
 from app.main import app
-from app.models import CSP, Document, DocumentStatus, InternalUser, PortalToken
+from app.models import CSP, Document, DocumentStatus, InternalUser, ManualReviewQueue, PortalToken
 from app.portal_tokens import issue_upload_link, resolve_token
 
 
@@ -111,15 +111,23 @@ def test_readable_pvr_is_accepted_and_filed_in_csp_folder(client, tmp_path):
     s.close()
 
 
-def test_surely_expired_document_is_turned_away(client):
-    """Read date = typed date, validity by rule: really expired, the CSP is told."""
+def test_surely_expired_document_is_kept_and_the_csp_asked_for_the_renewed_one(client):
+    """Read date = typed date, validity by rule: really expired. Since
+    18-11-2026 it is kept on record (counted as expired, reminders go on),
+    and the CSP is told to send the renewed one."""
     c, Session = client
-    _, _, token = _csp(Session)
+    cid, _, token = _csp(Session)
     old = date.today() - timedelta(days=500)
     r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=old.isoformat()),
                files={"pvr_file": ("pvr.pdf", _pvr_pdf(old), "application/pdf")})
     res = r.json()["results"][0]
-    assert not res["ok"] and "expired" in res["message"]["en"].lower()
+    assert not res["ok"] and "kept on record" in res["message"]["en"]
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    assert d.status == DocumentStatus.EXPIRED and d.is_current and d.issue_date == old
+    from app.compliance import evaluate
+    assert "POLICE_VERIFICATION" in evaluate(s, s.get(CSP, cid)).needs_upload     # still asked for
+    s.close()
 
 
 def test_future_date_is_rejected(client):
@@ -741,9 +749,9 @@ def test_reviewer_types_the_expiry_date_written_on_the_document(client, monkeypa
     s.close()
 
 
-def test_portal_agreement_past_the_one_year_rule_is_turned_away_as_expired(client, monkeypatch):
+def test_portal_agreement_past_the_one_year_rule_is_kept_as_expired(client, monkeypatch):
     """No validity written: 1 year (Eko's rule), so an older agreement is
-    expired and the CSP is asked for the renewed one."""
+    expired: kept on record, and the CSP is asked for the renewed one."""
     from app.api import portal
     c, Session = client
     cid, _, token = _csp(Session)
@@ -756,7 +764,10 @@ def test_portal_agreement_past_the_one_year_rule_is_turned_away_as_expired(clien
     r = c.post("/api/portal/upload", data=_form(token, agreement_issue_date=issue.isoformat()),
                files={"agreement_file": ("a.pdf", _pvr_pdf(issue), "application/pdf")})
     res = r.json()["results"][0]
-    assert not res["ok"] and res["message"]["en"] == portal.MSG["expired"][1]
+    assert not res["ok"] and res["message"]["en"] == portal.MSG["expired_kept"][1]
+    s = Session()
+    assert s.query(Document).filter_by(csp_id=cid, document_type="AGREEMENT").one().status == DocumentStatus.EXPIRED
+    s.close()
 
 
 def test_own_link_locks_a_document_valid_for_more_than_60_days(client):
@@ -863,3 +874,80 @@ def test_the_user_manual_is_for_signed_in_people_only(client, monkeypatch):
     r = c.get("/api/hub/manual", headers={"X-API-Key": "k"})
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
     assert "User Manual" in r.text and "How the agent decides" in r.text
+
+
+def _reads_by_box(answers: dict):
+    """A stand-in reader: what it reads depends on the box (expected_type),
+    as the real one leans towards the box it is given."""
+    calls = []
+
+    def read(data, filename, expected_type=None, **kw):
+        calls.append(expected_type)
+        return dict(answers[expected_type])
+    return read, calls
+
+
+def _reading(doc_type: str, pages: int, review: str = None) -> dict:
+    issue = date.today() - timedelta(days=30)
+    return {"readability": "READABLE", "document_type": doc_type, "compliance_status": "ACTIVE",
+            "start_date": issue.isoformat(), "expiry_date": (issue + timedelta(days=365)).isoformat(),
+            "validity_rule_used": "TEST_RULE", "date_source": "TEST", "page_count": pages,
+            **({"type_review": review} if review else {})}
+
+
+def test_a_pvr_named_file_in_the_agreement_box_is_read_as_a_pvr_and_checked(client, monkeypatch):
+    """The DC chose "1A851846_PVR_EXPIRED_....pdf" in the Agreement box: the
+    box pulled the reading towards an agreement; its name says PVR, so it is
+    read again as one and a person checks it, not "agreement incomplete"."""
+    from app.api import portal
+    c, Session = client
+    cid, _, token = _csp(Session)
+    read, calls = _reads_by_box({"AGREEMENT": _reading("AGREEMENT", 1),
+                                 "POLICE_VERIFICATION": _reading("POLICE_VERIFICATION", 1)})
+    monkeypatch.setattr(portal, "extract_document_fields_deterministic", read)
+    issue = date.today() - timedelta(days=30)
+    r = c.post("/api/portal/upload", data=_form(token, agreement_issue_date=issue.isoformat()),
+               files={"agreement_file": ("1A851846_PVR_EXPIRED_2026-09-19.pdf", _pvr_pdf(issue), "application/pdf")})
+    res = r.json()["results"][0]
+    assert calls == ["AGREEMENT", "POLICE_VERIFICATION"]
+    assert res["ok"] and res["message"]["en"] == portal.MSG["received_check"][1]
+    s = Session()
+    d = s.query(Document).filter_by(csp_id=cid).one()
+    assert d.document_type == "POLICE_VERIFICATION"
+    q = s.query(ManualReviewQueue).filter_by(document_id=d.id).one()
+    assert "agreement box but reads as a police verification" in q.reason
+    s.close()
+
+
+def test_an_agreement_in_the_pvr_box_is_found_by_its_length(client, monkeypatch):
+    """13 pages in the PVR box, read as a PVR because the box leans that way
+    (an agreement mentions police verification): read again as an agreement."""
+    from app.api import portal
+    c, Session = client
+    cid, _, token = _csp(Session)
+    read, calls = _reads_by_box({"POLICE_VERIFICATION": _reading("POLICE_VERIFICATION", 13),
+                                 "AGREEMENT": _reading("AGREEMENT", 13)})
+    monkeypatch.setattr(portal, "extract_document_fields_deterministic", read)
+    issue = date.today() - timedelta(days=30)
+    r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=issue.isoformat()),
+               files={"pvr_file": ("scan.pdf", _pvr_pdf(issue), "application/pdf")})
+    res = r.json()["results"][0]
+    assert calls == ["POLICE_VERIFICATION", "AGREEMENT"]
+    assert res["ok"] and res["message"]["en"] == portal.MSG["received_check"][1]
+    s = Session()
+    assert s.query(Document).filter_by(csp_id=cid).one().document_type == "AGREEMENT"
+    s.close()
+
+
+def test_a_short_pvr_is_kept_when_its_wording_does_not_say_otherwise(client, monkeypatch):
+    """A 1-page PVR in its own box is read once; an unclear re-read never wins."""
+    from app.api import portal
+    c, Session = client
+    cid, _, token = _csp(Session)
+    read, calls = _reads_by_box({"POLICE_VERIFICATION": _reading("POLICE_VERIFICATION", 1)})
+    monkeypatch.setattr(portal, "extract_document_fields_deterministic", read)
+    issue = date.today() - timedelta(days=30)
+    r = c.post("/api/portal/upload", data=_form(token, pvr_issue_date=issue.isoformat()),
+               files={"pvr_file": ("PVR scan.pdf", _pvr_pdf(issue), "application/pdf")})
+    res = r.json()["results"][0]
+    assert calls == ["POLICE_VERIFICATION"] and res["ok"] and res["message"]["en"] == portal.MSG["accepted"][1]

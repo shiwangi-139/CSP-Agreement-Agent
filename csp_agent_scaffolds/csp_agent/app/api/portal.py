@@ -18,7 +18,8 @@ Server-side rules (the page enforces the same, but the server decides):
     (issue + validity < today) -> "please upload the renewed document"
   - unreadable / blurry -> rejected at once ("photo not taken properly,
     please upload a scanned PDF"); the document stays missing
-  - the wrong document in a section, or an expired document -> rejected
+  - the wrong document in a section -> read as what it is and checked by a person
+  - an expired document -> kept on record as expired; the renewed one is asked for
   - typed date vs date read from the document: equal -> accepted; the
     document's own date wins when it was read by the rules; if it was read
     by the vision model and disagrees, it goes to the review queue
@@ -67,8 +68,9 @@ COMMON_PAGE = PAGE.parent / "csp_common.html"
 LOGO = "data:image/png;base64," + base64.b64encode(
     (PAGE.parent / "static" / "logo.png").read_bytes()).decode()
 SECTIONS = {"agreement": "AGREEMENT", "pvr": "POLICE_VERIFICATION", "iibf": "IIBF_CERTIFICATE"}
-# Most lenient validity per type, for rejecting an obviously expired typed
-# date before OCR. The document's own validity is applied after reading it.
+# Most lenient validity per type: the upload pages warn (never block, since
+# 18-11-2026) when the typed date looks expired. Reading the document decides;
+# a surely expired one is kept on record and the renewed one asked for.
 MAX_VALIDITY_YEARS = {"AGREEMENT": 3, "POLICE_VERIFICATION": 1, "IIBF_CERTIFICATE": None}
 
 MSG = {
@@ -99,6 +101,10 @@ MSG = {
     "future": ("यह तारीख आज के बाद की नहीं हो सकती।", "The issue date cannot be in the future."),
     "expired": ("इस डॉक्यूमेंट की तारीख निकल चुकी है (expired)। कृपया इसे रिन्यू करवाकर नया डॉक्यूमेंट अपलोड करें।",
                 "This document has expired. Please renew it and upload the new document."),
+    "expired_kept": ("यह डॉक्यूमेंट हमें मिल गया और रिकॉर्ड में रख लिया है, लेकिन इसकी तारीख निकल चुकी है (expired)। "
+                     "कृपया रिन्यू करवाकर नया डॉक्यूमेंट अपलोड करें।",
+                     "Received and kept on record, but this document has expired. Please renew it and upload "
+                     "the new document."),
     "unreadable": ("फोटो साफ़ नहीं है — कृपया स्कैन की हुई PDF अपलोड करें (Google Drive → Scan या Adobe Scan)।",
                    "Photo not taken properly — please upload a scanned PDF (Google Drive → Scan, or Adobe Scan)."),
     "wrong_doc": ("यह सही डॉक्यूमेंट नहीं है। कृपया यहाँ सही डॉक्यूमेंट अपलोड करें।",
@@ -667,6 +673,42 @@ def _typed_date_problem(doc_type: str, typed: Optional[date], today: date) -> Op
     return None
 
 
+def _read_for_what_it_is(data: bytes, filename: str, ex: dict, box: str, n_pages: int) -> dict:
+    """The box a file was uploaded in is only a hint, and it pulls the reading
+    towards that box's document (an agreement mentions "police verification"
+    in its clauses). Read the file again as what it more likely is:
+      - its file name says another document ("1A851846_PVR_....pdf" in the
+        Agreement box): read as that one (app/type_hint.py, as for e-mails);
+      - an agreement's length (10+ pages) in the PVR or IIBF box: read as an
+        agreement;
+      - 1-4 pages in the Agreement box: read as a PVR or IIBF certificate
+        before "this agreement is incomplete" is said.
+    Taken only when its wording clearly says so; the check below ("reads as
+    another required document") then sends it to a person with the reason."""
+    from .. import agreement_pages
+    from ..type_hint import label, recheck_with_name, type_named_in
+    got = canonical_type(ex.get("document_type"))
+    named = type_named_in(filename)
+    if named and named != got:
+        return recheck_with_name(data, filename, ex, read=extract_document_fields_deterministic)
+    if box != "AGREEMENT" and n_pages >= agreement_pages.OK_FROM:
+        others = ["AGREEMENT"]
+    elif box == "AGREEMENT" and got == "AGREEMENT" and 0 < n_pages < agreement_pages.REFUSE_BELOW:
+        others = ["POLICE_VERIFICATION", "IIBF_CERTIFICATE"]
+    else:
+        return ex
+    for other in others:
+        if other == got:
+            continue
+        again = extract_document_fields_deterministic(data, filename, expected_type=other, allow_llm_fallback=False)
+        if again.get("readability") == "READABLE" and canonical_type(again.get("document_type")) == other \
+                and not again.get("type_review"):
+            again["type_hint"] = (f"Uploaded in the {label(box)} box ({n_pages} page(s)) and read as {label(got)} at "
+                                  f"first; its wording says {label(other)}.")
+            return again
+    return ex
+
+
 def _surely_expired(ex: dict, typed: Optional[date]) -> bool:
     """Turn an upload away as expired only when nothing about it is a guess:
     the rules (not the model) read the issue date, the CSP typed the same
@@ -859,6 +901,10 @@ def _read_section(db: Session, csp: CSP, res: dict, *, doc_type: str, data: byte
             res["document_id"] = kept.document.id if kept.document is not None else None
             return
 
+    n_pages = n_files if n_files > 1 else (ex.get("page_count") or 0)
+    if ex.get("readability") == "READABLE":
+        ex = _read_for_what_it_is(data, filename, ex, doc_type, n_pages)
+
     # If it is explicitly an unauthorized document (Aadhaar, PAN, etc.)
     if ex.get("document_type") == "REJECTED_UNAUTHORIZED":
         turn_away("wrong_doc", data, mime)
@@ -906,7 +952,6 @@ def _read_section(db: Session, csp: CSP, res: dict, *, doc_type: str, data: byte
     if ex.get("document_type") == "AGREEMENT":
         # About 13 pages: one or two pages is not the agreement (app/agreement_pages.py).
         from .. import agreement_pages
-        n_pages = n_files if n_files > 1 else (ex.get("page_count") or 0)
         v = agreement_pages.verdict(n_pages)
         if v == "refuse":
             turn_away("agreement_short", data, mime)
@@ -915,15 +960,20 @@ def _read_section(db: Session, csp: CSP, res: dict, *, doc_type: str, data: byte
         if v == "review":
             ex["type_review"] = " ".join(x for x in (ex.get("type_review"), agreement_pages.review_note(n_pages)) if x)
 
+    expired_kept = False
     if ex.get("compliance_status") == "EXPIRED":
         if _surely_expired(ex, typed):
-            turn_away("expired", data, mime)
-            return
-        # Not certain: a person checks before the CSP hears "expired".
-        ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
-            f"Read as expired on {ex.get('expiry_date')} (issued {ex.get('start_date')}, "
-            f"{ex.get('validity_rule_used')}); the CSP typed issue date {typed:%d-%m-%Y}. "
-            "Check the dates and the validity before the CSP is told.")) if x)
+            # Kept on record (since 18-11-2026: the CSP did have one, and it is
+            # part of their history), but it counts as expired: the CSP is
+            # told to send the renewed one and the reminders go on. An expired
+            # copy never replaces a newer one (document_service.recompute_current).
+            expired_kept = True
+        else:
+            # Not certain: a person checks before the CSP hears "expired".
+            ex["type_review"] = " ".join(x for x in (ex.get("type_review"), (
+                f"Read as expired on {ex.get('expiry_date')} (issued {ex.get('start_date')}, "
+                f"{ex.get('validity_rule_used')}); the CSP typed issue date {typed:%d-%m-%Y}. "
+                "Check the dates and the validity before the CSP is told.")) if x)
 
     # If OCR could not read the issue date, take the date typed by the CSP and compute expiry
     if typed and not ex.get("start_date"):
@@ -1050,6 +1100,9 @@ def _read_section(db: Session, csp: CSP, res: dict, *, doc_type: str, data: byte
     res.update(ok=True, message=_msg(said), reason=said, document_id=doc.id)
     if not held:     # dates that cannot be right are not shown to the CSP
         res.update(issue_date=ex.get("start_date"), expiry_date=ex.get("expiry_date"))
+    if expired_kept and not held and said == "accepted":
+        # Received, but the CSP still has to act: shown as not done.
+        res.update(ok=False, reason="expired_kept", message=_msg("expired_kept"))
 
 
 

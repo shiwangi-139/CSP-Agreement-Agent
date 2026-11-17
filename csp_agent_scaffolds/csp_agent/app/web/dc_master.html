@@ -45,6 +45,7 @@
   .hint { font-size: .85rem; color: var(--muted); margin-top: 4px; }
   .err { color: hsl(0 70% 42%); font-size: .9rem; margin-top: 6px; }
   .ok { color: var(--forest); font-size: .9rem; margin-top: 6px; }
+  .warn { color: hsl(35 85% 32%); font-size: .9rem; margin-top: 6px; }
   button { width: 100%; padding: 14px; font: 700 1.05rem "Plus Jakarta Sans", Inter, sans-serif;
            background: var(--primary); color: #fff; border: 0; border-radius: var(--radius); cursor: pointer; }
   button:disabled { opacity: .6; }
@@ -275,12 +276,31 @@
         <div class="sizebar" id="${d.section}_size" hidden><span>साइज़ <span class="en">/ Size</span></span><b></b><div class="bar"><i></i></div></div>
         <label for="${d.section}_issue_date">डॉक्यूमेंट बनने की तारीख <span class="en">/ Issue date</span></label>
         <input type="date" id="${d.section}_issue_date" name="${d.section}_issue_date" max="${ctx.today}">`}
-        <div class="err" id="${d.section}_err"></div><div class="ok" id="${d.section}_ok"></div>`;
+        <div class="err" id="${d.section}_err"></div><div class="warn" id="${d.section}_warn"></div><div class="ok" id="${d.section}_ok"></div>`;
       docsEl.appendChild(sec);
     }
   }
 
   function addYears(iso, n) { return String(Number(iso.slice(0, 4)) + n).padStart(4, "0") + iso.slice(4, 10); }
+
+  // Warnings that do not stop the upload (the server reads the document and
+  // decides): an old date, or a file whose name names another document
+  // ("1A851846_PVR_....pdf" in the Agreement box), as app/type_hint.py.
+  const NAMED = {agreement: /AGREE?MENT/, pvr: /(^|[^A-Z])(PVR|PCC)([^A-Z]|$)|POLICE|CHARACTER/, iibf: /(^|[^A-Z])IIBF([^A-Z]|$)/};
+  const NAMED_LABEL = {agreement: ["एग्रीमेंट", "an Agreement"], pvr: ["पुलिस वेरिफिकेशन", "a Police Verification"], iibf: ["IIBF सर्टिफिकेट", "an IIBF certificate"]};
+  function namedIn(name) {
+    const n = " " + String(name || "").toUpperCase().replace(/[_\-.]+/g, " ") + " ";
+    const says = Object.keys(NAMED).filter((k) => NAMED[k].test(n));
+    return says.length === 1 ? says[0] : null;
+  }
+  function boxWarnings(d, v) {
+    const out = [], f = $(d.section + "_file").files[0], other = f && namedIn(f.name);
+    if (other && other !== d.section)
+      out.push(`⚠️ इस फ़ाइल के नाम में ${NAMED_LABEL[other][0]} लिखा है। क्या यह सही बॉक्स में है? <span class="en">/ This file's name says it is ${NAMED_LABEL[other][1]}. Is it in the right box?</span>`);
+    if (v && d.max_validity_years && addYears(v, d.max_validity_years) < ctx.today)
+      out.push(`⚠️ इस तारीख से डॉक्यूमेंट की तारीख निकल चुकी लगती है। आप इसे भेज सकते हैं, हम इसे रिकॉर्ड में रखेंगे, लेकिन रिन्यू किया हुआ नया डॉक्यूमेंट भी भेजना होगा। <span class="en">/ By this date the document looks expired. You can still send it and we keep it on record, but the renewed document is still needed.</span>`);
+    $(d.section + "_warn").innerHTML = out.join("<br>");
+  }
   const open = () => ctx.docs.filter((d) => !d.locked);
   // Sections with a file whose date is wrong: left out of the upload, the rest go.
   function checkDates() {
@@ -288,12 +308,11 @@
     for (const d of open()) {
       const file = hasFile(d.section), v = $(d.section + "_issue_date").value, err = $(d.section + "_err");
       err.textContent = "";
+      $(d.section + "_warn").innerHTML = "";
       if (!file) continue;
+      boxWarnings(d, v);
       if (!v) { err.textContent = "कृपया तारीख भरें / Please enter the issue date."; bad.push(d.section); continue; }
       if (v > ctx.today) { err.textContent = "तारीख आज के बाद की नहीं हो सकती / The date can't be in the future."; bad.push(d.section); continue; }
-      if (d.max_validity_years && addYears(v, d.max_validity_years) < ctx.today) {
-        err.textContent = "इस डॉक्यूमेंट की तारीख निकल चुकी है / This document has expired; upload the renewed one."; bad.push(d.section);
-      }
     }
     return bad;
   }

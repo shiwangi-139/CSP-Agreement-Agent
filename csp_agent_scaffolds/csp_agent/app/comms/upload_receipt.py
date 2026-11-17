@@ -41,6 +41,7 @@ SHORT_REASON = {
     "agreement_short": ("एग्रीमेंट अधूरा है, सारे पेज भेजें", "agreement incomplete, send all pages"),
     "dup_same": ("यह वही पुराना डॉक्यूमेंट है", "the same document we already have"),
     "expired": ("इसकी तारीख निकल चुकी है", "it has expired"),
+    "expired_kept": ("मिल गया, पर इसकी तारीख निकल चुकी है; नया भेजें", "received, but it has expired; send the renewed one"),
     "unreadable": ("साफ़ पढ़ा नहीं जा सका", "could not be read clearly"),
     "too_small": ("फोटो बहुत छोटी है", "photo too small"),
     "too_dark": ("फोटो बहुत अंधेरी है", "photo too dark"),
