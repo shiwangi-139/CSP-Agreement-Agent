@@ -911,7 +911,10 @@ def form_upload_file(event_id: int, i: int, me: Principal = Depends(require_user
     results = (e.payload or {}).get("results") or []
     kept = results[i].get("kept_file") if 0 <= i < len(results) else None
     path = vault.abs_path(kept) if kept else None
-    if path is None or not path.exists() or not vault.is_inside_vault(path.resolve()):
+    if path is not None and not path.exists():
+        from ..config import REJECTED_KEEP_DAYS
+        raise HTTPException(410, f"This file was deleted: turned-away files are kept {REJECTED_KEEP_DAYS} days.")
+    if path is None or not vault.is_inside_vault(path.resolve()):
         raise HTTPException(404, "file not found")
     media = {".pdf": "application/pdf", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
     return FileResponse(path.resolve(), media_type=media.get(path.suffix.lower(), "application/octet-stream"),

@@ -670,6 +670,25 @@ class UploadJobFile(Base):
     data = Column(LargeBinary, nullable=False)
 
 
+class GoldenCase(Base):
+    """The golden set (scripts/golden_set.py): documents a person decided,
+    with the answer FROZEN as it was that day. A version never changes; a new
+    freeze makes a new version. Every rule change and every nightly reading
+    check is judged against it (scripts/eval_reading.py --golden), so a
+    change that gets an old answer wrong is seen at once."""
+    __tablename__ = "golden_cases"
+    __table_args__ = (UniqueConstraint("version", "document_id", name="uq_golden_version_document"),)
+    id = Column(Integer, primary_key=True)
+    version = Column(Integer, nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    document_type = Column(String, nullable=False)
+    truth = Column(String, nullable=False)                    # accept / reject
+    issue_date = Column(Date)
+    expiry_date = Column(Date)
+    frozen_at = Column(DateTime, nullable=False)
+    frozen_by = Column(String)
+
+
 # ---------------------------------------------------------------------------
 # Agent 2 - Terminal Extension (app/terminals.py). A terminal's validity is
 # its own date, set by SBI's LHO; it is not the documents' validity.

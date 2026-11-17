@@ -14,8 +14,11 @@ file is, so staff can find an expired PVR without opening anything.
           rejected/     copies a reviewer rejected
       _staging/         new files land here first, then move into place
       _portal_rejected/ files a CSP sent on the upload page that were turned
-                        away (wrong document, expired, bad photo), kept so
-                        the team can see what was tried
+                        away (wrong document, bad photo), kept so the team
+                        can see what was tried; deleted after
+                        REJECTED_KEEP_DAYS (90), the record of the try stays
+      _originals/       originals of files made smaller (app/shrink.py),
+                        kept ORIGINALS_KEEP_DAYS (30) in case one is needed
 
 The database decides and the file name follows: desired_path() works out
 where a document's file belongs from its row, and place() moves it there.
@@ -28,7 +31,7 @@ import logging
 import re
 import secrets
 import shutil
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -70,6 +73,7 @@ EXT_FOR_MIME = {"application/pdf": ".pdf", "image/jpeg": ".jpg", "image/png": ".
 SUBFOLDER = {"EXPIRED": "expired", "REPLACED": "expired", "UNREADABLE": "unreadable", "REJECTED": "rejected"}
 STAGING = "_staging"
 PORTAL_REJECTED = "_portal_rejected"
+ORIGINALS = "_originals"
 REVIEW_STATUSES = {DocumentStatus.NEEDS_APPROVAL, DocumentStatus.NEEDS_REVIEW}
 
 
@@ -336,8 +340,8 @@ def orphan_files(db: Session) -> list[Path]:
     for f in ROOT.rglob("*"):
         if not f.is_file() or f.name == "INDEX.xlsx" or f.name.startswith(".~lock"):
             continue
-        if PORTAL_REJECTED in f.parts:
-            continue                        # recorded on the upload event, not a Document
+        if PORTAL_REJECTED in f.parts or ORIGINALS in f.parts:
+            continue                        # recorded on the upload event / the shrunk document, not a Document
         if f.resolve() not in known:
             out.append(f)
     return out
@@ -410,8 +414,42 @@ def write_index(db: Session, today: Optional[date] = None) -> Path:
     return final
 
 
+def _purge_older(folder: Path, days: int, today: date) -> dict:
+    """Delete files under `folder` last changed more than `days` days ago,
+    and the folders left empty. Only inside the vault."""
+    gone, freed = 0, 0
+    if days <= 0 or not folder.is_dir() or not is_inside_vault(folder.resolve()):
+        return {"deleted": 0, "freed_mb": 0.0}
+    cutoff = datetime.combine(today - timedelta(days=days), datetime.min.time()).timestamp()
+    for f in sorted(folder.rglob("*"), reverse=True):
+        try:
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                size = f.stat().st_size
+                f.unlink()
+                gone, freed = gone + 1, freed + size
+            elif f.is_dir() and not any(f.iterdir()):
+                f.rmdir()
+        except OSError:
+            logger.warning("vault_purge_failed path=%s", f)
+    return {"deleted": gone, "freed_mb": round(freed / 1048576, 1)}
+
+
+def purge_rejected(today: Optional[date] = None, days: Optional[int] = None) -> dict:
+    """Turned-away uploads are kept REJECTED_KEEP_DAYS, then deleted (DPDP: no
+    personal data longer than needed). The upload event keeps its record."""
+    from .config import REJECTED_KEEP_DAYS
+    return _purge_older(ROOT / PORTAL_REJECTED, REJECTED_KEEP_DAYS if days is None else days, today or date.today())
+
+
+def purge_originals(today: Optional[date] = None, days: Optional[int] = None) -> dict:
+    """Originals of shrunk files are kept ORIGINALS_KEEP_DAYS, then deleted."""
+    from .config import ORIGINALS_KEEP_DAYS
+    return _purge_older(ROOT / ORIGINALS, ORIGINALS_KEEP_DAYS if days is None else days, today or date.today())
+
+
 def run_nightly(db: Session, today: Optional[date] = None) -> dict:
-    """The worker's vault job: refresh expiry, rename/move files, rebuild the index."""
+    """The worker's vault job: refresh expiry, rename/move files, rebuild the
+    index, and delete what is past its keeping period."""
     check_root()
     result = reconcile(db, today=today)
     db.commit()
@@ -419,4 +457,5 @@ def run_nightly(db: Session, today: Optional[date] = None) -> dict:
     orphans = orphan_files(db)
     staging_left = [f for f in orphans if STAGING in f.parts and not f.name.endswith(".part")]
     return {"csps": result["csps"], "moved": result["moved"], "orphan_files": len(orphans),
-            "stuck_in_staging": len(staging_left)}
+            "stuck_in_staging": len(staging_left), "rejected_purged": purge_rejected(today),
+            "originals_purged": purge_originals(today)}

@@ -120,6 +120,8 @@ JOBS = {  # job id -> (what it is, expected gap in hours before it counts as lat
     "model_assist": ("Review helper (local AI)", 26), "snapshot": ("Daily Label snapshot", 26),
     "staff_lists": ("RM / DC lists (11:00)", 26), "nudges": ("Evening nudge (17:00)", 26),
     "reading_eval": ("Nightly reading evaluation (02:30)", 26),
+    "night_files": ("Weekly full re-read + smaller files (00:40)", 26),
+    "terminals": ("Agent 2: terminals (09:15)", 26),
 }
 
 
@@ -301,7 +303,7 @@ def reading_check(db: Session) -> dict:
         return out
 
     sets = {}
-    for name in ("tuning", "holdout"):
+    for name in ("tuning", "holdout", "golden"):
         mine = [r for r in runs if (r.summary or {}).get("set", "tuning") == name]
         if not mine:
             sets[name] = None

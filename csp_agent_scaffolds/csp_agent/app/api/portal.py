@@ -47,7 +47,7 @@ from sqlalchemy.orm import Session
 
 from ..ai.extraction.deterministic_extractor import extract_document_fields_deterministic
 from ..compliance import DOC_LABELS, canonical_type, evaluate, refresh_category, slab_label, sub_slab_label
-from ..config import MAX_UPLOAD_SIZE_BYTES, UPLOAD_WAIT_SECONDS, local_now
+from ..config import MAX_UPLOAD_SIZE_BYTES, UPLOAD_WAIT_SECONDS, local_now, max_doc_bytes
 from ..db import SessionLocal, get_db
 from ..document_service import store_extracted_document
 from ..models import (AgreementEvent, ContactChangeRequest, CSP, CspQuestion, Document, DocumentStatus, InternalUser,
@@ -228,7 +228,8 @@ def _context(db: Session, csp: CSP, requested: list[str]) -> dict:
                      "applied_on": s.applied_on.isoformat() if s.applied_on else None,
                      "requested": not lock and (t in requested or (s.status != "VALID" and not s.in_review)),
                      "last_problem": problems.get(key) if s.status != "VALID" and not s.in_review else None,
-                     "max_validity_years": MAX_VALIDITY_YEARS[t]})
+                     "max_validity_years": MAX_VALIDITY_YEARS[t],
+                     "max_mb": round(max_doc_bytes(t) / 1024 / 1024, 1)})
     # Help on the page (top right): the DC's number, else the RM's.
     from ..comms.outbound import _phone10
     helper = next(((role, u) for role, u in (("DC", dc), ("RM", rm)) if u and _phone10(u.phone or "")), None)
@@ -796,8 +797,13 @@ async def portal_upload(request: Request, db: Session = Depends(get_db)):
         files = []
         for u in uploads:
             files.append(await _read_limited(u))
-        if any(f is None for f in files) or sum(len(f) for f in files) > MAX_UPLOAD_SIZE_BYTES:
+        if any(f is None for f in files) or sum(len(f) for f in files) > max_doc_bytes(doc_type):
             turn_away("too_big")
+            mb = round(max_doc_bytes(doc_type) / 1024 / 1024, 1)
+            res["message"] = {"hi": f"यह डॉक्यूमेंट {mb:g} MB से बड़ा है। 📷 फोटो लें बटन से हर पेज की फोटो लें "
+                                    "(फोटो अपने-आप छोटी हो जाती हैं), या छोटी PDF भेजें।",
+                              "en": f"This document is larger than {mb:g} MB. Take a photo of each page with the "
+                                    "📷 Take photos button (photos are made small automatically), or send a smaller PDF."}
             continue
         mimes = [detect_mime(f) for f in files]
         if None in mimes:

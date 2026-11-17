@@ -352,7 +352,9 @@
   }
 
   const MAX_SHOTS = 25, LONG_SIDE = 1600, QUALITY = 0.7;
-  const MAX_BYTES = page.max_upload_mb * 1024 * 1024;
+  // The limit is per document (app/config.py MAX_DOC_MB): agreement 8 MB, PVR 3 MB, IIBF 2 MB.
+  const limitMb = (sec) => (((ctx && ctx.docs) || []).find((d) => d.section === sec) || {}).max_mb || page.max_upload_mb;
+  const limitBytes = (sec) => limitMb(sec) * 1024 * 1024;
   const bytesOf = (sec) => (shots[sec] || []).reduce((n, x) => n + x.blob.size, 0) + ($(sec + "_file")?.files[0]?.size || 0);
   function drawShots(sec) {
     const list = shots[sec] || [], file = $(sec + "_file").files[0], box = $(sec + "_shots"), size = $(sec + "_size");
@@ -361,8 +363,8 @@
         + `<button type="button" class="more" data-cam="${sec}" aria-label="अगले पेज की फोटो / Photo of the next page">+</button>`;
     box.hidden = size.hidden = !file && !list.length;
     const b = bytesOf(sec);
-    size.querySelector("b").textContent = `${(b / 1048576).toFixed(1)} MB / ${page.max_upload_mb} MB`;
-    size.querySelector("i").style.width = Math.min(100, 100 * b / MAX_BYTES) + "%";
+    size.querySelector("b").textContent = `${(b / 1048576).toFixed(1)} MB / ${limitMb(sec)} MB`;
+    size.querySelector("i").style.width = Math.min(100, 100 * b / limitBytes(sec)) + "%";
   }
   function clearShots(sec, gone) {
     for (const x of shots[sec] || []) URL.revokeObjectURL(x.url);
@@ -386,7 +388,7 @@
       const blob = await shrink(img);
       URL.revokeObjectURL(url);
       if (!blob) { err.textContent = FAIL.ours; return; }
-      if (bytesOf(sec) + blob.size > MAX_BYTES) { err.textContent = `फोटो ${page.max_upload_mb} MB से ज़्यादा हो गईं। / The photos are over ${page.max_upload_mb} MB.`; return; }
+      if (bytesOf(sec) + blob.size > limitBytes(sec)) { err.textContent = `फोटो ${limitMb(sec)} MB से ज़्यादा हो गईं। / The photos are over ${limitMb(sec)} MB.`; return; }
       $(sec + "_file").value = "";
       (shots[sec] = shots[sec] || []).push({ blob, url: URL.createObjectURL(blob) });
       err.textContent = "";
@@ -408,7 +410,7 @@
     });
     return pdfjs;
   }
-  const tooBigPdf = (mb) => `यह फ़ाइल ${mb} MB की है (सीमा ${page.max_upload_mb} MB) और छोटी नहीं हो सकी। सिर्फ़ इसी डॉक्यूमेंट के पेज भेजें, या 📷 फोटो लें बटन से हर पेज की फोटो लें। / This file is ${mb} MB (limit ${page.max_upload_mb} MB) and could not be made smaller. Send only this document's pages, or take a photo of each page with the 📷 Take photos button.`;
+  const tooBigPdf = (mb, sec) => `यह फ़ाइल ${mb} MB की है (सीमा ${limitMb(sec)} MB) और छोटी नहीं हो सकी। सिर्फ़ इसी डॉक्यूमेंट के पेज भेजें, या 📷 फोटो लें बटन से हर पेज की फोटो लें। / This file is ${mb} MB (limit ${limitMb(sec)} MB) and could not be made smaller. Send only this document's pages, or take a photo of each page with the 📷 Take photos button.`;
   async function compressPdf(sec, f) {
     const err = $(sec + "_err"), ok = $(sec + "_ok"), mb = (f.size / 1048576).toFixed(1), list = [];
     clearShots(sec);
@@ -428,7 +430,7 @@
         g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);     // no black background in the JPEG
         await pg.render({ canvasContext: g, viewport: vp }).promise;
         const blob = await new Promise((r) => c.toBlob(r, "image/jpeg", QUALITY));
-        if (!blob || (bytes += blob.size) > MAX_BYTES) throw new Error("still too big");
+        if (!blob || (bytes += blob.size) > limitBytes(sec)) throw new Error("still too big");
         list.push({ blob, url: URL.createObjectURL(blob), pdf: true });
       }
       shots[sec] = list;
@@ -437,7 +439,7 @@
     } catch (e) {
       for (const x of list) URL.revokeObjectURL(x.url);
       ok.textContent = "";
-      err.textContent = tooBigPdf(mb);
+      err.textContent = tooBigPdf(mb, sec);
     }
     drawShots(sec); checkDates();
   }
@@ -462,7 +464,7 @@
       if (f) addPhoto(sec, f);
       return;
     }
-    if (f && f.size > MAX_BYTES) { input.value = ""; compressPdf(sec, f); return; }
+    if (f && f.size > limitBytes(sec)) { input.value = ""; compressPdf(sec, f); return; }
     if (f) clearShots(sec); else drawShots(sec);           // a PDF replaces the photos
   });
 

@@ -315,6 +315,8 @@
       <div class="rc-foot">
         <div><b>Hold-out check</b> <span class="small muted">(documents never used to write rules)</span><br>
           ${h ? `score <b>${h.score ?? "—"}</b> on ${h.by_type.ALL?.documents || 0} documents ${scoreTrend(h.score, h.previous_score)}` : `<span class="small muted">not run yet</span>`}</div>
+        <div><b>Golden set</b> <span class="small muted">(answers frozen as people decided them: scripts/golden_set.py)</span><br>
+          ${rc.sets.golden ? `score <b>${rc.sets.golden.score ?? "—"}</b> on ${rc.sets.golden.by_type.ALL?.documents || 0} documents ${scoreTrend(rc.sets.golden.score, rc.sets.golden.previous_score)}` : `<span class="small muted">not frozen yet</span>`}</div>
         ${covBar}
       </div>
       ${rules}

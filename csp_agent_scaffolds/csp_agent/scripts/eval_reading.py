@@ -13,6 +13,8 @@ checked with --holdout, so rules are never tuned to it.
     python -m scripts.eval_reading --holdout       # the hold-out set
     python -m scripts.eval_reading --type AGREEMENT
     python -m scripts.eval_reading --shadow        # by scripts/shadow_test.py: candidate code, saved apart
+    python -m scripts.eval_reading --golden        # the frozen golden set (scripts/golden_set.py): the answers
+                                                   # as they were frozen, not as the rows say today
 
 On the shared server, inside tmux:
     nice -n 19 env OCR_WORKERS=1 .venv/bin/python -m scripts.eval_reading
@@ -63,6 +65,22 @@ def _truth(db):
             yield d, c, "accept"
 
 
+def _golden(db, doc_type=None):
+    """(frozen answer, csp, truth) for the latest golden-set version."""
+    from types import SimpleNamespace
+    from sqlalchemy import func
+    from app.models import GoldenCase
+    v = db.query(func.max(GoldenCase.version)).scalar()
+    if not v:
+        return []
+    q = (db.query(GoldenCase, Document, CSP).join(Document, Document.id == GoldenCase.document_id)
+         .join(CSP, CSP.id == Document.csp_id).filter(GoldenCase.version == v))
+    if doc_type:
+        q = q.filter(GoldenCase.document_type == doc_type)
+    return [(SimpleNamespace(id=d.id, document_type=g.document_type, issue_date=g.issue_date,
+                             expiry_date=g.expiry_date, storage_path=d.storage_path), c, g.truth) for g, d, c in q]
+
+
 def judge(truth: str, d: Document, ex: dict) -> str:
     if ex.get("timeout") or ex.get("error"):
         return "could not read"
@@ -91,13 +109,20 @@ def main():
     ap.add_argument("--shadow", action="store_true",
                     help="candidate code (scripts/shadow_test.py): tuning + hold-out, saved as the 'shadow' set")
     ap.add_argument("--commit", help="the code's commit, when it isn't this folder's")
+    ap.add_argument("--golden", action="store_true", help="the frozen golden set (scripts/golden_set.py)")
     a = ap.parse_args()
     started = datetime.now(timezone.utc).replace(tzinfo=None)
     db = SessionLocal()
     try:
-        items = [(d, c, t) for d, c, t in _truth(db)
-                 if (a.shadow or (d.id % 5 == 0) == a.holdout) and (not a.type or d.document_type == a.type)]
-        set_name = "shadow" if a.shadow else "holdout" if a.holdout else "tuning"
+        if a.golden:
+            items = _golden(db, a.type)
+            if not items:
+                print("No golden set yet (python -m scripts.golden_set --freeze): nothing to check.")
+                return
+        else:
+            items = [(d, c, t) for d, c, t in _truth(db)
+                     if (a.shadow or (d.id % 5 == 0) == a.holdout) and (not a.type or d.document_type == a.type)]
+        set_name = "golden" if a.golden else "shadow" if a.shadow else "holdout" if a.holdout else "tuning"
         print(f"{len(items)} documents decided by a person ({set_name} set)")
         Path("logs").mkdir(exist_ok=True)
         totals = defaultdict(Counter)
@@ -106,7 +131,8 @@ def main():
         verdicts = {}                                  # doc id -> verdict, every document
         failure_rules = {}                             # doc id -> the rules that read it, for failures
         by_rule = defaultdict(Counter)                 # rule -> verdicts (date rule and validity rule)
-        with open("logs/shadow_eval.csv" if a.shadow else "logs/reading_eval.csv", "w", newline="") as out:
+        with open("logs/shadow_eval.csv" if a.shadow else "logs/golden_eval.csv" if a.golden
+                  else "logs/reading_eval.csv", "w", newline="") as out:
             w = csv.writer(out)
             w.writerow(["csp_code", "type", "doc_id", "truth", "true_issue", "true_expiry", "read_issue", "read_expiry",
                         "rule", "verdict", "note"])

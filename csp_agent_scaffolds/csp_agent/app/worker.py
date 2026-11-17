@@ -23,6 +23,7 @@ Schedule (Asia/Kolkata):
   Campaign: CSPs' short evening nudge                            daily 17:00
   Reading evaluation (scripts/eval_reading.py, both sets)        daily 02:30, low priority
   Agent 2: LHO emails, RM follow-ups, 3-day alerts (app/terminals.py)  daily 09:15
+  Weekly full re-read (a seventh a night) + smaller large scans (off by default)  daily 00:40
   The agent's own warning signs (app/signals.py)                 daily 03:00
 Missed runs while the worker was running late are run once (coalesce + 6 h
 grace). Daily runs missed while it was stopped (09:00 run, 11:00 lists,
@@ -273,6 +274,36 @@ def job_reading_eval():
     return _run("reading_eval", go)
 
 
+def job_night_files():
+    """Every night: the weekly full re-read (a seventh of all documents, read
+    with today's rules and compared with the record: scripts/full_reread.py),
+    then smaller copies of large scans when SHRINK_NIGHTLY is on
+    (scripts/shrink_documents.py). Both at low priority, each in its own
+    process, with a time limit. Nothing is changed by the re-read."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+    from .config import FULL_REREAD, FULL_REREAD_MINUTES, SHRINK_NIGHTLY
+    app_dir = Path(__file__).resolve().parent.parent
+
+    def step(args, minutes):
+        r = subprocess.run(["nice", "-n", "19", sys.executable, "-m", *args], cwd=app_dir,
+                           env={**os.environ, "OCR_WORKERS": "1"}, capture_output=True, text=True,
+                           timeout=(minutes + 20) * 60)
+        tail = [line for line in r.stdout.splitlines() if line.strip()]
+        return tail[-1] if tail else f"exit {r.returncode}"
+
+    def go():
+        out = {}
+        if FULL_REREAD:
+            out["full_reread"] = step(["scripts.full_reread", "--minutes", str(FULL_REREAD_MINUTES)], FULL_REREAD_MINUTES)
+        if SHRINK_NIGHTLY:
+            out["shrink"] = step(["scripts.shrink_documents", "--nightly", "--minutes", "25"], 25)
+        return out or {"skipped": "FULL_REREAD and SHRINK_NIGHTLY are off"}
+    return _run("night_files", go)
+
+
 def job_signals():
     """Every night: record the agent's own warning signs of the last 30 days
     (app/signals.py). Only adds to agent_signals; changes nothing else."""
@@ -397,6 +428,7 @@ def build_scheduler():
     sched.add_job(job_reference_batch, CronTrigger(hour=3, minute=30), id="reference_batch")
     sched.add_job(job_nudges, CronTrigger(hour=17, minute=0), id="nudges")
     sched.add_job(job_terminals, CronTrigger(hour=9, minute=15), id="terminals")
+    sched.add_job(job_night_files, CronTrigger(hour=0, minute=40), id="night_files")
     return sched
 
 

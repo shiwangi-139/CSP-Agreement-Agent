@@ -52,6 +52,35 @@ AI_AUTO_REVIEW_THRESHOLD = float(os.getenv("AI_AUTO_REVIEW_THRESHOLD", "0.90"))
 AI_HUMAN_REVIEW_THRESHOLD = float(os.getenv("AI_HUMAN_REVIEW_THRESHOLD", "0.70"))
 
 MAX_UPLOAD_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(10 * 1024 * 1024)))
+# Per document on the upload pages (since 18-11-2026): a 13-page agreement
+# scanned properly is 3-5 MB, a police certificate or IIBF under 1 MB. The
+# phone makes a larger PDF smaller by itself (each page as a photo, 1600 px).
+# Never above MAX_UPLOAD_SIZE_BYTES.
+MAX_DOC_MB = {"AGREEMENT": float(os.getenv("MAX_AGREEMENT_MB", "8")),
+              "POLICE_VERIFICATION": float(os.getenv("MAX_PVR_MB", "3")),
+              "IIBF_CERTIFICATE": float(os.getenv("MAX_IIBF_MB", "2"))}
+
+
+def max_doc_bytes(doc_type: str) -> int:
+    return min(int(MAX_DOC_MB.get(doc_type, 8) * 1024 * 1024), MAX_UPLOAD_SIZE_BYTES)
+
+
+# Files the upload page turned away (_portal_rejected/) are deleted after this
+# many days; the record of the attempt stays (app/vault.py purge_rejected).
+REJECTED_KEEP_DAYS = int(os.getenv("REJECTED_KEEP_DAYS", "90"))
+# Smaller copies of large scans (app/shrink.py). Off until the dry-run report
+# (scripts/shrink_documents.py) has been checked on real documents.
+SHRINK_NIGHTLY = os.getenv("SHRINK_NIGHTLY", "off").strip().lower() in ("1", "on", "true", "yes")
+SHRINK_PER_NIGHT = int(os.getenv("SHRINK_PER_NIGHT", "40"))
+SHRINK_MIN_MB = float(os.getenv("SHRINK_MIN_MB", "2.5"))
+SHRINK_TYPES = tuple(t.strip() for t in os.getenv("SHRINK_TYPES", "AGREEMENT").split(",") if t.strip())
+SHRINK_LONG_SIDE = int(os.getenv("SHRINK_LONG_SIDE", "1800"))      # pixels; about 150 DPI on A4, colour kept
+SHRINK_QUALITY = int(os.getenv("SHRINK_QUALITY", "72"))
+ORIGINALS_KEEP_DAYS = int(os.getenv("ORIGINALS_KEEP_DAYS", "30"))  # originals of shrunk files (_originals/)
+# The weekly full re-read (app/full_reread.py): a seventh of all documents
+# each night, at low priority, for at most this many minutes.
+FULL_REREAD = os.getenv("FULL_REREAD", "on").strip().lower() in ("1", "on", "true", "yes")
+FULL_REREAD_MINUTES = int(os.getenv("FULL_REREAD_MINUTES", "60"))
 ALLOWED_MIME_TYPES = {"application/pdf", "image/jpeg", "image/png"}
 # Upload page: documents are read after the reply can go (app/upload_jobs.py).
 # The request waits this long for the reading; a slower one answers "received,

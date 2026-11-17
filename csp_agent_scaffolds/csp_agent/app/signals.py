@@ -63,6 +63,8 @@ KINDS = {
     "S8_REPEATED_UPLOAD_FAILURES": "Repeated upload failures",
     "S9_RULE_DRIFT": "Rule drift",
     "S10_REVIEW_CAUSE": "Could not decide on its own",
+    # Recorded by the weekly full re-read (scripts/full_reread.py), not by collect().
+    "S11_READS_DIFFERENTLY_NOW": "Reads differently with today's rules",
 }
 
 # S10: why a document went to a person or could not be read. Deliberate
@@ -529,6 +531,23 @@ def findings(db: Session, now: Optional[datetime] = None) -> list[dict]:
             add("warn", f"{len(mine)} CSPs keep failing on the upload page: {human(reason)}",
                 "Each tried 3 or more times in a week with the same refusal.",
                 "Call them, or make the upload page message for this reason clearer.", mine)
+
+    differ = by_kind["S11_READS_DIFFERENTLY_NOW"]
+    person = [r for r in differ if (r.facts or {}).get("by_person")]
+    if person:
+        add("critical", f"{len(person)} document(s) a person decided would now read differently",
+            f"The weekly full re-read: today's rules disagree with a person's decision; mostly "
+            f"{human(_top(person, 'type'))}, read by {human(_top(person, 'rule'))}.",
+            "A recent rule change broke these: compare the examples and fix the rule before it reads new documents "
+            "the same way.", person)
+    if len(differ) > len(person):
+        rest = [r for r in differ if not (r.facts or {}).get("by_person")]
+        shrunk = sum(1 for r in rest if (r.facts or {}).get("shrunk"))
+        add("warn", f"{len(rest)} stored document(s) would now read differently",
+            f"The weekly full re-read; mostly {human(_top(rest, 'type'))}"
+            + (f"; {shrunk} of them were made smaller" if shrunk else "") + ".",
+            "Either today's rules read them better (then the record is out of date) or worse (then a rule broke): "
+            "open the examples and decide.", rest)
 
     for r in by_kind["S9_RULE_DRIFT"]:
         add("warn", f"Rule drift: {r.detail}", "A rule or channel behaves differently from the 4 weeks before.",
