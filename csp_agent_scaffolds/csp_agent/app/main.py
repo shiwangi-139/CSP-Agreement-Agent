@@ -18,6 +18,7 @@ from .logging_config import configure_logging
 from .scheduler import get_scheduler_status
 from .api import agent, csp, agreements, documents, ingest, review, campaigns, dashboard, hub, login, portal
 from .api import terminals as terminals_api
+from .api import sbi_portal as sbi_portal_api
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -53,6 +54,7 @@ app.include_router(login.router, tags=["login"])
 # Everything else needs a logged-in user (or X-API-Key from the server itself).
 app.include_router(hub.router, prefix="/api/hub", tags=["dashboard"])
 app.include_router(terminals_api.router, prefix="/api/hub", tags=["agent2-terminals"])
+app.include_router(sbi_portal_api.router, prefix="/api/hub", tags=["agent3-sbi-upload"])
 app.include_router(dashboard.router, tags=["legacy-dashboard"], dependencies=admin)
 app.include_router(csp.router, prefix="/api/csp", tags=["csp"], dependencies=admin)
 app.include_router(agreements.router, prefix="/api/agreements", tags=["agreements"], dependencies=admin)

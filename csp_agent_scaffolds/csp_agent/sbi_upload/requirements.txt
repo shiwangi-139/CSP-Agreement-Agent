@@ -1,0 +1,4 @@
+playwright==1.65.2
+python-dotenv==1.0.1
+# After installing: python -m playwright install chromium
+# The agent's own requirements (SQLAlchemy, psycopg2) come from its .venv.

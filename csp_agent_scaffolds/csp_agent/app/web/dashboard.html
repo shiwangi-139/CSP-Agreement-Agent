@@ -40,6 +40,7 @@
   <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></symbol>
   <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M9 6h6v4H9zM9 14h.01M12 14h.01M15 14h.01M9 17.5h.01M12 17.5h.01M15 17.5h.01"/></symbol>
   <symbol id="i-bank" viewBox="0 0 24 24"><path d="M3 10 12 4l9 6M5 10v8M9.5 10v8M14.5 10v8M19 10v8M3 20h18"/></symbol>
+  <symbol id="i-cloud-up" viewBox="0 0 24 24"><path d="M16 16l-4-4-4 4M12 12v9"/><path d="M20.4 14.5A5 5 0 0 0 18 5a6.5 6.5 0 0 0-12 2 4.5 4.5 0 0 0-1 8.9"/></symbol>
 </svg>
 
 <div id="login" class="login card" style="display:none">
@@ -77,6 +78,7 @@
     <div class="navgroup"><div class="navlabel">Bank (SBI)</div>
       <button class="nav" data-view="terminals" title="Terminals"><svg><use href="#i-terminal"/></svg><span class="navtext">Terminals</span><span class="count" id="n-terms"></span></button>
       <button class="nav admin-only" data-view="bankreports" title="Bank reports"><svg><use href="#i-bank"/></svg><span class="navtext">Bank reports</span></button>
+      <button class="nav admin-only" data-view="sbiupload" title="SBI Upload"><svg><use href="#i-cloud-up"/></svg><span class="navtext">SBI Upload</span><span class="count" id="n-sbi"></span></button>
     </div>
     <div class="navgroup"><div class="navlabel">Messages</div>
       <button class="nav" data-view="comms" title="Communication Hub"><svg><use href="#i-message"/></svg><span class="navtext">Communication Hub</span><span class="count" id="n-drafts"></span></button>
@@ -256,6 +258,7 @@
     documents: ["Documents", "Latest documents", "Current documents per CSP, and every file uploaded through the links"],
     terminals: ["Bank (SBI)", "Terminals", "Agent 2 · every CSP terminal and its expiry date: the LHO is emailed once, 15 days before, when the CSP's documents outlast it"],
     bankreports: ["Bank (SBI)", "Bank reports", "Agent 2 · upload the terminal report, LHO email addresses, terminals not linked, and Agent 2's switch"],
+    sbiupload: ["Bank (SBI)", "SBI Upload", "Agent 3 · which documents are ready to upload to the SBI portal, the exact values to enter, and what is uploaded. A person uploads from the workstation; this page is the worklist."],
     comms: ["Messages", "Communication Hub", "Drafts, sent and failed messages to CSPs, RMs and DCs"],
     questions: ["Messages", "CSP questions", "Questions CSPs asked on their upload page"],
     analytics: ["Messages", "Messaging analytics", "From message to documents"],
@@ -1287,6 +1290,38 @@
         : `<div class="empty">No CSPs pending${Object.keys(f).length ? " for these filters" : ""}.</div>`}</div>`;
     },
 
+    async sbiupload() {
+      const f = state.sbi || (state.sbi = {}), isAdmin = state.summary.me.role === "ADMIN";
+      const qs = ["status", "kind", "rm", "dc", "q"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&");
+      const d = await api(`/api/hub/sbi-upload?${qs}`);
+      const ready = d.statuses.find((x) => x.key === "ready")?.n || 0;
+      $("#n-sbi").textContent = ready || "";
+      if (!d.total) return `<div class="card empty"><b>Nothing to show yet.</b><br>CSPs with a valid Agreement, PVR or IIBF appear here once documents are on record.</div>`;
+      const SL = {ready: "Ready to upload", uploaded: "Uploaded", reupload: "Re-upload (newer copy)", waiting: "Waiting for the CSP", blocked: "File too large"};
+      const DOCN = {agreement: "Agreement", pvr: "PVR", iibf: "IIBF"};
+      const tile = (x) => `<button class="t-bucket s-${esc(x.key)} ${f.status === x.key ? "active" : ""}" data-sstatus="${esc(x.key)}" aria-pressed="${f.status === x.key}"><span class="t-bn">${x.n}</span><span class="t-bl">${esc(x.label)}</span></button>`;
+      const head = `<div class="card t-head"><div class="t-report"><span class="t-dot"></span><div>
+          <b>SBI Upload worklist</b><div class="small muted">A person uploads from the workstation (login + captcha + OTP); this page prepares the work and shows the status. Agreement signatory: <b>${esc(d.signatory)}</b> · file limit ${d.max_mb} MB.</div></div></div>
+        <div class="t-actions"><button class="btn" data-sxlsx="1"><svg><use href="#i-file"/></svg>Excel</button></div></div>`;
+      const tiles = `<div class="t-buckets">${d.statuses.map(tile).join("")}</div>`;
+      const chips = `<div class="filters" style="margin-bottom:12px">${d.kinds.filter((k) => k.n).map((k) => `<button class="filter ${f.kind === k.key ? "active" : ""}" data-skind="${esc(k.key)}">${esc(k.label)} · ${k.n}</button>`).join("")}</div>`;
+      const sel = (key, label, all) => `<label class="small">${label}<br><select data-skey="${key}"><option value="">${all}</option>${d.options[key].map((o) =>
+        `<option value="${esc(o.name)}" ${f[key] === o.name ? "selected" : ""}>${esc(o.name)} · ${o.n}</option>`).join("")}</select></label>`;
+      const bar = `<div class="toolbar t-tools">${isAdmin ? sel("rm", "RM", "All RMs") : ""}${sel("dc", "DC", "All DCs")}
+        <label class="small">Search<br><input type="search" id="sq" placeholder="KO code or name" value="${esc(f.q || "")}"></label>
+        ${Object.keys(f).length ? `<button class="btn" data-sclear="1">Clear filters</button>` : ""}</div>`;
+      const val = (r) => Object.entries(r.values).filter(([, x]) => x).map(([k, x]) => `<span class="small"><span class="muted">${esc(k.replace(/_/g, " "))}:</span> ${esc(x)}</span>`).join("<br>") || `<span class="small muted">${esc(r.reason || "")}</span>`;
+      const body = d.rows.map((r) => `<tr>
+        <td><a href="#" data-csp="${r.csp.id}"><b>${esc(r.csp.name)}</b></a><div class="mono small muted">KO ${esc(r.csp.code)}</div></td>
+        <td class="small">${esc(DOCN[r.kind])}</td>
+        <td>${val(r)}</td>
+        <td class="small">${r.file ? `<span class="mono">${esc(r.file)}</span>` : "—"}</td>
+        <td><span class="t-st s-sbi-${esc(r.status)}">${esc(SL[r.status] || r.status)}</span>${r.uploaded ? `<div class="small muted">${fmt(r.uploaded.at)} · ${esc(r.uploaded.by || "")}</div>` : ""}</td>
+        <td class="small">${isAdmin ? esc(r.rm) + " · " : ""}${esc(r.dc)}</td></tr>`).join("");
+      return head + tiles + chips + bar + `<div class="small muted t-count"><b>${d.shown}</b> of ${d.total} rows</div>
+        <div class="card tablewrap"><table><thead><tr><th>CSP</th><th>Document</th><th>Values to enter on SBI</th><th>File</th><th>Status</th><th>RM / DC</th></tr></thead><tbody>${body}</tbody></table></div>`;
+    },
+
     async terminals() {
       const f = state.term || (state.term = {}), isAdmin = state.summary.me.role === "ADMIN", v = state.tview || "list";
       const grp = ["rm", "dc", "lho"].includes(v) ? v : "";
@@ -1659,7 +1694,7 @@
 
   // ----------------------------------------------------------- events
   document.addEventListener("click", async (e) => {
-    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-rvmove],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-rmpclear],[data-clink],[data-finalnotice],[data-handsent],[data-attfilter],[data-tview],[data-tbucket],[data-tstatus],[data-tclear],[data-txlsx],[data-tgroup],[data-tgo],[data-tset],[data-trun],[data-tlink],[data-lhosave],#closedrawer,#approveall,#refresh");
+    const t = e.target.closest("[data-view],[data-go],[data-cat],[data-csp],[data-page],[data-channel],[data-mstatus],[data-mslab],[data-mkind],[data-sub],[data-tag],[data-doctype],[data-approve],[data-sendnow],[data-answer],[data-findset],[data-findxlsx],[data-qstatus],[data-fout],[data-fdays],[data-fcsp],[data-keptfile],[data-reject],[data-edit],[data-run],[data-file],[data-zip],[data-xlsx],[data-link],[data-savestaff],[data-cc],[data-resolve],[data-rvmove],[data-reread],[data-mtab],[data-wanum],[data-mlink],[data-sheetkey],[data-takefile],[data-makeactive],[data-undoactive],[data-fileorig],[data-dcxlsx],[data-dctext],[data-dccopy],[data-dcprogress],[data-dcprogcopy],[data-sigxlsx],[data-rulestate],[data-pause],[data-fixed],[data-remind],[data-ask],[data-actdays],[data-actuser],[data-ldays],[data-linkcsp],[data-rmcsv],[data-rmpclear],[data-clink],[data-finalnotice],[data-handsent],[data-attfilter],[data-tview],[data-tbucket],[data-tstatus],[data-tclear],[data-txlsx],[data-tgroup],[data-tgo],[data-tset],[data-trun],[data-tlink],[data-lhosave],[data-sstatus],[data-skind],[data-skey],[data-sclear],[data-sxlsx],#closedrawer,#approveall,#refresh");
     if (!t) return;
     const ds = t.dataset;
     try {
@@ -1870,6 +1905,17 @@
         if (!confirm(`Approve ${ids.length} drafts?`)) return;
         const r = await post("/api/hub/messages/approve-bulk", {ids}); toast("Done: " + JSON.stringify(r.result)); return render();
       }
+      // Agent 3: SBI Upload
+      if (ds.sstatus) { state.sbi = {...(state.sbi || {})}; if (state.sbi.status === ds.sstatus) delete state.sbi.status; else state.sbi.status = ds.sstatus; return render(); }
+      if (ds.skind) { state.sbi = {...(state.sbi || {})}; if (state.sbi.kind === ds.skind) delete state.sbi.kind; else state.sbi.kind = ds.skind; return render(); }
+      if (ds.sclear) { state.sbi = {}; return render(); }
+      if (ds.sxlsx) {
+        const f = state.sbi || {};
+        const r = await fetch(`api/hub/sbi-upload.xlsx?${["status","kind","rm","dc","q"].filter((k) => f[k]).map((k) => `${k}=${encodeURIComponent(f[k])}`).join("&")}`, {credentials: "same-origin", headers: H});
+        if (!r.ok) return alert("Download failed: " + r.status);
+        const a = document.createElement("a"); a.href = URL.createObjectURL(await r.blob());
+        a.download = (r.headers.get("Content-Disposition") || "").split('"')[1] || "sbi_upload.xlsx"; a.click(); return;
+      }
       // Agent 2: Terminals and Bank reports
       if (ds.tview) { state.tview = ds.tview; return render(); }
       if (ds.tbucket !== undefined && t.matches("[data-tbucket]")) {
@@ -1960,6 +2006,7 @@
     if (e.key === "Escape") { closeDrawer(); closeCoach(); closeNav(); $("#gresults").classList.remove("open"); }
     if (e.key === "/" && !/input|textarea|select/i.test(document.activeElement.tagName)) { e.preventDefault(); $("#gsearch").focus(); }
     if (e.key === "Enter" && e.target.matches(".kpi[data-go]")) e.target.click();
+    if (e.key === "Enter" && e.target.id === "sq") { state.sbi = {...(state.sbi || {}), q: e.target.value.trim()}; if (!state.sbi.q) delete state.sbi.q; render(); }
     if (e.key === "Enter" && e.target.id === "tq") { state.term = {...(state.term || {}), q: e.target.value.trim()}; if (!state.term.q) delete state.term.q; render(); }
     if (e.key === "Enter" && e.target.matches(".kpi[data-tgo], .t-card[data-csp]")) e.target.click();
     if (e.key === "Enter" && e.target.id === "rmpq") { state.rmp = {...state.rmp, q: e.target.value.trim()}; if (!state.rmp.q) delete state.rmp.q; render(); }
@@ -1978,6 +2025,11 @@
     if (e.target.dataset.tkey) {
       state.term = {...(state.term || {}), [e.target.dataset.tkey]: e.target.value};
       if (!e.target.value) delete state.term[e.target.dataset.tkey];
+      render();
+    }
+    if (e.target.dataset.skey) {
+      state.sbi = {...(state.sbi || {}), [e.target.dataset.skey]: e.target.value};
+      if (!e.target.value) delete state.sbi[e.target.dataset.skey];
       render();
     }
     if (e.target.dataset.fkey) {
@@ -2070,7 +2122,7 @@
       state.summary = await api("/api/hub/summary");
       const s = state.summary;
       const me = s.me || {}, isAdmin = me.role === "ADMIN";
-      if (!views[state.view] || (!isAdmin && ["activity", "monitoring", "accuracy", "contacts", "ingestion", "bankreports"].includes(state.view))) state.view = "today";
+      if (!views[state.view] || (!isAdmin && ["activity", "monitoring", "accuracy", "contacts", "ingestion", "bankreports", "sbiupload"].includes(state.view))) state.view = "today";
       const drafts = s.drafts_pending.EMAIL + s.drafts_pending.WHATSAPP;
       $("#n-drafts").textContent = drafts || ""; $("#n-review").textContent = s.review_pending || "";
       $("#m-review").textContent = s.review_pending || "";

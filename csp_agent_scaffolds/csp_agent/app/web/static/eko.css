@@ -614,3 +614,15 @@ label input, label select { color: var(--ink); font-size: 13px; }
   .t-board { grid-auto-columns: 82%; }
   .t-buckets { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+/* Agent 3 · SBI Upload statuses (app/api/sbi_portal.py) */
+.t-st.s-sbi-ready { background: var(--mist); color: var(--ok-ink); }
+.t-st.s-sbi-uploaded { background: var(--primary-soft); color: var(--accent-ink); }
+.t-st.s-sbi-reupload { background: var(--saffron-soft); color: var(--warn-ink); }
+.t-st.s-sbi-waiting { background: var(--surface2); color: var(--muted); }
+.t-st.s-sbi-blocked { background: var(--danger-soft); color: var(--danger-ink); }
+.t-bucket.s-ready { border-top-color: var(--forest-light); }
+.t-bucket.s-uploaded { border-top-color: var(--primary); }
+.t-bucket.s-reupload { border-top-color: var(--saffron); }
+.t-bucket.s-waiting { border-top-color: var(--border); }
+.t-bucket.s-blocked { border-top-color: var(--danger); }

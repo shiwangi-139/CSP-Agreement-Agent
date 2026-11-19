@@ -689,6 +689,26 @@ class GoldenCase(Base):
     frozen_by = Column(String)
 
 
+class SbiUpload(Base):
+    """Agent 3 (app/sbi_upload.py): a CSP document uploaded to the SBI FI
+    portal by the person-run uploader. Written by sbi_upload/upload_document.py
+    on the workstation; read by the dashboard's SBI Upload page. No SBI
+    credentials are stored here, only what was uploaded and by whom."""
+    __tablename__ = "sbi_uploads"
+    id = Column(Integer, primary_key=True)
+    csp_id = Column(Integer, ForeignKey("csp.id"), index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), index=True)
+    document_type = Column(String, nullable=False)        # AGREEMENT / POLICE_VERIFICATION / IIBF_CERTIFICATE
+    sha256 = Column(String, index=True)                   # the file as on record when uploaded
+    issue_date = Column(Date)
+    expiry_date = Column(Date)
+    uploaded_by = Column(String)                          # the person who ran the upload (not an SBI password)
+    uploaded_at = Column(DateTime, default=func.now(), nullable=False, index=True)
+    status = Column(String, default="SUBMITTED", nullable=False)   # SUBMITTED / CONFIRMED / RE_UPLOAD_NEEDED
+    report_date = Column(Date)                            # when confirmed from an SBI report (later)
+    notes = Column(String)
+
+
 # ---------------------------------------------------------------------------
 # Agent 2 - Terminal Extension (app/terminals.py). A terminal's validity is
 # its own date, set by SBI's LHO; it is not the documents' validity.

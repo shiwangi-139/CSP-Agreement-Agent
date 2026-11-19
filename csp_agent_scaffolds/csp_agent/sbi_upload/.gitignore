@@ -1,0 +1,5 @@
+.env
+screenshots/
+logs/
+__pycache__/
+uploaded_documents.json
