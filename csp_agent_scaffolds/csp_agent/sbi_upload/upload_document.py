@@ -54,11 +54,14 @@ def _load_playwright() -> bool:
     return True
 
 # ------------------------------------------------------------------ settings
+# SBI settings may live in sbi_upload/.env OR in the agent's own .env; both are
+# read (sbi_upload/.env wins where both set the same value). Nothing is printed.
+AGENT_DIR = Path(os.getenv("AGENT_DIR", "/home/shiwangi/csp_agent_scaffolds/csp_agent"))
+load_dotenv(AGENT_DIR / ".env")                                # does not override values from sbi_upload/.env
 SBI_URL = os.getenv("SBI_URL", "https://fi.sbi.bank.in/admin/start.do")
 EP_USERNAME = os.getenv("EP_USERNAME", "")
 EP_PASSWORD = os.getenv("EP_PASSWORD", "")
 MAX_LOGIN_ATTEMPTS = int(os.getenv("MAX_LOGIN_ATTEMPTS", "3"))
-AGENT_DIR = Path(os.getenv("AGENT_DIR", "/home/shiwangi/csp_agent_scaffolds/csp_agent"))
 SIGNATORY_NAME = os.getenv("AGREEMENT_SIGNATORY", "Biswajit Chacko")
 DATE_FORMAT = os.getenv("SBI_DATE_FORMAT", "%d/%m/%Y")          # ADJUST to what the SBI form accepts
 MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "2"))         # ADJUST to SBI's file size limit
