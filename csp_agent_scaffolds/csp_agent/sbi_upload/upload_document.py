@@ -38,9 +38,20 @@ from pathlib import Path
 from typing import Optional
 
 from dotenv import load_dotenv
-from playwright.sync_api import Page, TimeoutError as PWTimeout, sync_playwright
+Page = PWTimeout = sync_playwright = None       # loaded lazily (browser only; --plan / dashboard need none)
 
 load_dotenv(Path(__file__).with_name(".env"))
+
+
+def _load_playwright() -> bool:
+    """Import Playwright only for an actual browser run; --plan needs none."""
+    global Page, PWTimeout, sync_playwright
+    try:
+        from playwright.sync_api import Page as _P, TimeoutError as _T, sync_playwright as _S
+    except ImportError:
+        return False
+    Page, PWTimeout, sync_playwright = _P, _T, _S
+    return True
 
 # ------------------------------------------------------------------ settings
 SBI_URL = os.getenv("SBI_URL", "https://fi.sbi.bank.in/admin/start.do")
@@ -270,7 +281,7 @@ def main() -> int:
     ap.add_argument("--csp", action="append", default=[], help="CSP code (repeat for several)")
     ap.add_argument("--pending", action="store_true", help="every active CSP with a valid document not uploaded yet")
     ap.add_argument("--docs", default="agreement,pvr,iibf", help="which documents: agreement,pvr,iibf")
-    ap.add_argument("--plan", action="store_true", help="only list what would be uploaded; no browser")
+    ap.add_argument("--plan", action="store_true", help="only list what would be uploaded; no browser, no Playwright needed")
     ap.add_argument("--submit", action="store_true", help="really submit (default: fill and screenshot only)")
     ap.add_argument("--limit", type=int, default=20, help="at most this many CSPs per run")
     args = ap.parse_args()
@@ -309,6 +320,11 @@ def main() -> int:
 
     page = None
     failed = 0
+    if not _load_playwright():
+        log.error("Playwright is not installed, so the browser run can't start. Install it on the workstation: "
+                  "pip install playwright==1.65.2 && python -m playwright install chromium. "
+                  "(--plan lists the work and needs no browser.)")
+        return 2
     try:
         with sync_playwright() as pw:
             browser = pw.chromium.launch(headless=HEADLESS)
