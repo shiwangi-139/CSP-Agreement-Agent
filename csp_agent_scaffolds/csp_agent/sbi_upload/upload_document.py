@@ -74,11 +74,17 @@ log = logging.getLogger("sbi_upload")
 
 
 def setup_logging() -> None:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    """Always log to the screen; add a log file too when the folder is
+    writable (set LOG_DIR to a folder you own if you run it as another user)."""
     fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
     log.setLevel(logging.INFO)
-    for h in (logging.StreamHandler(sys.stdout),
-              logging.FileHandler(LOG_DIR / f"sbi_upload_{date.today():%Y-%m-%d}.log", encoding="utf-8")):
+    handlers = [logging.StreamHandler(sys.stdout)]
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(LOG_DIR / f"sbi_upload_{date.today():%Y-%m-%d}.log", encoding="utf-8"))
+    except OSError as e:
+        print(f"[warn] not writing a log file ({LOG_DIR}: {e}); set LOG_DIR to a writable folder to keep one.")
+    for h in handlers:
         h.setFormatter(fmt)
         log.addHandler(h)
 
@@ -87,7 +93,11 @@ def screenshot(page: Optional[Page], label: str) -> Optional[Path]:
     """A timestamped screenshot, for a failure or for a dry-run form."""
     if page is None or page.is_closed():
         return None
-    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        log.warning("Cannot write screenshots to %s (%s); set SCREENSHOT_DIR.", SCREENSHOT_DIR, e)
+        return None
     path = SCREENSHOT_DIR / f"{datetime.now():%Y%m%d_%H%M%S}_{re.sub(r'[^A-Za-z0-9_-]+', '_', label)}.png"
     try:
         page.screenshot(path=str(path), full_page=True)
@@ -117,10 +127,12 @@ def solve_image(page: Page, attempt: int) -> str:
     read if the browser window is hidden."""
     img = page.locator("img#captchaImage")                      # ADJUST SELECTOR: the captcha image
     img.wait_for(state="visible", timeout=TIMEOUT_MS)
-    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    path = SCREENSHOT_DIR / f"captcha_attempt{attempt}.png"
-    img.screenshot(path=str(path))
-    log.info("Captcha shown in the browser (also saved to %s)", path)
+    try:
+        SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        img.screenshot(path=str(SCREENSHOT_DIR / f"captcha_attempt{attempt}.png"))
+        log.info("Captcha shown in the browser (also saved under %s)", SCREENSHOT_DIR)
+    except OSError:
+        log.info("Captcha shown in the browser")
     return input("Type the captcha text and press Enter: ").strip()
 
 
