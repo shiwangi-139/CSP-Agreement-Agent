@@ -169,11 +169,11 @@ def solve_image(page: Page, attempt: int) -> str:
 
 
 def _fill_credentials(page: Page) -> None:
-    user = page.locator("input[name='userName']")               # ADJUST SELECTOR: username field
-    pwd = page.locator("input[type='password']")                # ADJUST SELECTOR: password field
-    if user.input_value() != EP_USERNAME:
-        user.fill(EP_USERNAME)
-    pwd.fill(EP_PASSWORD)                                       # always: forms often clear it after a failure
+    user = page.locator("#specialChar, input[name='userName'], input[id*='user' i]").first
+    pwd = page.locator("#password, input[type='password']").first
+    user.wait_for(state="visible", timeout=15000)
+    user.fill(EP_USERNAME)
+    pwd.fill(EP_PASSWORD)
 
 
 def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
@@ -231,118 +231,230 @@ def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
     return None
 
 
-def _otp_if_asked(page: Page) -> None:
-    """SBI may ask for an OTP after the captcha (OTPVerificationExecute.do)."""
-    otp_box = page.locator("input[name='otp']")                 # ADJUST SELECTOR: OTP field
+def open_login_page(page: Page) -> Page:
+    """Handle popup window if Admin.jsp triggers one, else return page."""
     try:
-        otp_box.wait_for(state="visible", timeout=5000)
-    except PWTimeout:
+        with page.expect_popup(timeout=6000) as p_info:
+            page.goto(SBI_URL, wait_until="domcontentloaded")
+        p = p_info.value
+        p.wait_for_load_state("domcontentloaded")
+        return p
+    except Exception:
+        if not page.url.endswith("start.do") and "Admin.jsp" in page.url:
+            try:
+                page.goto("https://fi.sbi.bank.in/admin/start.do", wait_until="domcontentloaded")
+            except Exception:
+                pass
+        return page
+
+
+def _otp_if_asked(page: Page) -> None:
+    """SBI may ask for an OTP after the captcha."""
+    otp_box = page.locator("input[name*='otp' i], [aria-label*='OTP' i], input[placeholder*='OTP' i]").first
+    if not otp_box.is_visible(timeout=5000):
+        try:
+            otp_box = page.get_by_role("textbox", name=re.compile("Please enter the OTP|OTP", re.I)).first
+        except Exception:
+            pass
+    if not otp_box.is_visible():
         return
-    log.info("OTP page shown")
-    otp = _fetch_relayed_otp(timeout_seconds=45.0)
+    log.info("OTP prompt shown on screen")
+    otp = _fetch_relayed_otp(timeout_seconds=60.0)
     if not otp:
         otp = input("Type the OTP sent by SBI and press Enter: ").strip()
     otp_box.fill(otp)
-    page.get_by_role("button", name=re.compile("submit|verify", re.I)).click()   # ADJUST SELECTOR
+    submit_btn = page.locator("button:has-text('Submit'), input[value*='Submit' i], button:has-text('Verify')").first
+    submit_btn.click()
 
 
 def _logged_in(page: Page) -> bool:
     try:
-        page.get_by_role("button", name="User Services").wait_for(timeout=10000)   # ADJUST SELECTOR: dashboard marker
+        marker = page.locator("a:has-text('Capture PVR'), text='User Services', a:has-text('Sign Out'), iframe[name='mainframe']").first
+        marker.wait_for(timeout=10000)
         return True
     except PWTimeout:
         return False
 
 
-def login(page: Page) -> bool:
-    """Up to MAX_LOGIN_ATTEMPTS tries; a new captcha image each time."""
+def login(page: Page) -> tuple[bool, Page]:
+    """Up to MAX_LOGIN_ATTEMPTS tries; returns (success, active_page)."""
     if not EP_USERNAME or not EP_PASSWORD:
         log.error("EP_USERNAME / EP_PASSWORD are not set in .env")
-        return False
-    page.goto(SBI_URL, wait_until="domcontentloaded")
+        return False, page
+
+    active_page = open_login_page(page)
+
     for attempt in range(1, MAX_LOGIN_ATTEMPTS + 1):
         log.info("Login attempt %d of %d", attempt, MAX_LOGIN_ATTEMPTS)
         try:
-            _fill_credentials(page)
-            page.locator("input[name='captcha']").fill(solve_image(page, attempt))   # ADJUST SELECTOR: captcha input
-            page.get_by_role("button", name=re.compile("sign in", re.I)).click()     # ADJUST SELECTOR
-            _otp_if_asked(page)
-            if _logged_in(page):
-                log.info("Logged in")
-                return True
-            err = page.locator(".errorMessage, .error")                              # ADJUST SELECTOR: login error text
+            _fill_credentials(active_page)
+            captcha_val = solve_image(active_page, attempt)
+            captcha_input = active_page.locator("#txtInput, input[name='captcha']").first
+            captcha_input.fill(captcha_val)
+
+            sign_in_btn = active_page.locator("button:has-text('Login'), input[value*='Login' i], button:has-text('Sign In')").first
+            sign_in_btn.click()
+
+            _otp_if_asked(active_page)
+            if _logged_in(active_page):
+                log.info("Logged in successfully!")
+                return True, active_page
+
+            err = active_page.locator(".errorMessage, .error, #errorMsg, [class*='error' i]")
             msg = err.first.inner_text().strip() if err.count() else "dashboard not shown"
             log.warning("Login attempt %d failed: %s", attempt, msg)
         except PWTimeout as e:
             log.warning("Login attempt %d timed out: %s", attempt, e)
+
         if attempt < MAX_LOGIN_ATTEMPTS:
             log.info("Refreshing the captcha image")
-            page.locator("img[alt*='Refresh' i], a:has-text('Refresh')").first.click()  # ADJUST SELECTOR
-    log.error("Login failed after %d attempts; stopping (the account may lock after more)", MAX_LOGIN_ATTEMPTS)
-    return False
+            active_page.locator("img[alt*='Refresh' i], a:has-text('Refresh')").first.click()
+
+    log.error("Login failed after %d attempts", MAX_LOGIN_ATTEMPTS)
+    return False, active_page
 
 
 def sign_out(page: Page) -> None:
     try:
-        page.get_by_role("link", name=re.compile("sign out", re.I)).click(timeout=TIMEOUT_MS)   # ADJUST SELECTOR
+        page.once("dialog", lambda dialog: dialog.dismiss())
+        page.get_by_role("link", name=re.compile("Sign Out|Logout", re.I)).click(timeout=5000)
         log.info("Signed out")
     except Exception as e:
         log.warning("Sign out failed: %s", e)
 
 
-# ------------------------------------------------------- CSP document form
 def open_csp(page: Page, code: str) -> Page:
-    """Steps 8-16: up to the CSP's popup. Returns the popup page."""
-    page.get_by_role("button", name="User Services").click()                                     # ADJUST SELECTOR
-    page.get_by_text("Capture PVR DRA IIBF AMFI and Agreement Details of CSP", exact=True).first.click()  # ADJUST SELECTOR
-    page.locator("select[name='requestType']").select_option(                                    # ADJUST SELECTOR
-        label="Capture PVR DRA IIBF AMFI and Agreement Details of CSP")
-    page.get_by_role("button", name="Submit").click()                                            # ADJUST SELECTOR
-    page.get_by_label("Query CSP Code").check()                                                  # ADJUST SELECTOR
-    page.locator("input[name='cspCode']").fill(code)                                             # ADJUST SELECTOR
-    page.get_by_role("button", name="Query").click()                                             # ADJUST SELECTOR
-    row = page.locator("table tr", has_text=code)                                                # ADJUST SELECTOR: result row
-    row.first.wait_for(timeout=TIMEOUT_MS)
-    row.first.locator("input[type='radio'], input[type='checkbox']").first.check()               # ADJUST SELECTOR: Select column
+    """Steps 8-16: Navigate to Capture PVR DRA IIBF AMFI and open CSP popup."""
+    # 1. Click User Services
+    try:
+        page.locator("a").nth(1).click()
+    except Exception:
+        page.get_by_role("button", name="User Services").click()
+
+    # 2. Submenu item
+    page.locator("a").filter(has_text=re.compile("Capture PVR DRA IIBF AMFI and", re.I)).first.click()
+
+    # 3. Main content inside iframe 'mainframe'
+    frame = page.locator("iframe[name='mainframe']").content_frame
+    frame.get_by_role("combobox").select_option("01")
+    frame.get_by_role("button", name="Submit").click()
+
+    # 4. Check Query CSP Code
+    frame.get_by_role("radio", name="Query CSP Code").check()
+
+    # 5. Fill CSP Code
+    csp_box = frame.locator("#stReferenceNo")
+    if not csp_box.is_visible():
+        csp_box = frame.get_by_role("textbox", name=re.compile("Enter CSP code", re.I)).first
+    csp_box.fill(code)
+
+    # 6. Click Query
+    frame.get_by_role("button", name=re.compile(r"^\s*Query", re.I)).click()
+
+    # 7. Select radio in the search results
+    frame.get_by_role("radio").first.check()
+
+    # 8. Open CSP details popup
     with page.expect_popup(timeout=TIMEOUT_MS) as pop:
-        row.first.get_by_role("link", name=code).click()                                         # ADJUST SELECTOR: CSP Code link
+        frame.get_by_role("link", name=code).click()
     popup = pop.value
     popup.wait_for_load_state("domcontentloaded")
     log.info("CSP %s: details popup opened", code)
     return popup
 
 
-def _yes(p: Page, question: str) -> None:
-    p.locator(f"xpath=//*[contains(normalize-space(.), '{question}')]/following::input[@type='radio'][@value='Y' or @value='Yes'][1]").check()  # ADJUST SELECTOR
+def _set_date_field(p: Page, field_type: str, dt: date) -> None:
+    """Set date field via DOM evaluation and interactive datepicker."""
+    date_str = dt.strftime("%d/%m/%Y")
+    month_name = dt.strftime("%B")
+    day_str = str(dt.day)
+    year_str = str(dt.year)
 
+    btn = None
+    if field_type == "pvr":
+        btn = p.get_by_role("button", name="Pick a Date").first
+    elif field_type == "agreement_start":
+        btn = p.get_by_role("row", name=re.compile("Agreement start date", re.I)).get_by_role("button").first
+    elif field_type == "agreement_end":
+        btn = p.get_by_role("row", name=re.compile("Agreement end date", re.I)).get_by_role("button").first
+    elif field_type == "iibf":
+        btn = p.get_by_role("row", name=re.compile("Date of Issuance", re.I)).get_by_role("button").first
 
-def _field(p: Page, label: str):
-    return p.locator(f"xpath=//*[contains(normalize-space(.), '{label}')]/following::input[not(@type='hidden')][1]")  # ADJUST SELECTOR
+    if not btn or not btn.is_visible():
+        btn = p.locator("button:has-text('Pick a Date'), img[alt*='calendar' i]").first
+
+    if btn and btn.is_visible():
+        try:
+            row_input = btn.locator("xpath=./preceding::input[1]")
+            if row_input.is_visible():
+                row_input.evaluate(f"el => {{ el.value = '{date_str}'; el.removeAttribute('readonly'); el.dispatchEvent(new Event('change')); }}")
+        except Exception:
+            pass
+
+        try:
+            btn.click()
+            p.wait_for_timeout(300)
+            span_year = p.locator("#spanYear")
+            if span_year.is_visible():
+                span_year.click()
+                year_cell = p.get_by_role("cell", name=year_str, exact=True)
+                if not year_cell.is_visible():
+                    for _ in range(5):
+                        prev_cell = p.get_by_role("cell", name="-")
+                        if prev_cell.is_visible():
+                            prev_cell.click()
+                        if p.get_by_role("cell", name=year_str, exact=True).is_visible():
+                            break
+                if p.get_by_role("cell", name=year_str, exact=True).is_visible():
+                    p.get_by_role("cell", name=year_str, exact=True).click()
+
+            span_month = p.locator("#spanMonth")
+            if span_month.is_visible():
+                span_month.click()
+            elif p.locator("#changeMonth").is_visible():
+                p.locator("#changeMonth").click()
+
+            month_cell = p.get_by_role("cell", name=month_name)
+            if month_cell.is_visible():
+                month_cell.click()
+
+            day_link = p.get_by_role("link", name=day_str, exact=True)
+            if day_link.is_visible():
+                day_link.click()
+        except Exception as e:
+            log.warning("Datepicker interaction for %s: %s", field_type, e)
 
 
 def fill_pvr(p: Page, csp: CspUpload, d: DocToUpload) -> None:
-    p.get_by_role("button", name="Police Verification Details").click()                          # ADJUST SELECTOR
-    _yes(p, "Capture Police Verification Details")
-    _field(p, "Name of PVR issuing Authority").fill(csp.state)
-    _field(p, "Date of issuance of PVR").fill(d.issue_date.strftime(DATE_FORMAT))
-    p.locator("input[type='file']").first.set_input_files(str(d.file))                          # ADJUST SELECTOR
+    p.get_by_role("link", name="Police Verification Details").click()
+    p.locator("select[name='stPVRFlag']").select_option("Y")
+    auth_input = p.get_by_role("textbox", name=re.compile("Enter the Name of PVR Issuing", re.I)).first
+    authority = csp.state or "Police Department"
+    if "police" not in authority.lower():
+        authority = f"{authority} Police"
+    auth_input.fill(authority)
+    _set_date_field(p, "pvr", d.issue_date)
+    p.locator("input[type='file']").first.set_input_files(str(d.file))
 
 
 def fill_agreement(p: Page, csp: CspUpload, d: DocToUpload) -> None:
-    p.get_by_role("button", name="CSP Agreement Details").click()                                # ADJUST SELECTOR
-    _yes(p, "Capture CSP Agreement Details")
-    _field(p, "Signatory name").fill(SIGNATORY_NAME)
-    _field(p, "Agreement start date").fill(d.issue_date.strftime(DATE_FORMAT))
-    _field(p, "Agreement end date").fill(d.expiry_date.strftime(DATE_FORMAT))
-    p.locator("input[type='file']").first.set_input_files(str(d.file))                          # ADJUST SELECTOR
+    p.get_by_role("link", name="CSP Agreement Details").click()
+    p.locator("select[name='stCSPAgreementFlag']").select_option("Y")
+    sig_input = p.get_by_role("textbox", name=re.compile("Enter Name of Person who", re.I)).first
+    sig_input.fill(SIGNATORY_NAME)
+    _set_date_field(p, "agreement_start", d.issue_date)
+    if d.expiry_date:
+        _set_date_field(p, "agreement_end", d.expiry_date)
+    p.locator("input[type='file']").first.set_input_files(str(d.file))
 
 
 def fill_iibf(p: Page, csp: CspUpload, d: DocToUpload) -> None:
-    p.get_by_role("button", name="IIBF Certificate Details").click()                             # ADJUST SELECTOR
-    _yes(p, "Capture IIBF Certificate Details")
-    _field(p, "Membership/Registration Number").fill(d.iibf_reg_number)
-    _field(p, "Date of Issuance").fill(d.issue_date.strftime(DATE_FORMAT))
-    p.locator("input[type='file']").first.set_input_files(str(d.file))                          # ADJUST SELECTOR
+    p.get_by_role("link", name="IIBF Certificate Details").click()
+    p.locator("select[name='stIIBFFlag']").select_option("Y")
+    reg_input = p.get_by_role("textbox", name=re.compile("Enter the IIBF Membership", re.I)).first
+    reg_input.fill(d.iibf_reg_number or "")
+    _set_date_field(p, "iibf", d.issue_date)
+    p.locator("input[type='file']").first.set_input_files(str(d.file))
 
 
 FILLERS = {"pvr": fill_pvr, "agreement": fill_agreement, "iibf": fill_iibf}
@@ -361,8 +473,14 @@ def upload_csp(page: Page, csp, submit: bool, SessionLocal, sbi, by: str) -> int
                 screenshot(popup, f"dryrun_{csp.code}_{d.kind}")
                 log.info("CSP %s: %s filled, NOT submitted (dry run)", csp.code, d.kind)
                 continue
-            popup.get_by_role("button", name="Submit").click()                                   # ADJUST SELECTOR
-            ok = popup.locator("text=/success|submitted|saved/i")                                # ADJUST SELECTOR: confirmation text
+
+            # Check confirmation checkbox
+            chk = popup.locator("#check")
+            if chk.is_visible():
+                chk.check()
+
+            popup.get_by_role("button", name="Submit").click()
+            ok = popup.locator("text=/success|submitted|saved/i")
             ok.first.wait_for(timeout=TIMEOUT_MS)
             db = SessionLocal()
             try:
@@ -433,21 +551,22 @@ def main() -> int:
             context = browser.new_context(accept_downloads=True)
             context.set_default_timeout(TIMEOUT_MS)
             page = context.new_page()
-            if not login(page):
-                screenshot(page, "login_failed")
+            ok, active_page = login(page)
+            if not ok:
+                screenshot(active_page, "login_failed")
                 return 1
             try:
                 for csp in todo:
                     try:
-                        n = upload_csp(page, csp, args.submit, SessionLocal, sbi, EP_USERNAME or "sbi_upload")
+                        n = upload_csp(active_page, csp, args.submit, SessionLocal, sbi, EP_USERNAME or "sbi_upload")
                         log.info("CSP %s: done (%d submitted)", csp.code, n)
                     except Exception:
                         failed += 1
                         log.exception("CSP %s: failed; moving to the next CSP", csp.code)
-                        screenshot(page, f"failed_{csp.code}")
-                        page.goto(SBI_URL.rsplit("/", 1)[0] + "/", wait_until="domcontentloaded")   # ADJUST: dashboard home
+                        screenshot(active_page, f"failed_{csp.code}")
+                        active_page.goto(SBI_URL.rsplit("/", 1)[0] + "/", wait_until="domcontentloaded")
             finally:
-                sign_out(page)
+                sign_out(active_page)
                 browser.close()
     except Exception:
         log.exception("Unexpected failure")

@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """
 test_sbi_login.py
-Standalone test script for verifying:
-1. Browser launch on laptop (headed/visible window)
-2. Auto-filling credentials
-3. Captcha extraction using Tesseract OCR
-4. Real-time OTP retrieval from the mobile relay (via https://indev.eko.in/csp-agreement-agent/sbi-otp/latest)
-5. Successful login to SBI FI portal and dashboard visibility
+Real-time test script using the EXACT recorded SBI FI portal flow:
+1. Launches headed Chromium on your laptop display
+2. Opens https://fi.sbi.bank.in/admin/Admin.jsp (or start.do)
+3. Fills credentials (#specialChar, #password)
+4. Solves captcha with Tesseract OCR -> fills #txtInput
+5. Clicks Login
+6. Fetches real-time OTP from phone relay app (https://indev.eko.in/csp-agreement-agent/sbi-otp/latest)
+7. Fills OTP -> submits
+8. Navigates to User Services -> Capture PVR DRA IIBF AMFI and Agreement Details of CSP
+9. Queries CSP in mainframe iframe and opens CSP details popup!
 
 Usage:
     python3 sbi_upload/test_sbi_login.py
+    python3 sbi_upload/test_sbi_login.py --csp 1A850077
     python3 sbi_upload/test_sbi_login.py --auto-captcha
-    python3 sbi_upload/test_sbi_login.py --username <USER> --password <PASS>
 """
 
 import argparse
@@ -36,10 +40,11 @@ HERE = Path(__file__).resolve().parent
 load_dotenv(HERE / ".env")
 load_dotenv(HERE.parent / ".env")
 
-DEFAULT_URL = os.getenv("SBI_URL", "https://fi.sbi.bank.in/unifyapp/login/")
-DEFAULT_USER = os.getenv("EP_USERNAME", "")
+DEFAULT_URL = os.getenv("SBI_URL", "https://fi.sbi.bank.in/admin/Admin.jsp")
+DEFAULT_USER = os.getenv("EP_USERNAME", "1B714")
 DEFAULT_PASS = os.getenv("EP_PASSWORD", "")
 DEFAULT_RELAY_URL = os.getenv("OTP_RELAY_URL", "https://indev.eko.in/csp-agreement-agent/sbi-otp/latest")
+DEFAULT_CSP = os.getenv("TEST_CSP", "1A850077")
 SCREENSHOT_DIR = HERE / "screenshots"
 
 
@@ -62,7 +67,7 @@ def solve_captcha_tesseract(page, img_locator, auto_accept: bool = False) -> str
         ocr_text = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
         log.info("Tesseract OCR result: '%s'", ocr_text)
     except Exception as e:
-        log.warning("Tesseract OCR failed: %s", e)
+        log.warning("Tesseract OCR error: %s", e)
 
     if auto_accept and ocr_text:
         log.info("Auto-accepting Tesseract result: %s", ocr_text)
@@ -86,7 +91,6 @@ def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int
                     data = json.loads(resp.read().decode("utf-8"))
                     ts = data.get("timestamp", 0)
                     otp = str(data.get("otp", "")).strip()
-                    # Check if OTP is fresh (received after or up to 30s before waiting started)
                     if otp and len(otp) == 6 and (ts >= start_time - 30.0):
                         log.info("Real-time OTP received! OTP=%s, sender=%s, age=%.1fs",
                                  otp, data.get("from"), time.time() - ts)
@@ -99,7 +103,7 @@ def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int
     return input("Relay timeout: Please type the OTP manually from your phone: ").strip()
 
 
-def run_login_test(url: str, username: str, password: str, relay_url: str, auto_captcha: bool, headless: bool):
+def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_code: str, auto_captcha: bool, headless: bool):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -107,96 +111,165 @@ def run_login_test(url: str, username: str, password: str, relay_url: str, auto_
         return False
 
     if not username or not password:
-        log.error("Username or Password not provided! Set EP_USERNAME and EP_PASSWORD in sbi_upload/.env or pass --username and --password")
+        log.error("Username or Password not set! Please check sbi_upload/.env or pass --username and --password")
         return False
 
-    log.info("Starting headed browser on laptop screen...")
-    log.info("SBI URL: %s", url)
+    log.info("Starting headed Chromium on your laptop display...")
+    log.info("URL: %s", url)
     log.info("Username: %s", username)
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=headless, slow_mo=300)
-        context = browser.new_context(viewport={"width": 1280, "height": 800})
+        browser = pw.chromium.launch(headless=headless, slow_mo=200)
+        context = browser.new_context(viewport={"width": 1280, "height": 850})
         page = context.new_page()
 
-        log.info("Opening SBI FI Portal...")
-        page.goto(url, wait_until="domcontentloaded")
-        page.wait_for_timeout(1000)
+        # Step 1: Open URL (handling popup if Admin.jsp triggers one)
+        log.info("Navigating to SBI FI Portal...")
+        page1 = page
+        try:
+            with page.expect_popup(timeout=6000) as p_info:
+                page.goto(url, wait_until="domcontentloaded")
+            page1 = p_info.value
+            page1.wait_for_load_state("domcontentloaded")
+            log.info("Popup login window opened.")
+        except Exception:
+            if not page.url.endswith("start.do") and "Admin.jsp" in page.url:
+                try:
+                    page.goto("https://fi.sbi.bank.in/admin/start.do", wait_until="domcontentloaded")
+                except Exception:
+                    pass
 
-        # 1. Fill credentials
-        user_input = page.locator("input[name='userName'], input[id*='user' i], input[type='text']").first
-        pass_input = page.locator("input[name='password'], input[type='password']").first
+        # Step 2: Fill Username & Password
+        log.info("Filling credentials...")
+        user_field = page1.locator("#specialChar, input[name='userName']").first
+        user_field.wait_for(state="visible", timeout=15000)
+        user_field.fill(username)
 
-        user_input.fill(username)
-        pass_input.fill(password)
-        log.info("Credentials filled.")
+        pass_field = page1.locator("#password, input[type='password']").first
+        pass_field.fill(password)
 
-        # 2. Captcha
-        captcha_img = page.locator("img#captchaImage, img[alt*='captcha' i], img[src*='captcha' i]").first
-        if captcha_img.is_visible(timeout=5000):
-            captcha_text = solve_captcha_tesseract(page, captcha_img, auto_accept=auto_captcha)
-            captcha_input = page.locator("input[name='captcha'], input[id*='captcha' i]").first
-            captcha_input.fill(captcha_text)
-            log.info("Captcha filled with: %s", captcha_text)
+        # Step 3: Solve Captcha
+        captcha_img = page1.locator("img#captchaImage, img[src*='captcha' i], img[id*='captcha' i]").first
+        if not captcha_img.is_visible():
+            captcha_img = page1.locator("img").first
 
-        # 3. Click Submit
-        sign_in_btn = page.locator("button:has-text('Sign In'), button:has-text('Login'), input[type='submit']").first
+        captcha_val = solve_captcha_tesseract(page1, captcha_img, auto_accept=auto_captcha)
+        captcha_input = page1.locator("#txtInput, input[name='captcha']").first
+        captcha_input.fill(captcha_val)
+        log.info("Captcha filled.")
+
+        # Step 4: Click Login
         start_wait_otp = time.time()
-        sign_in_btn.click()
-        log.info("Sign In clicked. Waiting for next page...")
+        login_btn = page1.locator("button:has-text('Login'), input[value*='Login' i], button:has-text('Sign In')").first
+        login_btn.click()
+        log.info("Login clicked. Checking for OTP prompt...")
 
-        page.wait_for_timeout(2000)
+        page1.wait_for_timeout(2000)
 
-        # 4. Check for OTP prompt
-        otp_input = page.locator("input[name='otp'], input[id*='otp' i]").first
-        if otp_input.is_visible(timeout=6000):
-            log.info("OTP field detected on screen!")
+        # Step 5: OTP Check
+        otp_box = page1.locator("input[name*='otp' i], [aria-label*='OTP' i], input[placeholder*='OTP' i]").first
+        if not otp_box.is_visible(timeout=5000):
+            try:
+                otp_box = page1.get_by_role("textbox", name=re.compile("Please enter the OTP|OTP", re.I)).first
+            except Exception:
+                pass
+
+        if otp_box.is_visible():
+            log.info("OTP prompt detected on screen!")
             otp_val = wait_for_relayed_otp(start_wait_otp, relay_url)
-            log.info("Entering OTP: %s", otp_val)
-            otp_input.fill(otp_val)
+            log.info("Filling OTP: %s", otp_val)
+            otp_box.fill(otp_val)
 
-            verify_btn = page.locator("button:has-text('Verify'), button:has-text('Submit'), input[value*='Verify' i]").first
-            verify_btn.click()
+            submit_btn = page1.get_by_role("button", name="Submit").first
+            submit_btn.click()
             log.info("OTP submitted.")
 
-        page.wait_for_timeout(3000)
+        page1.wait_for_timeout(3000)
 
-        # 5. Check if dashboard loaded
-        user_services = page.locator("text='User Services'")
-        if user_services.is_visible(timeout=10000):
-            log.info("SUCCESS! Logged into SBI FI Portal! Dashboard is open and visible on your laptop screen.")
+        # Step 6: Navigate to User Services
+        log.info("Navigating to User Services...")
+        try:
+            page1.locator("a").nth(1).click()
+        except Exception:
+            page1.get_by_role("button", name="User Services").click()
+
+        page1.locator("a").filter(has_text=re.compile("Capture PVR DRA IIBF AMFI and", re.I)).first.click()
+        log.info("Opened Capture PVR DRA IIBF AMFI and Agreement Details form.")
+
+        page1.wait_for_timeout(2000)
+
+        # Step 7: Mainframe iframe interaction
+        frame = page1.locator("iframe[name='mainframe']").content_frame
+        frame.get_by_role("combobox").select_option("01")
+        frame.get_by_role("button", name="Submit").click()
+
+        page1.wait_for_timeout(1000)
+
+        frame.get_by_role("radio", name="Query CSP Code").check()
+        csp_box = frame.locator("#stReferenceNo")
+        if not csp_box.is_visible():
+            csp_box = frame.get_by_role("textbox", name=re.compile("Enter CSP code", re.I)).first
+        csp_box.fill(csp_code)
+
+        log.info("Querying CSP Code: %s...", csp_code)
+        frame.get_by_role("button", name=re.compile(r"^\s*Query", re.I)).click()
+
+        page1.wait_for_timeout(2000)
+
+        # Step 8: Select result row and open details popup
+        radio = frame.get_by_role("radio").first
+        if radio.is_visible(timeout=8000):
+            radio.check()
+            log.info("CSP row found! Opening details popup...")
+            with page1.expect_popup(timeout=10000) as p2_info:
+                frame.get_by_role("link", name=csp_code).click()
+            page2 = p2_info.value
+            page2.wait_for_load_state("domcontentloaded")
+            log.info("SUCCESS: CSP %s details popup opened successfully!", csp_code)
+
             SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-            success_shot = SCREENSHOT_DIR / f"dashboard_success_{int(time.time())}.png"
-            page.screenshot(path=str(success_shot))
-            log.info("Dashboard screenshot saved: %s", success_shot)
-            log.info("Keeping browser open for 15 seconds so you can see it...")
-            page.wait_for_timeout(15000)
-            return True
+            shot_path = SCREENSHOT_DIR / f"csp_details_{csp_code}_{int(time.time())}.png"
+            page2.screenshot(path=str(shot_path))
+            log.info("Screenshot saved: %s", shot_path)
+
+            log.info("Keeping browser open for 15 seconds so you can see the active forms...")
+            page1.wait_for_timeout(15000)
+
+            page2.close()
         else:
-            log.warning("User Services not detected. Current URL: %s", page.url)
-            err_shot = SCREENSHOT_DIR / f"login_attempt_{int(time.time())}.png"
-            page.screenshot(path=str(err_shot))
-            log.info("Screenshot saved: %s", err_shot)
-            return False
+            log.warning("No search results returned for CSP %s", csp_code)
+            page1.wait_for_timeout(10000)
+
+        # Sign out
+        try:
+            page1.once("dialog", lambda dialog: dialog.dismiss())
+            page1.get_by_role("link", name="Sign Out").click()
+            log.info("Signed out.")
+        except Exception:
+            pass
+
+        return True
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Test SBI FI Portal login with Tesseract and Mobile OTP Relay")
+    parser = argparse.ArgumentParser(description="Real-time SBI FI Portal Login & Flow Tester")
     parser.add_argument("--url", default=DEFAULT_URL, help="SBI Login URL")
     parser.add_argument("--username", default=DEFAULT_USER, help="SBI Username")
     parser.add_argument("--password", default=DEFAULT_PASS, help="SBI Password")
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL, help="OTP Relay URL")
-    parser.add_argument("--auto-captcha", action="store_true", help="Auto-fill Tesseract captcha without prompting")
-    parser.add_argument("--headless", action="store_true", help="Run headless instead of visible window")
+    parser.add_argument("--csp", default=DEFAULT_CSP, help="CSP Code to query (default: 1A850077)")
+    parser.add_argument("--auto-captcha", action="store_true", help="Auto-fill Tesseract captcha without prompt")
+    parser.add_argument("--headless", action="store_true", help="Run in headless mode")
 
     args = parser.parse_args()
 
-    success = run_login_test(
+    ok = run_login_flow(
         url=args.url,
         username=args.username,
         password=args.password,
         relay_url=args.relay_url,
+        csp_code=args.csp,
         auto_captcha=args.auto_captcha,
         headless=args.headless,
     )
-    sys.exit(0 if success else 1)
+    sys.exit(0 if ok else 1)
