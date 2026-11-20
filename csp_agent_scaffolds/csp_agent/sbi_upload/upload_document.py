@@ -39,7 +39,20 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    def load_dotenv(path):
+        p = Path(path)
+        if not p.exists():
+            return
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k, v = k.strip(), v.strip().strip('"').strip("'")
+            os.environ.setdefault(k, v)
 Page = PWTimeout = sync_playwright = None       # loaded lazily (browser only; --plan / dashboard need none)
 
 load_dotenv(Path(__file__).with_name(".env"))
