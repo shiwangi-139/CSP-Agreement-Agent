@@ -54,10 +54,12 @@ load_dotenv(HERE / ".env")
 load_dotenv(HERE.parent / ".env")
 
 DEFAULT_URL = os.getenv("SBI_URL", "https://fi.sbi.bank.in/admin/Admin.jsp")
-DEFAULT_USER = os.getenv("EP_USERNAME", "1B714")
+DEFAULT_USER = os.getenv("EP_USERNAME", "")
 DEFAULT_PASS = os.getenv("EP_PASSWORD", "")
 DEFAULT_RELAY_URL = os.getenv("OTP_RELAY_URL", "https://indev.eko.in/csp-agreement-agent/sbi-otp/latest")
 DEFAULT_CSP = os.getenv("TEST_CSP", "1A850077")
+HAS_DISPLAY = bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+DEFAULT_HEADLESS = not HAS_DISPLAY or os.getenv("HEADLESS", "false").lower() == "true"
 SCREENSHOT_DIR = HERE / "screenshots"
 
 
@@ -92,11 +94,39 @@ def solve_captcha_tesseract(page, img_locator, auto_accept: bool = False) -> str
 
 
 def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int = 60) -> str:
-    """Poll the relay server for the OTP received on the phone in real time."""
+    """Poll for the OTP received on the phone in real time (local files or relay URL)."""
     deadline = start_time + timeout_seconds
-    log.info("Waiting up to %ds for real-time OTP relayed from phone via %s...", timeout_seconds, relay_url)
+    log.info("Waiting up to %ds for real-time OTP relayed from phone...", timeout_seconds)
+
+    otp_json = Path(os.getenv("OTP_JSON_FILE", "/tmp/sbi_latest_otp.json"))
+    otp_txt = Path(os.getenv("OTP_TEXT_FILE", "/tmp/sbi_latest_otp.txt"))
 
     while time.time() < deadline:
+        # Check local files first (when running on server)
+        if otp_json.exists():
+            try:
+                data = json.loads(otp_json.read_text(encoding="utf-8"))
+                ts = data.get("timestamp", 0)
+                otp = str(data.get("otp", "")).strip()
+                if otp and len(otp) == 6 and (ts >= start_time - 30.0):
+                    log.info("Real-time OTP received from local file! OTP=%s, sender=%s, age=%.1fs",
+                             otp, data.get("from"), time.time() - ts)
+                    return otp
+            except Exception:
+                pass
+
+        if otp_txt.exists():
+            try:
+                mtime = otp_txt.stat().st_mtime
+                if mtime >= start_time - 30.0:
+                    otp = otp_txt.read_text(encoding="utf-8").strip()
+                    if otp and len(otp) == 6 and otp.isdigit():
+                        log.info("Real-time OTP received from %s: %s", otp_txt, otp)
+                        return otp
+            except Exception:
+                pass
+
+        # Check relay URL
         try:
             req = urllib.request.Request(relay_url, headers={"User-Agent": "sbi-tester/1.0"})
             with urllib.request.urlopen(req, timeout=3) as resp:
@@ -105,11 +135,12 @@ def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int
                     ts = data.get("timestamp", 0)
                     otp = str(data.get("otp", "")).strip()
                     if otp and len(otp) == 6 and (ts >= start_time - 30.0):
-                        log.info("Real-time OTP received! OTP=%s, sender=%s, age=%.1fs",
+                        log.info("Real-time OTP received from relay URL! OTP=%s, sender=%s, age=%.1fs",
                                  otp, data.get("from"), time.time() - ts)
                         return otp
         except Exception:
             pass
+
         time.sleep(1.5)
 
     log.warning("Timeout waiting for relayed OTP")
@@ -272,9 +303,12 @@ if __name__ == "__main__":
     parser.add_argument("--relay-url", default=DEFAULT_RELAY_URL, help="OTP Relay URL")
     parser.add_argument("--csp", default=DEFAULT_CSP, help="CSP Code to query (default: 1A850077)")
     parser.add_argument("--auto-captcha", action="store_true", help="Auto-fill Tesseract captcha without prompt")
-    parser.add_argument("--headless", action="store_true", help="Run in headless mode")
+    parser.add_argument("--headless", action="store_true", default=DEFAULT_HEADLESS, help="Run in headless mode")
+    parser.add_argument("--headed", action="store_true", help="Force visible browser window (requires X11 or Wayland)")
 
     args = parser.parse_args()
+
+    use_headless = False if args.headed else args.headless
 
     ok = run_login_flow(
         url=args.url,
@@ -283,6 +317,6 @@ if __name__ == "__main__":
         relay_url=args.relay_url,
         csp_code=args.csp,
         auto_captcha=args.auto_captcha,
-        headless=args.headless,
+        headless=use_headless,
     )
     sys.exit(0 if ok else 1)
