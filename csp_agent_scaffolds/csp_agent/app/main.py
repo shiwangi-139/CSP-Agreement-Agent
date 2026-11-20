@@ -19,6 +19,7 @@ from .scheduler import get_scheduler_status
 from .api import agent, csp, agreements, documents, ingest, review, campaigns, dashboard, hub, login, portal
 from .api import terminals as terminals_api
 from .api import sbi_portal as sbi_portal_api
+from .api import sbi_otp as sbi_otp_api
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -47,6 +48,8 @@ async def record_dashboard_actions(request, call_next):
 
 # Public: the CSP upload portal (token-protected) and health checks.
 app.include_router(portal.router, tags=["portal"])
+# SBI OTP relay receiver from mobile app (token-protected)
+app.include_router(sbi_otp_api.router, tags=["sbi-otp"])
 # The WhatsApp agent's own API (X-Agent-Key).
 app.include_router(agent.router, prefix="/api/agent", tags=["whatsapp-agent"])
 # Dashboard login (email + password -> session cookie).

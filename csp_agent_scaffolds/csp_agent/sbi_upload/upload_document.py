@@ -29,10 +29,12 @@ them before the first --submit run.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import re
 import sys
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
@@ -147,6 +149,45 @@ def _fill_credentials(page: Page) -> None:
     pwd.fill(EP_PASSWORD)                                       # always: forms often clear it after a failure
 
 
+def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
+    """Poll for freshly relayed OTP from /tmp/sbi_latest_otp.json or /tmp/sbi_latest_otp.txt."""
+    start_time = time.time()
+    otp_json = Path(os.getenv("OTP_JSON_FILE", "/tmp/sbi_latest_otp.json"))
+    otp_txt = Path(os.getenv("OTP_TEXT_FILE", "/tmp/sbi_latest_otp.txt"))
+    deadline = start_time + timeout_seconds
+
+    log.info("Checking for relayed SBI OTP (waiting up to %ds from mobile relay)...", int(timeout_seconds))
+    while time.time() < deadline:
+        # Check JSON record first
+        if otp_json.exists():
+            try:
+                data = json.loads(otp_json.read_text(encoding="utf-8"))
+                ts = data.get("timestamp", 0)
+                otp = str(data.get("otp", "")).strip()
+                # Accept if received within last 5 minutes or since waiting started
+                if otp and len(otp) == 6 and (ts >= start_time - 30.0):
+                    log.info("Found relayed OTP %s (sender: %s, age: %.1fs)", otp, data.get("from"), time.time() - ts)
+                    return otp
+            except Exception:
+                pass
+
+        # Fallback: check text file
+        if otp_txt.exists():
+            try:
+                mtime = otp_txt.stat().st_mtime
+                if mtime >= start_time - 30.0:
+                    otp = otp_txt.read_text(encoding="utf-8").strip()
+                    if otp and len(otp) == 6 and otp.isdigit():
+                        log.info("Found relayed OTP %s from %s", otp, otp_txt)
+                        return otp
+            except Exception:
+                pass
+
+        time.sleep(1.5)
+
+    return None
+
+
 def _otp_if_asked(page: Page) -> None:
     """SBI may ask for an OTP after the captcha (OTPVerificationExecute.do)."""
     otp_box = page.locator("input[name='otp']")                 # ADJUST SELECTOR: OTP field
@@ -155,7 +196,10 @@ def _otp_if_asked(page: Page) -> None:
     except PWTimeout:
         return
     log.info("OTP page shown")
-    otp_box.fill(input("Type the OTP sent by SBI and press Enter: ").strip())
+    otp = _fetch_relayed_otp(timeout_seconds=45.0)
+    if not otp:
+        otp = input("Type the OTP sent by SBI and press Enter: ").strip()
+    otp_box.fill(otp)
     page.get_by_role("button", name=re.compile("submit|verify", re.I)).click()   # ADJUST SELECTOR
 
 
