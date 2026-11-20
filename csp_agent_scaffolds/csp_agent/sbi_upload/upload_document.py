@@ -129,16 +129,43 @@ def _agent_modules():
 # ------------------------------------------------------------------- login
 def solve_image(page: Page, attempt: int) -> str:
     """The person types the captcha. The image is also saved, so it can be
-    read if the browser window is hidden."""
-    img = page.locator("img#captchaImage")                      # ADJUST SELECTOR: the captcha image
+    read if the browser window is hidden. Tesseract OCR is used if available."""
+    img = page.locator("img#captchaImage, img[alt*='captcha' i], img[src*='captcha' i]").first
     img.wait_for(state="visible", timeout=TIMEOUT_MS)
+    captcha_path = None
     try:
         SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-        img.screenshot(path=str(SCREENSHOT_DIR / f"captcha_attempt{attempt}.png"))
-        log.info("Captcha shown in the browser (also saved under %s)", SCREENSHOT_DIR)
-    except OSError:
-        log.info("Captcha shown in the browser")
-    return input("Type the captcha text and press Enter: ").strip()
+        captcha_path = SCREENSHOT_DIR / f"captcha_attempt{attempt}.png"
+        img.screenshot(path=str(captcha_path))
+        log.info("Captcha image saved to %s", captcha_path)
+    except Exception as e:
+        log.warning("Could not save captcha screenshot: %s", e)
+
+    # Attempt automatic Tesseract OCR
+    ocr_text = ""
+    if captcha_path and captcha_path.exists():
+        try:
+            import pytesseract
+            from PIL import Image
+            img_obj = Image.open(captcha_path)
+            raw = pytesseract.image_to_string(
+                img_obj,
+                config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+            )
+            ocr_text = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
+            if ocr_text:
+                log.info("Tesseract detected captcha: '%s'", ocr_text)
+        except Exception as e:
+            log.warning("Tesseract OCR failed: %s", e)
+
+    auto_captcha = os.getenv("AUTO_CAPTCHA", "false").lower() in ("1", "true", "yes")
+    if auto_captcha and ocr_text:
+        log.info("Auto-filling captcha: %s", ocr_text)
+        return ocr_text
+
+    prompt = f"Type captcha text (Tesseract detected [{ocr_text or 'none'}], press Enter to accept): "
+    typed = input(prompt).strip()
+    return typed if typed else ocr_text
 
 
 def _fill_credentials(page: Page) -> None:
@@ -150,28 +177,28 @@ def _fill_credentials(page: Page) -> None:
 
 
 def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
-    """Poll for freshly relayed OTP from /tmp/sbi_latest_otp.json or /tmp/sbi_latest_otp.txt."""
+    """Poll for freshly relayed OTP from /tmp/sbi_latest_otp.json, /tmp/sbi_latest_otp.txt, or remote relay server."""
     start_time = time.time()
     otp_json = Path(os.getenv("OTP_JSON_FILE", "/tmp/sbi_latest_otp.json"))
     otp_txt = Path(os.getenv("OTP_TEXT_FILE", "/tmp/sbi_latest_otp.txt"))
+    relay_url = os.getenv("OTP_RELAY_URL", "https://indev.eko.in/csp-agreement-agent/sbi-otp/latest")
     deadline = start_time + timeout_seconds
 
     log.info("Checking for relayed SBI OTP (waiting up to %ds from mobile relay)...", int(timeout_seconds))
     while time.time() < deadline:
-        # Check JSON record first
+        # Check JSON record first (local on server)
         if otp_json.exists():
             try:
                 data = json.loads(otp_json.read_text(encoding="utf-8"))
                 ts = data.get("timestamp", 0)
                 otp = str(data.get("otp", "")).strip()
-                # Accept if received within last 5 minutes or since waiting started
                 if otp and len(otp) == 6 and (ts >= start_time - 30.0):
                     log.info("Found relayed OTP %s (sender: %s, age: %.1fs)", otp, data.get("from"), time.time() - ts)
                     return otp
             except Exception:
                 pass
 
-        # Fallback: check text file
+        # Check text file (local on server)
         if otp_txt.exists():
             try:
                 mtime = otp_txt.stat().st_mtime
@@ -180,6 +207,22 @@ def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
                     if otp and len(otp) == 6 and otp.isdigit():
                         log.info("Found relayed OTP %s from %s", otp, otp_txt)
                         return otp
+            except Exception:
+                pass
+
+        # Check remote relay server (when running on laptop / workstation)
+        if relay_url:
+            try:
+                import urllib.request
+                req = urllib.request.Request(relay_url, headers={"User-Agent": "sbi-uploader/1.0"})
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    if resp.status == 200:
+                        data = json.loads(resp.read().decode("utf-8"))
+                        ts = data.get("timestamp", 0)
+                        otp = str(data.get("otp", "")).strip()
+                        if otp and len(otp) == 6 and (ts >= start_time - 30.0):
+                            log.info("Found relayed OTP %s from %s (sender: %s, age: %.1fs)", otp, relay_url, data.get("from"), time.time() - ts)
+                            return otp
             except Exception:
                 pass
 
