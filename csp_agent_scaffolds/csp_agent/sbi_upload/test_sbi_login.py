@@ -98,11 +98,44 @@ def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int
     deadline = start_time + timeout_seconds
     log.info("Waiting up to %ds for real-time OTP relayed from phone...", timeout_seconds)
 
+    otp_spool = Path(os.getenv("OTP_SPOOL_DIR", "/home/adarsh/eko/.tmp/sbi_stmt_bot/sms_inbox"))
     otp_json = Path(os.getenv("OTP_JSON_FILE", "/tmp/sbi_latest_otp.json"))
     otp_txt = Path(os.getenv("OTP_TEXT_FILE", "/tmp/sbi_latest_otp.txt"))
 
     while time.time() < deadline:
-        # Check local files first (when running on server)
+        # 1. Check spool directory directly (when running on server)
+        if otp_spool.exists() and otp_spool.is_dir():
+            try:
+                files = sorted(
+                    [f for f in otp_spool.glob("*.json") if not f.name.endswith(".yonosbi-consumed")],
+                    key=lambda p: p.name,
+                    reverse=True
+                )
+                for f in files[:10]:
+                    try:
+                        data = json.loads(f.read_text(encoding="utf-8"))
+                        otp = str(data.get("otp", "")).strip()
+                        if not otp or len(otp) != 6 or not otp.isdigit():
+                            continue
+                        ts = data.get("received_ts") or data.get("timestamp")
+                        if not ts:
+                            m = re.match(r"^(\d+)", f.stem)
+                            ts = float(m.group(1)) / 1000.0 if m else f.stat().st_mtime
+                        else:
+                            ts = float(ts)
+                            if ts > 1e11:
+                                ts = ts / 1000.0
+
+                        if ts >= start_time - 30.0:
+                            log.info("Real-time OTP received from spool file %s! OTP=%s, sender=%s, age=%.1fs",
+                                     f.name, otp, data.get("from"), time.time() - ts)
+                            return otp
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        # 2. Check local files (/tmp)
         if otp_json.exists():
             try:
                 data = json.loads(otp_json.read_text(encoding="utf-8"))

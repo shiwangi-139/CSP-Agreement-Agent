@@ -38,6 +38,7 @@ ALLOWED_SENDERS = [s.strip().lower() for s in os.getenv("OTP_ALLOWED_SENDERS", "
 # Persistent file paths
 OTP_TEXT_FILE = Path(os.getenv("OTP_TEXT_FILE", "/tmp/sbi_latest_otp.txt"))
 OTP_JSON_FILE = Path(os.getenv("OTP_JSON_FILE", "/tmp/sbi_latest_otp.json"))
+OTP_SPOOL_DIR = Path(os.getenv("OTP_SPOOL_DIR", "/home/adarsh/eko/.tmp/sbi_stmt_bot/sms_inbox"))
 
 # Global in-memory state
 latest_otp_record: Dict[str, Any] = {
@@ -128,6 +129,47 @@ def get_latest_otp(max_age_seconds: float = 300.0) -> Optional[Dict[str, Any]]:
         res["valid"] = True
         return res
 
+    # Check spool directory (/home/adarsh/eko/.tmp/sbi_stmt_bot/sms_inbox)
+    if OTP_SPOOL_DIR.exists() and OTP_SPOOL_DIR.is_dir():
+        try:
+            files = sorted(
+                [f for f in OTP_SPOOL_DIR.glob("*.json") if not f.name.endswith(".yonosbi-consumed")],
+                key=lambda p: p.name,
+                reverse=True
+            )
+            for f in files[:20]:
+                try:
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                    otp = str(data.get("otp", "")).strip()
+                    if not otp or len(otp) != 6 or not otp.isdigit():
+                        continue
+                    ts = data.get("received_ts") or data.get("timestamp")
+                    if not ts:
+                        m = re.match(r"^(\d+)", f.stem)
+                        ts = float(m.group(1)) / 1000.0 if m else f.stat().st_mtime
+                    else:
+                        ts = float(ts)
+                        if ts > 1e11:
+                            ts = ts / 1000.0
+
+                    if now - ts <= max_age_seconds:
+                        rec = {
+                            "otp": otp,
+                            "from": data.get("from", "SBI"),
+                            "text": data.get("text", ""),
+                            "timestamp": ts,
+                            "received_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts)),
+                            "age_seconds": round(now - ts, 1),
+                            "valid": True,
+                            "source": f"spool:{f.name}",
+                        }
+                        latest_otp_record = rec
+                        return rec
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"Error reading spool {OTP_SPOOL_DIR}: {e}")
+
     # Fallback to reading JSON file from disk (in case receiver is another process)
     if OTP_JSON_FILE.exists():
         try:
@@ -150,10 +192,11 @@ def get_latest_otp(max_age_seconds: float = 300.0) -> Optional[Dict[str, Any]]:
                 if content and len(content) == 6 and content.isdigit():
                     return {
                         "otp": content,
-                        "from": "UNKNOWN",
+                        "from": "SBI",
                         "timestamp": mtime,
                         "age_seconds": round(now - mtime, 1),
                         "valid": True,
+                        "source": "text_file",
                     }
         except Exception:
             pass

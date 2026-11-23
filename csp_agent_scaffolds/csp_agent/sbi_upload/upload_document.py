@@ -190,8 +190,9 @@ def _fill_credentials(page: Page) -> None:
 
 
 def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
-    """Poll for freshly relayed OTP from /tmp/sbi_latest_otp.json, /tmp/sbi_latest_otp.txt, or remote relay server."""
+    """Poll for freshly relayed OTP from spool directory, /tmp/sbi_latest_otp.json, /tmp/sbi_latest_otp.txt, or remote relay server."""
     start_time = time.time()
+    otp_spool = Path(os.getenv("OTP_SPOOL_DIR", "/home/adarsh/eko/.tmp/sbi_stmt_bot/sms_inbox"))
     otp_json = Path(os.getenv("OTP_JSON_FILE", "/tmp/sbi_latest_otp.json"))
     otp_txt = Path(os.getenv("OTP_TEXT_FILE", "/tmp/sbi_latest_otp.txt"))
     relay_url = os.getenv("OTP_RELAY_URL", "https://indev.eko.in/csp-agreement-agent/sbi-otp/latest")
@@ -199,7 +200,39 @@ def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
 
     log.info("Checking for relayed SBI OTP (waiting up to %ds from mobile relay)...", int(timeout_seconds))
     while time.time() < deadline:
-        # Check JSON record first (local on server)
+        # 1. Check spool directory directly (when running on server)
+        if otp_spool.exists() and otp_spool.is_dir():
+            try:
+                files = sorted(
+                    [f for f in otp_spool.glob("*.json") if not f.name.endswith(".yonosbi-consumed")],
+                    key=lambda p: p.name,
+                    reverse=True
+                )
+                for f in files[:10]:
+                    try:
+                        data = json.loads(f.read_text(encoding="utf-8"))
+                        otp = str(data.get("otp", "")).strip()
+                        if not otp or len(otp) != 6 or not otp.isdigit():
+                            continue
+                        ts = data.get("received_ts") or data.get("timestamp")
+                        if not ts:
+                            m = re.match(r"^(\d+)", f.stem)
+                            ts = float(m.group(1)) / 1000.0 if m else f.stat().st_mtime
+                        else:
+                            ts = float(ts)
+                            if ts > 1e11:
+                                ts = ts / 1000.0
+
+                        if ts >= start_time - 30.0:
+                            log.info("Found relayed OTP %s from spool %s (sender: %s, age: %.1fs)",
+                                     otp, f.name, data.get("from"), time.time() - ts)
+                            return otp
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+
+        # 2. Check JSON record (local on server)
         if otp_json.exists():
             try:
                 data = json.loads(otp_json.read_text(encoding="utf-8"))

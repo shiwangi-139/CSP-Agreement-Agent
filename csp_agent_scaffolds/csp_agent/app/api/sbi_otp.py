@@ -24,6 +24,7 @@ ALLOWED_SENDERS = [s.strip().lower() for s in os.getenv("OTP_ALLOWED_SENDERS", "
 
 OTP_TEXT_FILE = Path(os.getenv("OTP_TEXT_FILE", "/tmp/sbi_latest_otp.txt"))
 OTP_JSON_FILE = Path(os.getenv("OTP_JSON_FILE", "/tmp/sbi_latest_otp.json"))
+OTP_SPOOL_DIR = Path(os.getenv("OTP_SPOOL_DIR", "/home/adarsh/eko/.tmp/sbi_stmt_bot/sms_inbox"))
 
 latest_otp_record: Dict[str, Any] = {
     "otp": None,
@@ -137,12 +138,56 @@ def _handle_otp_get(max_age_seconds: float = 300.0):
     global latest_otp_record
     now = time.time()
 
+    # 1. In-memory cached record
     if latest_otp_record.get("otp") and (now - latest_otp_record["timestamp"] <= max_age_seconds):
         res = dict(latest_otp_record)
         res["age_seconds"] = round(now - latest_otp_record["timestamp"], 1)
         res["valid"] = True
         return res
 
+    # 2. Check Adarsh's OTP receiver spool directory (/home/adarsh/eko/.tmp/sbi_stmt_bot/sms_inbox)
+    if OTP_SPOOL_DIR.exists() and OTP_SPOOL_DIR.is_dir():
+        try:
+            files = sorted(
+                [f for f in OTP_SPOOL_DIR.glob("*.json") if not f.name.endswith(".yonosbi-consumed")],
+                key=lambda p: p.name,
+                reverse=True
+            )
+            for f in files[:20]:
+                try:
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                    otp = str(data.get("otp", "")).strip()
+                    if not otp or len(otp) != 6 or not otp.isdigit():
+                        continue
+                    ts = data.get("received_ts") or data.get("timestamp")
+                    if not ts:
+                        m = re.match(r"^(\d+)", f.stem)
+                        ts = float(m.group(1)) / 1000.0 if m else f.stat().st_mtime
+                    else:
+                        ts = float(ts)
+                        if ts > 1e11:
+                            ts = ts / 1000.0
+
+                    if now - ts <= max_age_seconds:
+                        rec = {
+                            "status": "ok",
+                            "otp": otp,
+                            "from": data.get("from", "SBI"),
+                            "text": data.get("text", ""),
+                            "timestamp": ts,
+                            "received_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts)),
+                            "age_seconds": round(now - ts, 1),
+                            "valid": True,
+                            "source": f"spool:{f.name}",
+                        }
+                        latest_otp_record = rec
+                        return rec
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"Error reading spool {OTP_SPOOL_DIR}: {e}")
+
+    # 3. Check /tmp/sbi_latest_otp.json
     if OTP_JSON_FILE.exists():
         try:
             data = json.loads(OTP_JSON_FILE.read_text(encoding="utf-8"))
@@ -152,6 +197,28 @@ def _handle_otp_get(max_age_seconds: float = 300.0):
                 data["valid"] = True
                 latest_otp_record = data
                 return data
+        except Exception:
+            pass
+
+    # 4. Check /tmp/sbi_latest_otp.txt
+    if OTP_TEXT_FILE.exists():
+        try:
+            mtime = OTP_TEXT_FILE.stat().st_mtime
+            if now - mtime <= max_age_seconds:
+                txt = OTP_TEXT_FILE.read_text(encoding="utf-8").strip()
+                if txt and len(txt) == 6 and txt.isdigit():
+                    rec = {
+                        "status": "ok",
+                        "otp": txt,
+                        "from": "SBI",
+                        "timestamp": mtime,
+                        "received_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(mtime)),
+                        "age_seconds": round(now - mtime, 1),
+                        "valid": True,
+                        "source": "text_file",
+                    }
+                    latest_otp_record = rec
+                    return rec
         except Exception:
             pass
 
