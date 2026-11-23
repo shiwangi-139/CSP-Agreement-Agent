@@ -492,18 +492,32 @@ def open_csp(page: Page, code: str) -> Page:
     page.wait_for_timeout(2000)
 
     # 7. Select radio in the search results
-    mframe.locator("table input[type='radio'], input[type='radio']").first.check()
+    log.info("Waiting for query results for CSP %s...", code)
+    result_row = mframe.locator("tr").filter(has_text=re.compile(code, re.I)).first
+    try:
+        result_row.wait_for(state="visible", timeout=20000)
+        row_radio = result_row.locator("input[type='radio']").first
+        if row_radio.is_visible(timeout=3000):
+            row_radio.check()
 
-    # 8. Open CSP details popup
-    with page.expect_popup(timeout=TIMEOUT_MS) as pop:
-        csp_link = mframe.locator(f"a:has-text('{code}')").first
-        if not csp_link.is_visible(timeout=3000):
-            csp_link = mframe.get_by_role("link", name=code).first
-        csp_link.click()
-    popup = pop.value
-    popup.wait_for_load_state("domcontentloaded")
-    log.info("CSP %s: details popup opened", code)
-    return popup
+        # 8. Open CSP details popup
+        with page.expect_popup(timeout=TIMEOUT_MS) as pop:
+            csp_link = result_row.locator("a").filter(has_text=re.compile(code, re.I)).first
+            if not csp_link.is_visible(timeout=3000):
+                csp_link = result_row.locator("a").first
+            csp_link.click()
+        popup = pop.value
+        popup.wait_for_load_state("domcontentloaded")
+        log.info("CSP %s: details popup opened", code)
+        return popup
+    except Exception as e:
+        log.warning("Row selector failed (%s), attempting direct fallback click...", e)
+        with page.expect_popup(timeout=TIMEOUT_MS) as pop:
+            mframe.locator(f"a:has-text('{code}')").first.click()
+        popup = pop.value
+        popup.wait_for_load_state("domcontentloaded")
+        log.info("CSP %s: details popup opened via fallback", code)
+        return popup
 
 
 def _set_date_field(p: Page, field_type: str, dt: date) -> None:

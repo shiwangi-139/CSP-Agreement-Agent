@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import FileResponse
 
 logger = logging.getLogger("sbi_otp_router")
 
@@ -238,3 +239,36 @@ async def receive_sbi_otp(request: Request, authorization: Optional[str] = Heade
 @router.get("/csp-agreement-agent/sbi-otp/latest")
 def get_latest_sbi_otp(max_age_seconds: float = 300.0):
     return _handle_otp_get(max_age_seconds)
+
+
+@router.get("/sbi-video/latest")
+@router.get("/csp-agreement-agent/sbi-video/latest")
+def get_latest_video():
+    """Stream the latest Playwright test video recording."""
+    candidates = [
+        Path("/home/shiwangi/csp_agent_scaffolds/csp_agent/sbi_upload/screenshots/videos"),
+        Path(__file__).resolve().parent.parent.parent / "sbi_upload" / "screenshots" / "videos",
+    ]
+    for d in candidates:
+        if d.exists() and d.is_dir():
+            videos = sorted(d.glob("*.webm"), key=lambda p: p.stat().st_mtime, reverse=True)
+            if videos:
+                return FileResponse(videos[0], media_type="video/webm", filename=videos[0].name)
+    raise HTTPException(status_code=404, detail="No video recordings found")
+
+
+@router.get("/sbi-screenshot/latest")
+@router.get("/csp-agreement-agent/sbi-screenshot/latest")
+def get_latest_screenshot():
+    """View the latest test screenshot or failure artifact."""
+    candidates = [
+        Path("/home/shiwangi/csp_agent_scaffolds/csp_agent/sbi_upload/screenshots"),
+        Path(__file__).resolve().parent.parent.parent / "sbi_upload" / "screenshots",
+    ]
+    for d in candidates:
+        if d.exists() and d.is_dir():
+            shots = sorted([f for f in d.glob("*.png") if not f.name.startswith("test_captcha")],
+                           key=lambda p: p.stat().st_mtime, reverse=True)
+            if shots:
+                return FileResponse(shots[0], media_type="image/png", filename=shots[0].name)
+    raise HTTPException(status_code=404, detail="No screenshots found")

@@ -457,15 +457,25 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
             page1.wait_for_timeout(2000)
 
             # Step 8: Select result row and open details popup
-            radio = mframe.locator("table input[type='radio'], input[type='radio']").first
-            if radio.is_visible(timeout=10000):
-                radio.check()
-                log.info("CSP row found! Opening details popup...")
-                with page1.expect_popup(timeout=12000) as p2_info:
-                    csp_link = mframe.locator(f"a:has-text('{csp_code}')").first
+            log.info("Waiting for query results for CSP %s...", csp_code)
+            result_row = mframe.locator("tr").filter(has_text=re.compile(csp_code, re.I)).first
+            try:
+                result_row.wait_for(state="visible", timeout=20000)
+                log.info("CSP row for %s found in search results!", csp_code)
+
+                # Check the radio button in that row if present
+                row_radio = result_row.locator("input[type='radio']").first
+                if row_radio.is_visible(timeout=3000):
+                    row_radio.check()
+                    log.info("Checked result row radio button.")
+
+                # Click the CSP link in that row to trigger the popup
+                with page1.expect_popup(timeout=15000) as p2_info:
+                    csp_link = result_row.locator("a").filter(has_text=re.compile(csp_code, re.I)).first
                     if not csp_link.is_visible(timeout=3000):
-                        csp_link = mframe.get_by_role("link", name=csp_code).first
+                        csp_link = result_row.locator("a").first
                     csp_link.click()
+
                 page2 = p2_info.value
                 page2.wait_for_load_state("domcontentloaded")
                 log.info("SUCCESS: CSP %s details popup opened successfully!", csp_code)
@@ -479,9 +489,18 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
                 page1.wait_for_timeout(15000)
 
                 page2.close()
-            else:
-                log.warning("No search results returned for CSP %s", csp_code)
-                page1.wait_for_timeout(10000)
+            except Exception as e_row:
+                log.warning("Could not find CSP result row or popup failed: %s", e_row)
+                # Fallback to direct link anywhere in mframe
+                try:
+                    with page1.expect_popup(timeout=10000) as p2_info:
+                        mframe.locator(f"a:has-text('{csp_code}')").first.click(timeout=5000)
+                    page2 = p2_info.value
+                    page2.wait_for_load_state("domcontentloaded")
+                    log.info("SUCCESS via fallback: CSP %s details popup opened!", csp_code)
+                    page2.close()
+                except Exception:
+                    pass
 
             # Sign out
             try:
