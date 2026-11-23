@@ -371,14 +371,56 @@ def sign_out(page: Page) -> None:
 
 def open_csp(page: Page, code: str) -> Page:
     """Steps 8-16: Navigate to Capture PVR DRA IIBF AMFI and open CSP popup."""
-    # 1. Click User Services
+    page.on("dialog", lambda d: (log.info("SBI Dialog: '%s' (auto-dismissed)", d.message), d.dismiss()))
+
+    # Wait for dashboard navigation
     try:
-        page.locator("a").nth(1).click()
+        page.wait_for_load_state("domcontentloaded", timeout=15000)
     except Exception:
-        page.get_by_role("button", name="User Services").click()
+        pass
+
+    try:
+        page.locator("iframe[name='mainframe'], a:has-text('User Services'), a:has-text('Sign Out')").first.wait_for(timeout=20000)
+    except Exception as e:
+        log.warning("Notice: Dashboard marker wait returned: %s", e)
+
+    page.wait_for_timeout(1000)
+
+    # 1. Click User Services
+    log.info("Navigating to User Services...")
+    clicked_user_services = False
+    for candidate in [
+        page.locator("a:has-text('User Services'), a:has-text('USER SERVICES')").first,
+        page.get_by_role("link", name=re.compile("User Services", re.I)).first,
+        page.locator("text='User Services'").first,
+        page.locator("a").nth(1),
+    ]:
+        try:
+            if candidate.is_visible(timeout=3000):
+                try:
+                    candidate.hover(timeout=1000)
+                except Exception:
+                    pass
+                candidate.click(timeout=3000)
+                clicked_user_services = True
+                log.info("Clicked User Services menu.")
+                break
+        except Exception:
+            continue
+
+    if not clicked_user_services:
+        log.warning("Could not find visible candidate for User Services, attempting direct click on a.nth(1)...")
+        try:
+            page.locator("a").nth(1).click(timeout=5000)
+        except Exception as e:
+            log.error("Failed to click a.nth(1): %s", e)
 
     # 2. Submenu item
-    page.locator("a").filter(has_text=re.compile("Capture PVR DRA IIBF AMFI and", re.I)).first.click()
+    log.info("Clicking submenu: Capture PVR DRA IIBF AMFI and Agreement Details...")
+    submenu = page.locator("a").filter(has_text=re.compile("Capture PVR DRA IIBF AMFI and", re.I)).first
+    submenu.wait_for(state="visible", timeout=12000)
+    submenu.click()
+    log.info("Opened Capture PVR DRA IIBF AMFI form.")
 
     # 3. Main content inside iframe 'mainframe'
     frame = page.locator("iframe[name='mainframe']").content_frame

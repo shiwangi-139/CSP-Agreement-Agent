@@ -221,124 +221,191 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
                 except Exception:
                     pass
 
-        # Step 2: Fill Username & Password
-        log.info("Filling credentials...")
-        user_field = page1.locator("#specialChar, input[name='userName']").first
-        user_field.wait_for(state="visible", timeout=15000)
-        user_field.fill(username)
+        # Register dialog handler to auto-dismiss any SBI alert or confirmation popups
+        page1.on("dialog", lambda d: (log.info("SBI Dialog: '%s' (auto-dismissed)", d.message), d.dismiss()))
+        page.on("dialog", lambda d: (log.info("Parent Dialog: '%s' (auto-dismissed)", d.message), d.dismiss()))
 
-        pass_field = page1.locator("#password, input[type='password']").first
-        pass_field.fill(password)
+        try:
+            # Step 2: Fill Username & Password
+            log.info("Filling credentials...")
+            user_field = page1.locator("#specialChar, input[name='userName']").first
+            user_field.wait_for(state="visible", timeout=15000)
+            user_field.fill(username)
 
-        # Step 3: Solve Captcha
-        captcha_img = page1.locator("img#captchaImage, img[src*='captcha' i], img[id*='captcha' i]").first
-        if not captcha_img.is_visible():
-            captcha_img = page1.locator("img").first
+            pass_field = page1.locator("#password, input[type='password']").first
+            pass_field.fill(password)
 
-        captcha_val = solve_captcha_tesseract(page1, captcha_img, auto_accept=auto_captcha)
-        captcha_input = page1.locator("#txtInput, input[name='captcha']").first
-        captcha_input.fill(captcha_val)
-        log.info("Captcha filled.")
+            # Step 3: Solve Captcha
+            captcha_img = page1.locator("img#captchaImage, img[src*='captcha' i], img[id*='captcha' i]").first
+            if not captcha_img.is_visible():
+                captcha_img = page1.locator("img").first
 
-        # Step 4: Click Login
-        start_wait_otp = time.time()
-        login_btn = page1.locator("button:has-text('Login'), input[value*='Login' i], button:has-text('Sign In')").first
-        login_btn.click()
-        log.info("Login clicked. Checking for OTP prompt...")
+            captcha_val = solve_captcha_tesseract(page1, captcha_img, auto_accept=auto_captcha)
+            captcha_input = page1.locator("#txtInput, input[name='captcha']").first
+            captcha_input.fill(captcha_val)
+            log.info("Captcha filled.")
 
-        page1.wait_for_timeout(2000)
+            # Step 4: Click Login
+            start_wait_otp = time.time()
+            login_btn = page1.locator("button:has-text('Login'), input[value*='Login' i], button:has-text('Sign In')").first
+            login_btn.click()
+            log.info("Login clicked. Checking for OTP prompt...")
 
-        # Step 5: OTP Check
-        otp_box = page1.locator("input[name*='otp' i], [aria-label*='OTP' i], input[placeholder*='OTP' i]").first
-        if not otp_box.is_visible(timeout=5000):
+            page1.wait_for_timeout(2000)
+
+            # Step 5: OTP Check
+            otp_box = page1.locator("input[name*='otp' i], [aria-label*='OTP' i], input[placeholder*='OTP' i]").first
+            if not otp_box.is_visible(timeout=5000):
+                try:
+                    otp_box = page1.get_by_role("textbox", name=re.compile("Please enter the OTP|OTP", re.I)).first
+                except Exception:
+                    pass
+
+            if otp_box.is_visible():
+                log.info("OTP prompt detected on screen!")
+                otp_val = wait_for_relayed_otp(start_wait_otp, relay_url)
+                log.info("Filling OTP: %s", otp_val)
+                otp_box.fill(otp_val)
+
+                submit_btn = page1.get_by_role("button", name="Submit").first
+                submit_btn.click()
+                log.info("OTP submitted. Waiting for dashboard navigation...")
+
+            # Wait for portal navigation and dashboard elements
             try:
-                otp_box = page1.get_by_role("textbox", name=re.compile("Please enter the OTP|OTP", re.I)).first
+                page1.wait_for_load_state("domcontentloaded", timeout=15000)
             except Exception:
                 pass
 
-        if otp_box.is_visible():
-            log.info("OTP prompt detected on screen!")
-            otp_val = wait_for_relayed_otp(start_wait_otp, relay_url)
-            log.info("Filling OTP: %s", otp_val)
-            otp_box.fill(otp_val)
+            # Check if an error banner is visible
+            err_box = page1.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red']").first
+            if err_box.is_visible(timeout=2000):
+                err_text = err_box.inner_text().strip()
+                if err_text:
+                    log.error("Portal error displayed after login/OTP: %s", err_text)
 
-            submit_btn = page1.get_by_role("button", name="Submit").first
-            submit_btn.click()
-            log.info("OTP submitted.")
+            # Wait for dashboard marker
+            log.info("Waiting for dashboard to be ready...")
+            try:
+                page1.locator("iframe[name='mainframe'], a:has-text('User Services'), a:has-text('Sign Out')").first.wait_for(timeout=20000)
+                log.info("Dashboard loaded.")
+            except Exception as e:
+                log.warning("Notice: Dashboard marker wait returned: %s", e)
 
-        page1.wait_for_timeout(3000)
+            page1.wait_for_timeout(1000)
 
-        # Step 6: Navigate to User Services
-        log.info("Navigating to User Services...")
-        try:
-            page1.locator("a").nth(1).click()
-        except Exception:
-            page1.get_by_role("button", name="User Services").click()
+            # Step 6: Navigate to User Services
+            log.info("Navigating to User Services...")
+            clicked_user_services = False
+            for candidate in [
+                page1.locator("a:has-text('User Services'), a:has-text('USER SERVICES')").first,
+                page1.get_by_role("link", name=re.compile("User Services", re.I)).first,
+                page1.locator("text='User Services'").first,
+                page1.locator("a").nth(1),
+            ]:
+                try:
+                    if candidate.is_visible(timeout=3000):
+                        try:
+                            candidate.hover(timeout=1000)
+                        except Exception:
+                            pass
+                        candidate.click(timeout=3000)
+                        clicked_user_services = True
+                        log.info("Clicked User Services menu.")
+                        break
+                except Exception:
+                    continue
 
-        page1.locator("a").filter(has_text=re.compile("Capture PVR DRA IIBF AMFI and", re.I)).first.click()
-        log.info("Opened Capture PVR DRA IIBF AMFI and Agreement Details form.")
+            if not clicked_user_services:
+                log.warning("Could not find visible candidate for User Services, attempting direct click on a.nth(1)...")
+                try:
+                    page1.locator("a").nth(1).click(timeout=5000)
+                except Exception as e:
+                    log.error("Failed to click a.nth(1): %s", e)
 
-        page1.wait_for_timeout(2000)
+            # Click submenu item: Capture PVR DRA IIBF AMFI and Agreement Details
+            log.info("Clicking submenu: Capture PVR DRA IIBF AMFI and Agreement Details...")
+            capture_link = page1.locator("a").filter(has_text=re.compile("Capture PVR DRA IIBF AMFI and", re.I)).first
+            capture_link.wait_for(state="visible", timeout=12000)
+            capture_link.click()
+            log.info("Opened Capture PVR DRA IIBF AMFI and Agreement Details form.")
 
-        # Step 7: Mainframe iframe interaction
-        frame = page1.locator("iframe[name='mainframe']").content_frame
-        frame.get_by_role("combobox").select_option("01")
-        frame.get_by_role("button", name="Submit").click()
+            page1.wait_for_timeout(2000)
 
-        page1.wait_for_timeout(1000)
+            # Step 7: Mainframe iframe interaction
+            frame = page1.locator("iframe[name='mainframe']").content_frame
+            frame.get_by_role("combobox").select_option("01")
+            frame.get_by_role("button", name="Submit").click()
 
-        frame.get_by_role("radio", name="Query CSP Code").check()
-        csp_box = frame.locator("#stReferenceNo")
-        if not csp_box.is_visible():
-            csp_box = frame.get_by_role("textbox", name=re.compile("Enter CSP code", re.I)).first
-        csp_box.fill(csp_code)
+            page1.wait_for_timeout(1000)
 
-        log.info("Querying CSP Code: %s...", csp_code)
-        frame.get_by_role("button", name=re.compile(r"^\s*Query", re.I)).click()
+            frame.get_by_role("radio", name="Query CSP Code").check()
+            csp_box = frame.locator("#stReferenceNo")
+            if not csp_box.is_visible():
+                csp_box = frame.get_by_role("textbox", name=re.compile("Enter CSP code", re.I)).first
+            csp_box.fill(csp_code)
 
-        page1.wait_for_timeout(2000)
+            log.info("Querying CSP Code: %s...", csp_code)
+            frame.get_by_role("button", name=re.compile(r"^\s*Query", re.I)).click()
 
-        # Step 8: Select result row and open details popup
-        radio = frame.get_by_role("radio").first
-        if radio.is_visible(timeout=8000):
-            radio.check()
-            log.info("CSP row found! Opening details popup...")
-            with page1.expect_popup(timeout=10000) as p2_info:
-                frame.get_by_role("link", name=csp_code).click()
-            page2 = p2_info.value
-            page2.wait_for_load_state("domcontentloaded")
-            log.info("SUCCESS: CSP %s details popup opened successfully!", csp_code)
+            page1.wait_for_timeout(2000)
 
-            SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-            shot_path = SCREENSHOT_DIR / f"csp_details_{csp_code}_{int(time.time())}.png"
-            page2.screenshot(path=str(shot_path))
-            log.info("Screenshot saved: %s", shot_path)
+            # Step 8: Select result row and open details popup
+            radio = frame.get_by_role("radio").first
+            if radio.is_visible(timeout=8000):
+                radio.check()
+                log.info("CSP row found! Opening details popup...")
+                with page1.expect_popup(timeout=10000) as p2_info:
+                    frame.get_by_role("link", name=csp_code).click()
+                page2 = p2_info.value
+                page2.wait_for_load_state("domcontentloaded")
+                log.info("SUCCESS: CSP %s details popup opened successfully!", csp_code)
 
-            log.info("Keeping browser open for 15 seconds so you can see the active forms...")
-            page1.wait_for_timeout(15000)
+                SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+                shot_path = SCREENSHOT_DIR / f"csp_details_{csp_code}_{int(time.time())}.png"
+                page2.screenshot(path=str(shot_path))
+                log.info("Screenshot saved: %s", shot_path)
 
-            page2.close()
-        else:
-            log.warning("No search results returned for CSP %s", csp_code)
-            page1.wait_for_timeout(10000)
+                log.info("Keeping browser open for 15 seconds so you can see the active forms...")
+                page1.wait_for_timeout(15000)
 
-        # Sign out
-        try:
-            page1.once("dialog", lambda dialog: dialog.dismiss())
-            page1.get_by_role("link", name="Sign Out").click()
-            log.info("Signed out.")
-        except Exception:
-            pass
+                page2.close()
+            else:
+                log.warning("No search results returned for CSP %s", csp_code)
+                page1.wait_for_timeout(10000)
 
-        try:
-            video_obj = page.video or page1.video
-            context.close()
-            if video_obj:
-                log.info("Full video recording saved: %s", video_obj.path())
-        except Exception:
-            pass
+            # Sign out
+            try:
+                page1.once("dialog", lambda dialog: dialog.dismiss())
+                page1.get_by_role("link", name="Sign Out").click()
+                log.info("Signed out.")
+            except Exception:
+                pass
 
-        return True
+            return True
+
+        except Exception as exc:
+            log.error("Flow execution failed: %s", exc, exc_info=True)
+            try:
+                SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+                fail_shot = SCREENSHOT_DIR / f"failure_{int(time.time())}.png"
+                page1.screenshot(path=str(fail_shot), full_page=True)
+                log.info("Saved failure screenshot to: %s", fail_shot)
+                fail_html = SCREENSHOT_DIR / f"failure_{int(time.time())}.html"
+                fail_html.write_text(page1.content(), encoding="utf-8")
+                log.info("Saved failure HTML to: %s", fail_html)
+            except Exception as e_shot:
+                log.warning("Could not save failure artifacts: %s", e_shot)
+            return False
+
+        finally:
+            try:
+                video_obj = page.video or page1.video
+                context.close()
+                if video_obj:
+                    log.info("Full video recording saved: %s", video_obj.path())
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
