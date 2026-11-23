@@ -164,7 +164,12 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=headless, slow_mo=200)
-        context = browser.new_context(viewport={"width": 1280, "height": 850})
+        videos_dir = SCREENSHOT_DIR / "videos"
+        videos_dir.mkdir(parents=True, exist_ok=True)
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 850},
+            record_video_dir=str(videos_dir)
+        )
         page = context.new_page()
 
         # Step 1: Open URL (handling popup if Admin.jsp triggers one)
@@ -289,6 +294,14 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
             page1.once("dialog", lambda dialog: dialog.dismiss())
             page1.get_by_role("link", name="Sign Out").click()
             log.info("Signed out.")
+        except Exception:
+            pass
+
+        try:
+            video_obj = page.video or page1.video
+            context.close()
+            if video_obj:
+                log.info("Full video recording saved: %s", video_obj.path())
         except Exception:
             pass
 
