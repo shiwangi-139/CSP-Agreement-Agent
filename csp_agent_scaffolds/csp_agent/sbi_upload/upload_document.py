@@ -462,29 +462,44 @@ def open_csp(page: Page, code: str) -> Page:
     submenu.click()
     log.info("Opened Capture PVR DRA IIBF AMFI form.")
 
-    # 3. Main content inside iframe 'mainframe'
-    frame = page.locator("iframe[name='mainframe']").content_frame
-    frame.get_by_role("combobox").select_option("01")
-    frame.get_by_role("button", name="Submit").click()
+    # 3. Main content inside iframe 'mainframe' using dynamic frame_locator
+    mframe = page.frame_locator("iframe[name='mainframe']")
+    mframe.get_by_role("combobox").select_option("01")
+    mframe.locator("button:has-text('Submit'), input[value*='Submit' i]").first.click()
+
+    page.wait_for_timeout(2000)
 
     # 4. Check Query CSP Code
-    frame.get_by_role("radio", name="Query CSP Code").check()
+    mframe.locator("input[type='radio'][value*='CSP' i], input[type='radio']").first.check()
+    try:
+        mframe.get_by_role("radio", name=re.compile("Query CSP Code", re.I)).check(timeout=3000)
+    except Exception:
+        pass
 
     # 5. Fill CSP Code
-    csp_box = frame.locator("#stReferenceNo")
-    if not csp_box.is_visible():
-        csp_box = frame.get_by_role("textbox", name=re.compile("Enter CSP code", re.I)).first
+    csp_box = mframe.locator("#stReferenceNo, input[name='stReferenceNo'], input[id*='Ref' i]").first
+    if not csp_box.is_visible(timeout=3000):
+        csp_box = mframe.get_by_role("textbox", name=re.compile("Enter CSP code|CSP", re.I)).first
     csp_box.fill(code)
 
     # 6. Click Query
-    frame.get_by_role("button", name=re.compile(r"^\s*Query", re.I)).click()
+    log.info("Querying CSP Code: %s...", code)
+    query_btn = mframe.locator("input[value*='Query' i], button:has-text('Query')").first
+    if not query_btn.is_visible(timeout=3000):
+        query_btn = mframe.get_by_role("button", name=re.compile("Query", re.I)).first
+    query_btn.click()
+
+    page.wait_for_timeout(2000)
 
     # 7. Select radio in the search results
-    frame.get_by_role("radio").first.check()
+    mframe.locator("table input[type='radio'], input[type='radio']").first.check()
 
     # 8. Open CSP details popup
     with page.expect_popup(timeout=TIMEOUT_MS) as pop:
-        frame.get_by_role("link", name=code).click()
+        csp_link = mframe.locator(f"a:has-text('{code}')").first
+        if not csp_link.is_visible(timeout=3000):
+            csp_link = mframe.get_by_role("link", name=code).first
+        csp_link.click()
     popup = pop.value
     popup.wait_for_load_state("domcontentloaded")
     log.info("CSP %s: details popup opened", code)

@@ -425,31 +425,47 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
 
             page1.wait_for_timeout(2000)
 
-            # Step 7: Mainframe iframe interaction
-            frame = page1.locator("iframe[name='mainframe']").content_frame
-            frame.get_by_role("combobox").select_option("01")
-            frame.get_by_role("button", name="Submit").click()
+            # Step 7: Mainframe iframe interaction using dynamic frame_locator
+            log.info("Selecting request type in mainframe...")
+            mframe = page1.frame_locator("iframe[name='mainframe']")
+            mframe.get_by_role("combobox").select_option("01")
+            mframe.locator("button:has-text('Submit'), input[value*='Submit' i]").first.click()
 
-            page1.wait_for_timeout(1000)
+            page1.wait_for_timeout(2000)
 
-            frame.get_by_role("radio", name="Query CSP Code").check()
-            csp_box = frame.locator("#stReferenceNo")
-            if not csp_box.is_visible():
-                csp_box = frame.get_by_role("textbox", name=re.compile("Enter CSP code", re.I)).first
+            # Check Query CSP Code radio
+            log.info("Selecting Query CSP Code radio...")
+            mframe.locator("input[type='radio'][value*='CSP' i], input[type='radio']").first.check()
+            try:
+                mframe.get_by_role("radio", name=re.compile("Query CSP Code", re.I)).check(timeout=3000)
+            except Exception:
+                pass
+
+            # Fill CSP Code
+            csp_box = mframe.locator("#stReferenceNo, input[name='stReferenceNo'], input[id*='Ref' i]").first
+            if not csp_box.is_visible(timeout=3000):
+                csp_box = mframe.get_by_role("textbox", name=re.compile("Enter CSP code|CSP", re.I)).first
             csp_box.fill(csp_code)
 
+            # Click Query button (handles "  Query", "Query", input or button)
             log.info("Querying CSP Code: %s...", csp_code)
-            frame.get_by_role("button", name=re.compile(r"^\s*Query", re.I)).click()
+            query_btn = mframe.locator("input[value*='Query' i], button:has-text('Query')").first
+            if not query_btn.is_visible(timeout=3000):
+                query_btn = mframe.get_by_role("button", name=re.compile("Query", re.I)).first
+            query_btn.click()
 
             page1.wait_for_timeout(2000)
 
             # Step 8: Select result row and open details popup
-            radio = frame.get_by_role("radio").first
-            if radio.is_visible(timeout=8000):
+            radio = mframe.locator("table input[type='radio'], input[type='radio']").first
+            if radio.is_visible(timeout=10000):
                 radio.check()
                 log.info("CSP row found! Opening details popup...")
-                with page1.expect_popup(timeout=10000) as p2_info:
-                    frame.get_by_role("link", name=csp_code).click()
+                with page1.expect_popup(timeout=12000) as p2_info:
+                    csp_link = mframe.locator(f"a:has-text('{csp_code}')").first
+                    if not csp_link.is_visible(timeout=3000):
+                        csp_link = mframe.get_by_role("link", name=csp_code).first
+                    csp_link.click()
                 page2 = p2_info.value
                 page2.wait_for_load_state("domcontentloaded")
                 log.info("SUCCESS: CSP %s details popup opened successfully!", csp_code)
