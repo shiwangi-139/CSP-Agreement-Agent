@@ -93,10 +93,15 @@ def solve_captcha_tesseract(page, img_locator, auto_accept: bool = False) -> str
     return typed if typed else ocr_text
 
 
+CONSUMED_OTPS: set[str] = set()
+
+
 def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int = 60) -> str:
     """Poll for the OTP received on the phone in real time (local files or relay URL)."""
     deadline = start_time + timeout_seconds
-    log.info("Waiting up to %ds for real-time OTP relayed from phone...", timeout_seconds)
+    min_ts = start_time - 1.5  # Accept OTP generated strictly for this login attempt
+    log.info("Waiting up to %ds for real-time OTP relayed from phone (must be after %s)...",
+             timeout_seconds, time.strftime("%H:%M:%S", time.localtime(start_time)))
 
     otp_spool = Path(os.getenv("OTP_SPOOL_DIR", "/home/adarsh/eko/.tmp/sbi_stmt_bot/sms_inbox"))
     otp_json = Path(os.getenv("OTP_JSON_FILE", "/tmp/sbi_latest_otp.json"))
@@ -107,11 +112,14 @@ def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int
         if otp_spool.exists() and otp_spool.is_dir():
             try:
                 files = sorted(
-                    [f for f in otp_spool.glob("*.json") if not f.name.endswith(".yonosbi-consumed")],
+                    [f for f in otp_spool.glob("*.json")
+                     if not f.name.endswith(".yonosbi-consumed") and not f.name.endswith(".csp-consumed")],
                     key=lambda p: p.name,
                     reverse=True
                 )
                 for f in files[:10]:
+                    if f.name in CONSUMED_OTPS:
+                        continue
                     try:
                         data = json.loads(f.read_text(encoding="utf-8"))
                         otp = str(data.get("otp", "")).strip()
@@ -126,9 +134,14 @@ def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int
                             if ts > 1e11:
                                 ts = ts / 1000.0
 
-                        if ts >= start_time - 30.0:
+                        if ts >= min_ts:
                             log.info("Real-time OTP received from spool file %s! OTP=%s, sender=%s, age=%.1fs",
                                      f.name, otp, data.get("from"), time.time() - ts)
+                            CONSUMED_OTPS.add(f.name)
+                            try:
+                                f.with_name(f.name + ".csp-consumed").touch(exist_ok=True)
+                            except Exception:
+                                pass
                             return otp
                     except Exception:
                         continue
@@ -141,9 +154,10 @@ def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int
                 data = json.loads(otp_json.read_text(encoding="utf-8"))
                 ts = data.get("timestamp", 0)
                 otp = str(data.get("otp", "")).strip()
-                if otp and len(otp) == 6 and (ts >= start_time - 30.0):
+                if otp and len(otp) == 6 and (ts >= min_ts) and otp not in CONSUMED_OTPS:
                     log.info("Real-time OTP received from local file! OTP=%s, sender=%s, age=%.1fs",
                              otp, data.get("from"), time.time() - ts)
+                    CONSUMED_OTPS.add(otp)
                     return otp
             except Exception:
                 pass
@@ -151,10 +165,11 @@ def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int
         if otp_txt.exists():
             try:
                 mtime = otp_txt.stat().st_mtime
-                if mtime >= start_time - 30.0:
+                if mtime >= min_ts:
                     otp = otp_txt.read_text(encoding="utf-8").strip()
-                    if otp and len(otp) == 6 and otp.isdigit():
+                    if otp and len(otp) == 6 and otp.isdigit() and otp not in CONSUMED_OTPS:
                         log.info("Real-time OTP received from %s: %s", otp_txt, otp)
+                        CONSUMED_OTPS.add(otp)
                         return otp
             except Exception:
                 pass
@@ -167,9 +182,10 @@ def wait_for_relayed_otp(start_time: float, relay_url: str, timeout_seconds: int
                     data = json.loads(resp.read().decode("utf-8"))
                     ts = data.get("timestamp", 0)
                     otp = str(data.get("otp", "")).strip()
-                    if otp and len(otp) == 6 and (ts >= start_time - 30.0):
+                    if otp and len(otp) == 6 and (ts >= min_ts) and otp not in CONSUMED_OTPS:
                         log.info("Real-time OTP received from relay URL! OTP=%s, sender=%s, age=%.1fs",
                                  otp, data.get("from"), time.time() - ts)
+                        CONSUMED_OTPS.add(otp)
                         return otp
         except Exception:
             pass
@@ -269,7 +285,27 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
 
                 submit_btn = page1.get_by_role("button", name="Submit").first
                 submit_btn.click()
-                log.info("OTP submitted. Waiting for dashboard navigation...")
+                log.info("OTP submitted. Checking if accepted...")
+
+                page1.wait_for_timeout(2000)
+
+                # Check if OTP was rejected
+                err_box = page1.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red']").first
+                if err_box.is_visible(timeout=3000):
+                    err_text = err_box.inner_text().strip()
+                    if "OTP" in err_text or "match" in err_text or "invalid" in err_text.lower():
+                        log.warning("Portal rejected OTP: '%s'. Waiting for next fresh OTP from phone...", err_text)
+                        retry_start = time.time()
+                        new_otp = wait_for_relayed_otp(retry_start, relay_url, timeout_seconds=60)
+                        if new_otp and new_otp != otp_val:
+                            log.info("New fresh OTP received: %s. Re-submitting...", new_otp)
+                            otp_box.fill("")
+                            otp_box.fill(new_otp)
+                            submit_btn.click()
+                            page1.wait_for_timeout(2500)
+                        else:
+                            log.error("Could not obtain a newer OTP or relay timed out. Aborting.")
+                            return False
 
             # Wait for portal navigation and dashboard elements
             try:
@@ -277,12 +313,13 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
             except Exception:
                 pass
 
-            # Check if an error banner is visible
+            # Check if there is still an error banner visible
             err_box = page1.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red']").first
             if err_box.is_visible(timeout=2000):
                 err_text = err_box.inner_text().strip()
                 if err_text:
-                    log.error("Portal error displayed after login/OTP: %s", err_text)
+                    log.error("Portal error displayed: %s. Aborting.", err_text)
+                    return False
 
             # Wait for dashboard marker
             log.info("Waiting for dashboard to be ready...")
@@ -290,7 +327,8 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
                 page1.locator("iframe[name='mainframe'], a:has-text('User Services'), a:has-text('Sign Out')").first.wait_for(timeout=20000)
                 log.info("Dashboard loaded.")
             except Exception as e:
-                log.warning("Notice: Dashboard marker wait returned: %s", e)
+                log.error("Timeout waiting for dashboard marker: %s. Aborting.", e)
+                return False
 
             page1.wait_for_timeout(1000)
 

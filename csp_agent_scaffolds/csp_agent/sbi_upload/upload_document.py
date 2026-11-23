@@ -189,26 +189,34 @@ def _fill_credentials(page: Page) -> None:
     pwd.fill(EP_PASSWORD)
 
 
+CONSUMED_OTPS: set[str] = set()
+
+
 def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
     """Poll for freshly relayed OTP from spool directory, /tmp/sbi_latest_otp.json, /tmp/sbi_latest_otp.txt, or remote relay server."""
     start_time = time.time()
+    min_ts = start_time - 1.5
     otp_spool = Path(os.getenv("OTP_SPOOL_DIR", "/home/adarsh/eko/.tmp/sbi_stmt_bot/sms_inbox"))
     otp_json = Path(os.getenv("OTP_JSON_FILE", "/tmp/sbi_latest_otp.json"))
     otp_txt = Path(os.getenv("OTP_TEXT_FILE", "/tmp/sbi_latest_otp.txt"))
     relay_url = os.getenv("OTP_RELAY_URL", "https://indev.eko.in/csp-agreement-agent/sbi-otp/latest")
     deadline = start_time + timeout_seconds
 
-    log.info("Checking for relayed SBI OTP (waiting up to %ds from mobile relay)...", int(timeout_seconds))
+    log.info("Checking for relayed SBI OTP (waiting up to %ds from mobile relay, after %s)...",
+             int(timeout_seconds), time.strftime("%H:%M:%S", time.localtime(start_time)))
     while time.time() < deadline:
         # 1. Check spool directory directly (when running on server)
         if otp_spool.exists() and otp_spool.is_dir():
             try:
                 files = sorted(
-                    [f for f in otp_spool.glob("*.json") if not f.name.endswith(".yonosbi-consumed")],
+                    [f for f in otp_spool.glob("*.json")
+                     if not f.name.endswith(".yonosbi-consumed") and not f.name.endswith(".csp-consumed")],
                     key=lambda p: p.name,
                     reverse=True
                 )
                 for f in files[:10]:
+                    if f.name in CONSUMED_OTPS:
+                        continue
                     try:
                         data = json.loads(f.read_text(encoding="utf-8"))
                         otp = str(data.get("otp", "")).strip()
@@ -223,9 +231,14 @@ def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
                             if ts > 1e11:
                                 ts = ts / 1000.0
 
-                        if ts >= start_time - 30.0:
+                        if ts >= min_ts:
                             log.info("Found relayed OTP %s from spool %s (sender: %s, age: %.1fs)",
                                      otp, f.name, data.get("from"), time.time() - ts)
+                            CONSUMED_OTPS.add(f.name)
+                            try:
+                                f.with_name(f.name + ".csp-consumed").touch(exist_ok=True)
+                            except Exception:
+                                pass
                             return otp
                     except Exception:
                         continue
@@ -238,8 +251,9 @@ def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
                 data = json.loads(otp_json.read_text(encoding="utf-8"))
                 ts = data.get("timestamp", 0)
                 otp = str(data.get("otp", "")).strip()
-                if otp and len(otp) == 6 and (ts >= start_time - 30.0):
+                if otp and len(otp) == 6 and (ts >= min_ts) and otp not in CONSUMED_OTPS:
                     log.info("Found relayed OTP %s (sender: %s, age: %.1fs)", otp, data.get("from"), time.time() - ts)
+                    CONSUMED_OTPS.add(otp)
                     return otp
             except Exception:
                 pass
@@ -248,10 +262,11 @@ def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
         if otp_txt.exists():
             try:
                 mtime = otp_txt.stat().st_mtime
-                if mtime >= start_time - 30.0:
+                if mtime >= min_ts:
                     otp = otp_txt.read_text(encoding="utf-8").strip()
-                    if otp and len(otp) == 6 and otp.isdigit():
+                    if otp and len(otp) == 6 and otp.isdigit() and otp not in CONSUMED_OTPS:
                         log.info("Found relayed OTP %s from %s", otp, otp_txt)
+                        CONSUMED_OTPS.add(otp)
                         return otp
             except Exception:
                 pass
@@ -266,8 +281,9 @@ def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
                         data = json.loads(resp.read().decode("utf-8"))
                         ts = data.get("timestamp", 0)
                         otp = str(data.get("otp", "")).strip()
-                        if otp and len(otp) == 6 and (ts >= start_time - 30.0):
+                        if otp and len(otp) == 6 and (ts >= min_ts) and otp not in CONSUMED_OTPS:
                             log.info("Found relayed OTP %s from %s (sender: %s, age: %.1fs)", otp, relay_url, data.get("from"), time.time() - ts)
+                            CONSUMED_OTPS.add(otp)
                             return otp
             except Exception:
                 pass
@@ -311,6 +327,19 @@ def _otp_if_asked(page: Page) -> None:
     otp_box.fill(otp)
     submit_btn = page.locator("button:has-text('Submit'), input[value*='Submit' i], button:has-text('Verify')").first
     submit_btn.click()
+
+    page.wait_for_timeout(2000)
+    err_box = page.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red']").first
+    if err_box.is_visible(timeout=3000):
+        err_text = err_box.inner_text().strip()
+        if "OTP" in err_text or "match" in err_text or "invalid" in err_text.lower():
+            log.warning("Portal rejected OTP: '%s'. Waiting for next fresh OTP...", err_text)
+            new_otp = _fetch_relayed_otp(timeout_seconds=60.0)
+            if new_otp and new_otp != otp:
+                log.info("New fresh OTP received: %s. Re-submitting...", new_otp)
+                otp_box.fill("")
+                otp_box.fill(new_otp)
+                submit_btn.click()
 
 
 def _logged_in(page: Page) -> bool:

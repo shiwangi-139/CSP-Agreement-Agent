@@ -149,7 +149,7 @@ def _handle_otp_get(max_age_seconds: float = 300.0):
     if OTP_SPOOL_DIR.exists() and OTP_SPOOL_DIR.is_dir():
         try:
             files = sorted(
-                [f for f in OTP_SPOOL_DIR.glob("*.json") if not f.name.endswith(".yonosbi-consumed")],
+                [f for f in OTP_SPOOL_DIR.glob("*.json") if not f.name.endswith(".yonosbi-consumed") and not f.name.endswith(".csp-consumed")],
                 key=lambda p: p.name,
                 reverse=True
             )
