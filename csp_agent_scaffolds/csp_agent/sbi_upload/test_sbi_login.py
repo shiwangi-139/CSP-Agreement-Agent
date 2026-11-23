@@ -64,7 +64,7 @@ SCREENSHOT_DIR = HERE / "screenshots"
 
 
 def solve_captcha_tesseract(page, img_locator, auto_accept: bool = False) -> str:
-    """Take screenshot of captcha and run Tesseract OCR."""
+    """Take screenshot of captcha and run Tesseract OCR with image preprocessing."""
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
     captcha_path = SCREENSHOT_DIR / f"test_captcha_{int(time.time())}.png"
     img_locator.screenshot(path=str(captcha_path))
@@ -73,13 +73,30 @@ def solve_captcha_tesseract(page, img_locator, auto_accept: bool = False) -> str
     ocr_text = ""
     try:
         import pytesseract
-        from PIL import Image
+        from PIL import Image, ImageEnhance
         img_obj = Image.open(captcha_path)
+
+        # Preprocessing: upscale 2x and enhance contrast for crisp characters
+        w, h = img_obj.size
+        img_scaled = img_obj.resize((w * 2, h * 2), Image.Resampling.LANCZOS).convert("L")
+        enhanced = ImageEnhance.Contrast(img_scaled).enhance(2.0)
+
         raw = pytesseract.image_to_string(
-            img_obj,
+            enhanced,
             config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         )
         ocr_text = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
+
+        # Fallback to direct raw if enhanced produced unexpected length
+        if len(ocr_text) != 6:
+            raw_orig = pytesseract.image_to_string(
+                img_obj,
+                config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+            )
+            clean_orig = re.sub(r"[^A-Za-z0-9]", "", raw_orig).strip()
+            if len(clean_orig) == 6 or not ocr_text:
+                ocr_text = clean_orig
+
         log.info("Tesseract OCR result: '%s'", ocr_text)
     except Exception as e:
         log.warning("Tesseract OCR error: %s", e)
@@ -242,42 +259,80 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
         page.on("dialog", lambda d: (log.info("Parent Dialog: '%s' (auto-dismissed)", d.message), d.dismiss()))
 
         try:
-            # Step 2: Fill Username & Password
-            log.info("Filling credentials...")
-            user_field = page1.locator("#specialChar, input[name='userName']").first
-            user_field.wait_for(state="visible", timeout=15000)
-            user_field.fill(username)
-
-            pass_field = page1.locator("#password, input[type='password']").first
-            pass_field.fill(password)
-
-            # Step 3: Solve Captcha
-            captcha_img = page1.locator("img#captchaImage, img[src*='captcha' i], img[id*='captcha' i]").first
-            if not captcha_img.is_visible():
-                captcha_img = page1.locator("img").first
-
-            captcha_val = solve_captcha_tesseract(page1, captcha_img, auto_accept=auto_captcha)
-            captcha_input = page1.locator("#txtInput, input[name='captcha']").first
-            captcha_input.fill(captcha_val)
-            log.info("Captcha filled.")
-
-            # Step 4: Click Login
+            # Step 2-4: Login attempts (with automatic captcha refresh on error)
+            max_captcha_attempts = 3
+            otp_box = None
             start_wait_otp = time.time()
-            login_btn = page1.locator("button:has-text('Login'), input[value*='Login' i], button:has-text('Sign In')").first
-            login_btn.click()
-            log.info("Login clicked. Checking for OTP prompt...")
+            login_success = False
 
-            page1.wait_for_timeout(2000)
+            for attempt in range(1, max_captcha_attempts + 1):
+                log.info("Login attempt %d of %d...", attempt, max_captcha_attempts)
 
-            # Step 5: OTP Check
-            otp_box = page1.locator("input[name*='otp' i], [aria-label*='OTP' i], input[placeholder*='OTP' i]").first
-            if not otp_box.is_visible(timeout=5000):
-                try:
-                    otp_box = page1.get_by_role("textbox", name=re.compile("Please enter the OTP|OTP", re.I)).first
-                except Exception:
-                    pass
+                # Ensure username and password are filled
+                user_field = page1.locator("#specialChar, input[name='userName']").first
+                user_field.wait_for(state="visible", timeout=15000)
+                user_field.fill("")
+                user_field.fill(username)
 
-            if otp_box.is_visible():
+                pass_field = page1.locator("#password, input[type='password']").first
+                pass_field.fill("")
+                pass_field.fill(password)
+
+                # Step 3: Solve Captcha
+                captcha_img = page1.locator("img#captchaImage, img[src*='captcha' i], img[id*='captcha' i]").first
+                if not captcha_img.is_visible():
+                    captcha_img = page1.locator("img").first
+
+                captcha_val = solve_captcha_tesseract(page1, captcha_img, auto_accept=auto_captcha)
+                captcha_input = page1.locator("#txtInput, input[name='captcha']").first
+                captcha_input.fill("")
+                captcha_input.fill(captcha_val)
+                log.info("Captcha filled with: %s", captcha_val)
+
+                # Step 4: Click Login
+                start_wait_otp = time.time()
+                login_btn = page1.locator("button:has-text('Login'), input[value*='Login' i], button:has-text('Sign In')").first
+                login_btn.click()
+                log.info("Login clicked. Checking response...")
+
+                page1.wait_for_timeout(2000)
+
+                # Check if captcha error was shown
+                err_box = page1.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red']").first
+                if err_box.is_visible(timeout=2000):
+                    err_text = err_box.inner_text().strip()
+                    if "captcha" in err_text.lower():
+                        log.warning("Captcha rejected ('%s'). Refreshing captcha for attempt %d...", err_text, attempt + 1)
+                        if attempt < max_captcha_attempts:
+                            refresh_btn = page1.locator("img[alt*='Refresh' i], a:has-text('Refresh'), img[src*='refresh' i], [title*='Refresh' i]").first
+                            if refresh_btn.is_visible(timeout=3000):
+                                refresh_btn.click()
+                                page1.wait_for_timeout(1500)
+                            continue
+                        else:
+                            log.error("Max login attempts reached on captcha. Aborting.")
+                            return False
+                    elif "user" in err_text.lower() or "password" in err_text.lower() or "blocked" in err_text.lower():
+                        log.error("Portal login credentials error: %s", err_text)
+                        return False
+
+                # Check if OTP prompt appeared or dashboard loaded
+                otp_box = page1.locator("input[name*='otp' i], [aria-label*='OTP' i], input[placeholder*='OTP' i]").first
+                if not otp_box.is_visible(timeout=4000):
+                    try:
+                        otp_box = page1.get_by_role("textbox", name=re.compile("Please enter the OTP|OTP", re.I)).first
+                    except Exception:
+                        pass
+
+                if (otp_box and otp_box.is_visible()) or page1.locator("iframe[name='mainframe'], text='User Services'").first.is_visible():
+                    login_success = True
+                    break
+
+            if not login_success and (not otp_box or not otp_box.is_visible()):
+                log.error("Could not reach OTP screen or dashboard after %d login attempts.", max_captcha_attempts)
+                return False
+
+            if otp_box and otp_box.is_visible():
                 log.info("OTP prompt detected on screen!")
                 otp_val = wait_for_relayed_otp(start_wait_otp, relay_url)
                 log.info("Filling OTP: %s", otp_val)

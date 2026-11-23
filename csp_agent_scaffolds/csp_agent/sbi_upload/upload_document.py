@@ -159,13 +159,24 @@ def solve_image(page: Page, attempt: int) -> str:
     if captcha_path and captcha_path.exists():
         try:
             import pytesseract
-            from PIL import Image
+            from PIL import Image, ImageEnhance
             img_obj = Image.open(captcha_path)
+            w, h = img_obj.size
+            img_scaled = img_obj.resize((w * 2, h * 2), Image.Resampling.LANCZOS).convert("L")
+            enhanced = ImageEnhance.Contrast(img_scaled).enhance(2.0)
             raw = pytesseract.image_to_string(
-                img_obj,
+                enhanced,
                 config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
             )
             ocr_text = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
+            if len(ocr_text) != 6:
+                raw_orig = pytesseract.image_to_string(
+                    img_obj,
+                    config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                )
+                clean_orig = re.sub(r"[^A-Za-z0-9]", "", raw_orig).strip()
+                if len(clean_orig) == 6 or not ocr_text:
+                    ocr_text = clean_orig
             if ocr_text:
                 log.info("Tesseract detected captcha: '%s'", ocr_text)
         except Exception as e:
