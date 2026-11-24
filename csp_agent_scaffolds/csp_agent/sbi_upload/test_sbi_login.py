@@ -376,7 +376,16 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
                     except Exception:
                         pass
 
-                if (otp_box and otp_box.is_visible()) or page1.locator("iframe[name='mainframe'], text='User Services'").first.is_visible():
+                dashboard_ready = False
+                for sel in ["iframe[name='mainframe']", "a:has-text('User Services')", "a:has-text('Sign Out')"]:
+                    try:
+                        if page1.locator(sel).first.is_visible():
+                            dashboard_ready = True
+                            break
+                    except Exception:
+                        pass
+
+                if (otp_box and otp_box.is_visible()) or dashboard_ready:
                     login_success = True
                     break
 
@@ -445,7 +454,7 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
             for candidate in [
                 page1.locator("a:has-text('User Services'), a:has-text('USER SERVICES')").first,
                 page1.get_by_role("link", name=re.compile("User Services", re.I)).first,
-                page1.locator("text='User Services'").first,
+                page1.locator(":has-text('User Services')").first,
                 page1.locator("a").nth(1),
             ]:
                 try:

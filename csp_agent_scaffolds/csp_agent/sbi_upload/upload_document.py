@@ -405,7 +405,7 @@ def _otp_if_asked(page: Page) -> None:
 
 def _logged_in(page: Page) -> bool:
     try:
-        marker = page.locator("a:has-text('Capture PVR'), text='User Services', a:has-text('Sign Out'), iframe[name='mainframe']").first
+        marker = page.locator("a:has-text('Capture PVR'), a:has-text('User Services'), a:has-text('Sign Out'), iframe[name='mainframe']").first
         marker.wait_for(timeout=10000)
         return True
     except PWTimeout:
@@ -488,7 +488,7 @@ def open_csp(page: Page, code: str) -> Page:
     for candidate in [
         page.locator("a:has-text('User Services'), a:has-text('USER SERVICES')").first,
         page.get_by_role("link", name=re.compile("User Services", re.I)).first,
-        page.locator("text='User Services'").first,
+        page.locator(":has-text('User Services')").first,
         page.locator("a").nth(1),
     ]:
         try:
