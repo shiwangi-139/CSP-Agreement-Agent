@@ -527,12 +527,30 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
                 log.warning("Could not save query state screenshot: %s", e_shot)
 
             # Check for any error or alert text in mainframe
+            portal_locked = False
             try:
-                err_el = mframe.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red'], td:has-text('No record')").first
+                err_el = mframe.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red'], td:has-text('pending for Authorization'), td:has-text('No record')").first
                 if err_el.is_visible(timeout=1500):
-                    log.warning("Portal message after Query: '%s'", err_el.inner_text().strip())
+                    err_msg = err_el.inner_text().strip()
+                    log.warning("Portal message after Query: '%s'", err_msg)
+                    if "pending for authorization" in err_msg.lower():
+                        log.warning("CSP %s is locked: details have already been submitted and are pending authorization at SBI branch.", csp_code)
+                        portal_locked = True
+                    elif "no record" in err_msg.lower():
+                        log.warning("CSP %s: No records found under this request type.", csp_code)
+                        portal_locked = True
             except Exception:
                 pass
+
+            if portal_locked:
+                log.info("Finished querying CSP %s (portal locked / no editable records).", csp_code)
+                # Sign out safely
+                try:
+                    page1.get_by_role("link", name=re.compile("Sign Out|Logout", re.I)).click(timeout=5000)
+                    log.info("Signed out.")
+                except Exception as e_so:
+                    log.warning("Sign out error: %s", e_so)
+                return True
 
             # Step 8: Select result row and open details popup
             log.info("Waiting for query results for CSP %s...", csp_code)

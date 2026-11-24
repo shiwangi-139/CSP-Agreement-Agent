@@ -558,9 +558,16 @@ def open_csp(page: Page, code: str) -> Page:
 
     # Check for any portal messages in mainframe
     try:
-        err_el = mframe.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red'], td:has-text('No record')").first
+        err_el = mframe.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red'], td:has-text('pending for Authorization'), td:has-text('No record')").first
         if err_el.is_visible(timeout=1500):
-            log.warning("Portal message after Query: '%s'", err_el.inner_text().strip())
+            err_msg = err_el.inner_text().strip()
+            log.warning("Portal message after Query: '%s'", err_msg)
+            if "pending for authorization" in err_msg.lower():
+                raise RuntimeError(f"CSP {code} details are already submitted and pending authorization by SBI branch.")
+            if "no record" in err_msg.lower():
+                raise RuntimeError(f"No records found for CSP {code} on SBI portal.")
+    except RuntimeError:
+        raise
     except Exception:
         pass
 
