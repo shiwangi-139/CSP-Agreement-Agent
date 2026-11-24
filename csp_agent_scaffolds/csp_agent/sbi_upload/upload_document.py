@@ -80,7 +80,10 @@ MAX_LOGIN_ATTEMPTS = int(os.getenv("MAX_LOGIN_ATTEMPTS", "5"))
 SIGNATORY_NAME = os.getenv("AGREEMENT_SIGNATORY", "Biswajit Chacko")
 DATE_FORMAT = os.getenv("SBI_DATE_FORMAT", "%d/%m/%Y")          # ADJUST to what the SBI form accepts
 MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "2"))         # ADJUST to SBI's file size limit
-HEADLESS = os.getenv("HEADLESS", "false").lower() == "true"     # a person types the captcha: keep it visible
+HAS_DISPLAY = bool(os.getenv("DISPLAY") or os.getenv("WAYLAND_DISPLAY"))
+DEFAULT_HEADLESS = not HAS_DISPLAY or os.getenv("HEADLESS", "false").lower() == "true"
+HEADLESS = DEFAULT_HEADLESS
+AUTO_CAPTCHA = os.getenv("AUTO_CAPTCHA", "true").lower() in ("1", "true", "yes")
 TIMEOUT_MS = int(os.getenv("STEP_TIMEOUT_MS", "20000"))
 HERE = Path(__file__).resolve().parent
 SCREENSHOT_DIR = Path(os.getenv("SCREENSHOT_DIR", HERE / "screenshots"))
@@ -756,8 +759,16 @@ def main() -> int:
     ap.add_argument("--plan", action="store_true", help="only list what would be uploaded; no browser, no Playwright needed")
     ap.add_argument("--submit", action="store_true", help="really submit (default: fill and screenshot only)")
     ap.add_argument("--limit", type=int, default=20, help="at most this many CSPs per run")
+    ap.add_argument("--headless", action="store_true", default=DEFAULT_HEADLESS, help="run browser in headless mode (default on servers)")
+    ap.add_argument("--headed", action="store_true", help="force visible browser window (requires X11)")
+    ap.add_argument("--auto-captcha", action="store_true", default=AUTO_CAPTCHA, help="automatically accept Tesseract captcha read")
     args = ap.parse_args()
     setup_logging()
+
+    if args.auto_captcha:
+        os.environ["AUTO_CAPTCHA"] = "true"
+
+    use_headless = False if args.headed else (True if not HAS_DISPLAY else args.headless)
 
     kinds = [k.strip() for k in args.docs.split(",") if k.strip()]
     if bad := [k for k in kinds if k not in DOC_KINDS]:
@@ -799,8 +810,14 @@ def main() -> int:
         return 2
     try:
         with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=HEADLESS)
-            context = browser.new_context(accept_downloads=True)
+            browser = pw.chromium.launch(headless=use_headless)
+            videos_dir = SCREENSHOT_DIR / "videos"
+            videos_dir.mkdir(parents=True, exist_ok=True)
+            context = browser.new_context(
+                accept_downloads=True,
+                viewport={"width": 1280, "height": 850},
+                record_video_dir=str(videos_dir)
+            )
             context.set_default_timeout(TIMEOUT_MS)
             page = context.new_page()
             ok, active_page = login(page)
@@ -819,6 +836,13 @@ def main() -> int:
                         active_page.goto(SBI_URL.rsplit("/", 1)[0] + "/", wait_until="domcontentloaded")
             finally:
                 sign_out(active_page)
+                try:
+                    video_obj = page.video or active_page.video
+                    context.close()
+                    if video_obj:
+                        log.info("Full upload video recording saved: %s", video_obj.path())
+                except Exception:
+                    pass
                 browser.close()
     except Exception:
         log.exception("Unexpected failure")
