@@ -299,9 +299,16 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
                 except Exception:
                     pass
 
-        # Register dialog handler to auto-dismiss any SBI alert or confirmation popups
-        page1.on("dialog", lambda d: (log.info("SBI Dialog: '%s' (auto-dismissed)", d.message), d.dismiss()))
-        page.on("dialog", lambda d: (log.info("Parent Dialog: '%s' (auto-dismissed)", d.message), d.dismiss()))
+        # Register dialog handler to safely auto-dismiss any SBI alert or confirmation popups
+        def _safe_dialog_handler(d):
+            try:
+                log.info("SBI Dialog: '%s' (auto-dismissed)", d.message)
+                d.dismiss()
+            except Exception:
+                pass
+
+        page1.on("dialog", _safe_dialog_handler)
+        page.on("dialog", _safe_dialog_handler)
 
         try:
             # Step 2-4: Login attempts (with automatic captcha refresh on error)
@@ -496,36 +503,74 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
             log.info("Querying CSP Code: %s...", csp_code)
             query_btn = mframe.locator("input[value*='Query' i], button:has-text('Query')").first
             if not query_btn.is_visible(timeout=3000):
-                query_btn = mframe.get_by_role("button", name=re.compile("Query", re.I)).first
+                query_btn = mframe.get_by_role("button", name=re.compile(r"^\s*Query", re.I)).first
             query_btn.click()
 
-            page1.wait_for_timeout(2000)
+            page1.wait_for_timeout(3000)
+
+            # Save state screenshot immediately after query
+            SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+            query_shot = SCREENSHOT_DIR / f"query_state_{csp_code}_{int(time.time())}.png"
+            try:
+                page1.screenshot(path=str(query_shot), full_page=True)
+                log.info("Query state screenshot saved: %s", query_shot)
+            except Exception as e_shot:
+                log.warning("Could not save query state screenshot: %s", e_shot)
+
+            # Check for any error or alert text in mainframe
+            try:
+                err_el = mframe.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red'], td:has-text('No record')").first
+                if err_el.is_visible(timeout=1500):
+                    log.warning("Portal message after Query: '%s'", err_el.inner_text().strip())
+            except Exception:
+                pass
 
             # Step 8: Select result row and open details popup
             log.info("Waiting for query results for CSP %s...", csp_code)
+            popup_opened = False
+
+            # Candidate 1: Direct link matching CSP code
+            csp_direct_link = mframe.locator(f"a:has-text('{csp_code}')").first
+            # Candidate 2: Row matching CSP code
             result_row = mframe.locator("tr").filter(has_text=re.compile(csp_code, re.I)).first
+            # Candidate 3: Any radio button in the results table
+            result_radio = mframe.locator("table tr input[type='radio']").first
+
             try:
-                result_row.wait_for(state="visible", timeout=20000)
-                log.info("CSP row for %s found in search results!", csp_code)
+                # Wait up to 10s for either direct link, result row, or radio
+                for _ in range(20):
+                    if csp_direct_link.is_visible() or result_row.is_visible() or result_radio.is_visible():
+                        break
+                    page1.wait_for_timeout(500)
 
-                # Check the radio button in that row if present
-                row_radio = result_row.locator("input[type='radio']").first
-                if row_radio.is_visible(timeout=3000):
-                    row_radio.check()
-                    log.info("Checked result row radio button.")
+                # Check radio in result row if present
+                if result_row.is_visible():
+                    log.info("CSP row for %s found in search results!", csp_code)
+                    row_radio = result_row.locator("input[type='radio']").first
+                    if row_radio.is_visible(timeout=2000):
+                        row_radio.check()
+                        log.info("Checked result row radio button.")
+                elif result_radio.is_visible():
+                    log.info("Found result table radio button. Checking it...")
+                    result_radio.check()
 
-                # Click the CSP link in that row to trigger the popup
+                # Trigger the popup window
                 with page1.expect_popup(timeout=15000) as p2_info:
-                    csp_link = result_row.locator("a").filter(has_text=re.compile(csp_code, re.I)).first
-                    if not csp_link.is_visible(timeout=3000):
-                        csp_link = result_row.locator("a").first
-                    csp_link.click()
+                    if csp_direct_link.is_visible(timeout=3000):
+                        log.info("Clicking direct link for CSP %s...", csp_code)
+                        csp_direct_link.click()
+                    elif result_row.is_visible() and result_row.locator("a").first.is_visible(timeout=2000):
+                        log.info("Clicking link in CSP %s result row...", csp_code)
+                        result_row.locator("a").first.click()
+                    else:
+                        log.info("Attempting click on first available table link...")
+                        mframe.locator("table a").first.click()
 
                 page2 = p2_info.value
                 page2.wait_for_load_state("domcontentloaded")
                 log.info("SUCCESS: CSP %s details popup opened successfully!", csp_code)
+                popup_opened = True
 
-                SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
                 shot_path = SCREENSHOT_DIR / f"csp_details_{csp_code}_{int(time.time())}.png"
                 page2.screenshot(path=str(shot_path))
                 log.info("Screenshot saved: %s", shot_path)
@@ -535,27 +580,16 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
 
                 page2.close()
             except Exception as e_row:
-                log.warning("Could not find CSP result row or popup failed: %s", e_row)
-                # Fallback to direct link anywhere in mframe
-                try:
-                    with page1.expect_popup(timeout=10000) as p2_info:
-                        mframe.locator(f"a:has-text('{csp_code}')").first.click(timeout=5000)
-                    page2 = p2_info.value
-                    page2.wait_for_load_state("domcontentloaded")
-                    log.info("SUCCESS via fallback: CSP %s details popup opened!", csp_code)
-                    page2.close()
-                except Exception:
-                    pass
+                log.warning("Could not open CSP popup: %s", e_row)
 
-            # Sign out
+            # Sign out safely
             try:
-                page1.once("dialog", lambda dialog: dialog.dismiss())
-                page1.get_by_role("link", name="Sign Out").click()
+                page1.get_by_role("link", name=re.compile("Sign Out|Logout", re.I)).click(timeout=5000)
                 log.info("Signed out.")
-            except Exception:
-                pass
+            except Exception as e_so:
+                log.warning("Sign out error: %s", e_so)
 
-            return True
+            return popup_opened
 
         except Exception as exc:
             log.error("Flow execution failed: %s", exc, exc_info=True)

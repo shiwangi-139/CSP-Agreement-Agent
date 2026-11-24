@@ -452,7 +452,6 @@ def login(page: Page) -> tuple[bool, Page]:
 
 def sign_out(page: Page) -> None:
     try:
-        page.once("dialog", lambda dialog: dialog.dismiss())
         page.get_by_role("link", name=re.compile("Sign Out|Logout", re.I)).click(timeout=5000)
         log.info("Signed out")
     except Exception as e:
@@ -461,7 +460,14 @@ def sign_out(page: Page) -> None:
 
 def open_csp(page: Page, code: str) -> Page:
     """Steps 8-16: Navigate to Capture PVR DRA IIBF AMFI and open CSP popup."""
-    page.on("dialog", lambda d: (log.info("SBI Dialog: '%s' (auto-dismissed)", d.message), d.dismiss()))
+    def _safe_dialog(d):
+        try:
+            log.info("SBI Dialog: '%s' (auto-dismissed)", d.message)
+            d.dismiss()
+        except Exception:
+            pass
+
+    page.on("dialog", _safe_dialog)
 
     # Wait for dashboard navigation
     try:
@@ -536,32 +542,64 @@ def open_csp(page: Page, code: str) -> Page:
     log.info("Querying CSP Code: %s...", code)
     query_btn = mframe.locator("input[value*='Query' i], button:has-text('Query')").first
     if not query_btn.is_visible(timeout=3000):
-        query_btn = mframe.get_by_role("button", name=re.compile("Query", re.I)).first
+        query_btn = mframe.get_by_role("button", name=re.compile(r"^\s*Query", re.I)).first
     query_btn.click()
 
-    page.wait_for_timeout(2000)
+    page.wait_for_timeout(3000)
+
+    # Save state screenshot immediately after query
+    try:
+        SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+        query_shot = SCREENSHOT_DIR / f"query_state_{code}_{int(time.time())}.png"
+        page.screenshot(path=str(query_shot), full_page=True)
+        log.info("Query state screenshot saved: %s", query_shot)
+    except Exception:
+        pass
+
+    # Check for any portal messages in mainframe
+    try:
+        err_el = mframe.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red'], td:has-text('No record')").first
+        if err_el.is_visible(timeout=1500):
+            log.warning("Portal message after Query: '%s'", err_el.inner_text().strip())
+    except Exception:
+        pass
 
     # 7. Select radio in the search results
     log.info("Waiting for query results for CSP %s...", code)
+    csp_direct_link = mframe.locator(f"a:has-text('{code}')").first
     result_row = mframe.locator("tr").filter(has_text=re.compile(code, re.I)).first
+    result_radio = mframe.locator("table tr input[type='radio']").first
+
     try:
-        result_row.wait_for(state="visible", timeout=20000)
-        row_radio = result_row.locator("input[type='radio']").first
-        if row_radio.is_visible(timeout=3000):
-            row_radio.check()
+        for _ in range(20):
+            if csp_direct_link.is_visible() or result_row.is_visible() or result_radio.is_visible():
+                break
+            page.wait_for_timeout(500)
+
+        if result_row.is_visible():
+            log.info("CSP %s row found in search results!", code)
+            row_radio = result_row.locator("input[type='radio']").first
+            if row_radio.is_visible(timeout=2000):
+                row_radio.check()
+        elif result_radio.is_visible():
+            result_radio.check()
 
         # 8. Open CSP details popup
         with page.expect_popup(timeout=TIMEOUT_MS) as pop:
-            csp_link = result_row.locator("a").filter(has_text=re.compile(code, re.I)).first
-            if not csp_link.is_visible(timeout=3000):
-                csp_link = result_row.locator("a").first
-            csp_link.click()
+            if csp_direct_link.is_visible(timeout=3000):
+                csp_direct_link.click()
+            elif result_row.is_visible() and result_row.locator("a").first.is_visible(timeout=2000):
+                result_row.locator("a").first.click()
+            else:
+                mframe.locator("table a").first.click()
+
         popup = pop.value
         popup.wait_for_load_state("domcontentloaded")
         log.info("CSP %s: details popup opened", code)
         return popup
     except Exception as e:
-        log.warning("Row selector failed (%s), attempting direct fallback click...", e)
+        log.warning("Could not open CSP popup: %s", e)
+        # Fallback direct click
         with page.expect_popup(timeout=TIMEOUT_MS) as pop:
             mframe.locator(f"a:has-text('{code}')").first.click()
         popup = pop.value
