@@ -76,7 +76,7 @@ load_dotenv(AGENT_DIR / ".env")                                # does not overri
 SBI_URL = os.getenv("SBI_URL", "https://fi.sbi.bank.in/admin/start.do")
 EP_USERNAME = os.getenv("EP_USERNAME", "")
 EP_PASSWORD = os.getenv("EP_PASSWORD", "")
-MAX_LOGIN_ATTEMPTS = int(os.getenv("MAX_LOGIN_ATTEMPTS", "3"))
+MAX_LOGIN_ATTEMPTS = int(os.getenv("MAX_LOGIN_ATTEMPTS", "5"))
 SIGNATORY_NAME = os.getenv("AGREEMENT_SIGNATORY", "Biswajit Chacko")
 DATE_FORMAT = os.getenv("SBI_DATE_FORMAT", "%d/%m/%Y")          # ADJUST to what the SBI form accepts
 MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "2"))         # ADJUST to SBI's file size limit
@@ -140,51 +140,101 @@ def _agent_modules():
 
 
 # ------------------------------------------------------------------- login
-def solve_image(page: Page, attempt: int) -> str:
+def solve_image(page: Page, attempt: int, max_image_retries: int = 3) -> str:
     """The person types the captcha. The image is also saved, so it can be
-    read if the browser window is hidden. Tesseract OCR is used if available."""
-    img = page.locator("img#captchaImage, img[alt*='captcha' i], img[src*='captcha' i]").first
-    img.wait_for(state="visible", timeout=TIMEOUT_MS)
-    captcha_path = None
-    try:
-        SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-        captcha_path = SCREENSHOT_DIR / f"captcha_attempt{attempt}.png"
-        img.screenshot(path=str(captcha_path))
-        log.info("Captcha image saved to %s", captcha_path)
-    except Exception as e:
-        log.warning("Could not save captcha screenshot: %s", e)
-
-    # Attempt automatic Tesseract OCR
-    ocr_text = ""
-    if captcha_path and captcha_path.exists():
+    read if the browser window is hidden. Tesseract OCR is used if available.
+    If OCR does not find exactly 6 characters, automatically refreshes image before returning."""
+    for r in range(max_image_retries):
+        img = page.locator("img#captchaImage, img[alt*='captcha' i], img[src*='captcha' i]").first
+        img.wait_for(state="visible", timeout=TIMEOUT_MS)
+        captcha_path = None
         try:
-            import pytesseract
-            from PIL import Image, ImageEnhance
-            img_obj = Image.open(captcha_path)
-            w, h = img_obj.size
-            img_scaled = img_obj.resize((w * 2, h * 2), Image.Resampling.LANCZOS).convert("L")
-            enhanced = ImageEnhance.Contrast(img_scaled).enhance(2.0)
-            raw = pytesseract.image_to_string(
-                enhanced,
-                config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-            )
-            ocr_text = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
-            if len(ocr_text) != 6:
-                raw_orig = pytesseract.image_to_string(
-                    img_obj,
+            SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+            captcha_path = SCREENSHOT_DIR / f"captcha_attempt{attempt}_sub{r}.png"
+            img.screenshot(path=str(captcha_path))
+            log.info("Captcha image saved to %s", captcha_path)
+        except Exception as e:
+            log.warning("Could not save captcha screenshot: %s", e)
+
+        # Attempt automatic Tesseract OCR
+        ocr_text = ""
+        if captcha_path and captcha_path.exists():
+            try:
+                import pytesseract
+                from PIL import Image, ImageEnhance
+                img_obj = Image.open(captcha_path)
+                w, h = img_obj.size
+
+                # Strategy 1: 2x Lanczos + Contrast enhance (PSM 7)
+                img_scaled = img_obj.resize((w * 2, h * 2), Image.Resampling.LANCZOS).convert("L")
+                enhanced = ImageEnhance.Contrast(img_scaled).enhance(2.0)
+                raw = pytesseract.image_to_string(
+                    enhanced,
                     config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
                 )
-                clean_orig = re.sub(r"[^A-Za-z0-9]", "", raw_orig).strip()
-                if len(clean_orig) == 6 or not ocr_text:
-                    ocr_text = clean_orig
-            if ocr_text:
-                log.info("Tesseract detected captcha: '%s'", ocr_text)
-        except Exception as e:
-            log.warning("Tesseract OCR failed: %s", e)
+                cand = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
+                if len(cand) == 6:
+                    ocr_text = cand
 
-    auto_captcha = os.getenv("AUTO_CAPTCHA", "false").lower() in ("1", "true", "yes")
+                # Strategy 2: PSM 8 (single word)
+                if len(ocr_text) != 6:
+                    raw = pytesseract.image_to_string(
+                        enhanced,
+                        config="--psm 8 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                    )
+                    cand = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
+                    if len(cand) == 6:
+                        ocr_text = cand
+
+                # Strategy 3: 3x scale + contrast
+                if len(ocr_text) != 6:
+                    img_scaled3 = img_obj.resize((w * 3, h * 3), Image.Resampling.LANCZOS).convert("L")
+                    enh3 = ImageEnhance.Contrast(img_scaled3).enhance(2.2)
+                    raw = pytesseract.image_to_string(
+                        enh3,
+                        config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                    )
+                    cand = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
+                    if len(cand) == 6:
+                        ocr_text = cand
+
+                # Strategy 4: Raw original image
+                if len(ocr_text) != 6:
+                    raw_orig = pytesseract.image_to_string(
+                        img_obj,
+                        config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                    )
+                    cand = re.sub(r"[^A-Za-z0-9]", "", raw_orig).strip()
+                    if len(cand) == 6 or not ocr_text:
+                        ocr_text = cand
+
+                if ocr_text:
+                    log.info("Tesseract detected captcha: '%s'", ocr_text)
+            except Exception as e:
+                log.warning("Tesseract OCR failed: %s", e)
+
+        auto_captcha = os.getenv("AUTO_CAPTCHA", "false").lower() in ("1", "true", "yes")
+        if len(ocr_text) == 6:
+            if auto_captcha:
+                log.info("Auto-filling captcha: %s", ocr_text)
+                return ocr_text
+            prompt = f"Type captcha text (Tesseract detected [{ocr_text}], press Enter to accept): "
+            typed = input(prompt).strip()
+            return typed if typed else ocr_text
+
+        # If not 6 chars, refresh image before submitting
+        if r < max_image_retries - 1:
+            log.info("Captcha OCR result '%s' is not 6 chars. Refreshing captcha image...", ocr_text)
+            try:
+                refresh_btn = page.locator("img[alt*='Refresh' i], a:has-text('Refresh'), img[src*='refresh' i], [title*='Refresh' i]").first
+                if refresh_btn.is_visible(timeout=3000):
+                    refresh_btn.click()
+                    page.wait_for_timeout(1500)
+            except Exception:
+                pass
+
     if auto_captcha and ocr_text:
-        log.info("Auto-filling captcha: %s", ocr_text)
+        log.info("Auto-filling best-effort captcha: %s", ocr_text)
         return ocr_text
 
     prompt = f"Type captcha text (Tesseract detected [{ocr_text or 'none'}], press Enter to accept): "

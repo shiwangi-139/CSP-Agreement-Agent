@@ -63,46 +63,91 @@ DEFAULT_HEADLESS = not HAS_DISPLAY or os.getenv("HEADLESS", "false").lower() == 
 SCREENSHOT_DIR = HERE / "screenshots"
 
 
-def solve_captcha_tesseract(page, img_locator, auto_accept: bool = False) -> str:
-    """Take screenshot of captcha and run Tesseract OCR with image preprocessing."""
+def solve_captcha_tesseract(page, img_locator, auto_accept: bool = False, max_image_retries: int = 3) -> str:
+    """Take screenshot of captcha and run Tesseract OCR with image preprocessing.
+    If OCR does not find exactly 6 characters, automatically refreshes image before returning."""
     SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    captcha_path = SCREENSHOT_DIR / f"test_captcha_{int(time.time())}.png"
-    img_locator.screenshot(path=str(captcha_path))
-    log.info("Captcha image saved to: %s", captcha_path)
 
-    ocr_text = ""
-    try:
-        import pytesseract
-        from PIL import Image, ImageEnhance
-        img_obj = Image.open(captcha_path)
+    for r in range(max_image_retries):
+        captcha_path = SCREENSHOT_DIR / f"test_captcha_{int(time.time())}.png"
+        img_locator.screenshot(path=str(captcha_path))
+        log.info("Captcha image saved to: %s", captcha_path)
 
-        # Preprocessing: upscale 2x and enhance contrast for crisp characters
-        w, h = img_obj.size
-        img_scaled = img_obj.resize((w * 2, h * 2), Image.Resampling.LANCZOS).convert("L")
-        enhanced = ImageEnhance.Contrast(img_scaled).enhance(2.0)
+        ocr_text = ""
+        try:
+            import pytesseract
+            from PIL import Image, ImageEnhance
+            img_obj = Image.open(captcha_path)
+            w, h = img_obj.size
 
-        raw = pytesseract.image_to_string(
-            enhanced,
-            config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        )
-        ocr_text = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
-
-        # Fallback to direct raw if enhanced produced unexpected length
-        if len(ocr_text) != 6:
-            raw_orig = pytesseract.image_to_string(
-                img_obj,
+            # Strategy 1: 2x Lanczos + Contrast enhance (PSM 7)
+            img_scaled = img_obj.resize((w * 2, h * 2), Image.Resampling.LANCZOS).convert("L")
+            enhanced = ImageEnhance.Contrast(img_scaled).enhance(2.0)
+            raw = pytesseract.image_to_string(
+                enhanced,
                 config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
             )
-            clean_orig = re.sub(r"[^A-Za-z0-9]", "", raw_orig).strip()
-            if len(clean_orig) == 6 or not ocr_text:
-                ocr_text = clean_orig
+            cand = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
+            if len(cand) == 6:
+                ocr_text = cand
 
-        log.info("Tesseract OCR result: '%s'", ocr_text)
-    except Exception as e:
-        log.warning("Tesseract OCR error: %s", e)
+            # Strategy 2: PSM 8 (single word)
+            if len(ocr_text) != 6:
+                raw = pytesseract.image_to_string(
+                    enhanced,
+                    config="--psm 8 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                )
+                cand = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
+                if len(cand) == 6:
+                    ocr_text = cand
+
+            # Strategy 3: 3x scale + contrast
+            if len(ocr_text) != 6:
+                img_scaled3 = img_obj.resize((w * 3, h * 3), Image.Resampling.LANCZOS).convert("L")
+                enh3 = ImageEnhance.Contrast(img_scaled3).enhance(2.2)
+                raw = pytesseract.image_to_string(
+                    enh3,
+                    config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                )
+                cand = re.sub(r"[^A-Za-z0-9]", "", raw).strip()
+                if len(cand) == 6:
+                    ocr_text = cand
+
+            # Strategy 4: Raw original image
+            if len(ocr_text) != 6:
+                raw_orig = pytesseract.image_to_string(
+                    img_obj,
+                    config="--psm 7 -c tessedit_char_whitelist=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                )
+                cand = re.sub(r"[^A-Za-z0-9]", "", raw_orig).strip()
+                if len(cand) == 6 or not ocr_text:
+                    ocr_text = cand
+
+            log.info("Tesseract OCR result: '%s'", ocr_text)
+        except Exception as e:
+            log.warning("Tesseract OCR error: %s", e)
+
+        if len(ocr_text) == 6:
+            if auto_accept:
+                log.info("Auto-accepting Tesseract result: %s", ocr_text)
+                return ocr_text
+            prompt = f"Enter captcha text (Tesseract read [{ocr_text}], press Enter to accept): "
+            typed = input(prompt).strip()
+            return typed if typed else ocr_text
+
+        # If not 6 characters, and we have retries left, refresh the captcha image immediately
+        if r < max_image_retries - 1:
+            log.info("OCR got '%s' (%d chars, needed 6). Refreshing captcha image for clearer text...", ocr_text, len(ocr_text))
+            try:
+                refresh_btn = page.locator("img[alt*='Refresh' i], a:has-text('Refresh'), img[src*='refresh' i], [title*='Refresh' i]").first
+                if refresh_btn.is_visible(timeout=3000):
+                    refresh_btn.click()
+                    page.wait_for_timeout(1500)
+            except Exception:
+                pass
 
     if auto_accept and ocr_text:
-        log.info("Auto-accepting Tesseract result: %s", ocr_text)
+        log.info("Auto-accepting best-effort OCR result: %s", ocr_text)
         return ocr_text
 
     prompt = f"Enter captcha text (Tesseract read [{ocr_text or 'none'}], press Enter to accept): "
@@ -260,7 +305,7 @@ def run_login_flow(url: str, username: str, password: str, relay_url: str, csp_c
 
         try:
             # Step 2-4: Login attempts (with automatic captcha refresh on error)
-            max_captcha_attempts = 3
+            max_captcha_attempts = int(os.getenv("MAX_CAPTCHA_ATTEMPTS", "5"))
             otp_box = None
             start_wait_otp = time.time()
             login_success = False
