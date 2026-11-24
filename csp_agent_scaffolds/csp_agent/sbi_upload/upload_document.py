@@ -216,9 +216,9 @@ def solve_image(page: Page, attempt: int, max_image_retries: int = 3) -> str:
             except Exception as e:
                 log.warning("Tesseract OCR failed: %s", e)
 
-        auto_captcha = os.getenv("AUTO_CAPTCHA", "false").lower() in ("1", "true", "yes")
+        auto_captcha = AUTO_CAPTCHA or (os.getenv("AUTO_CAPTCHA", "true").lower() in ("1", "true", "yes"))
         if len(ocr_text) == 6:
-            if auto_captcha:
+            if auto_captcha or not sys.stdin.isatty():
                 log.info("Auto-filling captcha: %s", ocr_text)
                 return ocr_text
             prompt = f"Type captcha text (Tesseract detected [{ocr_text}], press Enter to accept): "
@@ -236,7 +236,7 @@ def solve_image(page: Page, attempt: int, max_image_retries: int = 3) -> str:
             except Exception:
                 pass
 
-    if auto_captcha and ocr_text:
+    if auto_captcha or not sys.stdin.isatty():
         log.info("Auto-filling best-effort captcha: %s", ocr_text)
         return ocr_text
 
@@ -249,16 +249,19 @@ def _fill_credentials(page: Page) -> None:
     user = page.locator("#specialChar, input[name='userName'], input[id*='user' i]").first
     pwd = page.locator("#password, input[type='password']").first
     user.wait_for(state="visible", timeout=15000)
+    user.fill("")
     user.fill(EP_USERNAME)
+    pwd.fill("")
     pwd.fill(EP_PASSWORD)
 
 
 CONSUMED_OTPS: set[str] = set()
 
 
-def _fetch_relayed_otp(timeout_seconds: float = 45.0) -> Optional[str]:
+def _fetch_relayed_otp(timeout_seconds: float = 60.0, start_time: Optional[float] = None) -> Optional[str]:
     """Poll for freshly relayed OTP from spool directory, /tmp/sbi_latest_otp.json, /tmp/sbi_latest_otp.txt, or remote relay server."""
-    start_time = time.time()
+    if start_time is None:
+        start_time = time.time()
     min_ts = start_time - 1.5
     otp_spool = Path(os.getenv("OTP_SPOOL_DIR", "/home/adarsh/eko/.tmp/sbi_stmt_bot/sms_inbox"))
     otp_json = Path(os.getenv("OTP_JSON_FILE", "/tmp/sbi_latest_otp.json"))
@@ -374,45 +377,18 @@ def open_login_page(page: Page) -> Page:
         return page
 
 
-def _otp_if_asked(page: Page) -> None:
-    """SBI may ask for an OTP after the captcha."""
-    otp_box = page.locator("input[name*='otp' i], [aria-label*='OTP' i], input[placeholder*='OTP' i]").first
-    if not otp_box.is_visible(timeout=5000):
+def attach_safe_dialog_handler(page: Page) -> None:
+    """Attach safe auto-dismiss handler to prevent SBI alert/confirm dialogs from blocking execution."""
+    if getattr(page, "_has_safe_dialog_handler", False):
+        return
+    def _safe_dialog_handler(d):
         try:
-            otp_box = page.get_by_role("textbox", name=re.compile("Please enter the OTP|OTP", re.I)).first
+            log.info("SBI Dialog: '%s' (auto-dismissed)", d.message)
+            d.dismiss()
         except Exception:
             pass
-    if not otp_box.is_visible():
-        return
-    log.info("OTP prompt shown on screen")
-    otp = _fetch_relayed_otp(timeout_seconds=60.0)
-    if not otp:
-        otp = input("Type the OTP sent by SBI and press Enter: ").strip()
-    otp_box.fill(otp)
-    submit_btn = page.locator("button:has-text('Submit'), input[value*='Submit' i], button:has-text('Verify')").first
-    submit_btn.click()
-
-    page.wait_for_timeout(2000)
-    err_box = page.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red']").first
-    if err_box.is_visible(timeout=3000):
-        err_text = err_box.inner_text().strip()
-        if "OTP" in err_text or "match" in err_text or "invalid" in err_text.lower():
-            log.warning("Portal rejected OTP: '%s'. Waiting for next fresh OTP...", err_text)
-            new_otp = _fetch_relayed_otp(timeout_seconds=60.0)
-            if new_otp and new_otp != otp:
-                log.info("New fresh OTP received: %s. Re-submitting...", new_otp)
-                otp_box.fill("")
-                otp_box.fill(new_otp)
-                submit_btn.click()
-
-
-def _logged_in(page: Page) -> bool:
-    try:
-        marker = page.locator("a:has-text('Capture PVR'), a:has-text('User Services'), a:has-text('Sign Out'), iframe[name='mainframe']").first
-        marker.wait_for(timeout=10000)
-        return True
-    except PWTimeout:
-        return False
+    page.on("dialog", _safe_dialog_handler)
+    page._has_safe_dialog_handler = True
 
 
 def login(page: Page) -> tuple[bool, Page]:
@@ -423,34 +399,149 @@ def login(page: Page) -> tuple[bool, Page]:
 
     active_page = open_login_page(page)
 
-    for attempt in range(1, MAX_LOGIN_ATTEMPTS + 1):
-        log.info("Login attempt %d of %d", attempt, MAX_LOGIN_ATTEMPTS)
-        try:
+    # Auto-dismiss any dialogs on both pages safely
+    attach_safe_dialog_handler(page)
+    attach_safe_dialog_handler(active_page)
+
+    max_captcha_attempts = MAX_LOGIN_ATTEMPTS
+    otp_box = None
+    start_wait_otp = time.time()
+    login_success = False
+
+    try:
+        for attempt in range(1, max_captcha_attempts + 1):
+            log.info("Login attempt %d of %d...", attempt, max_captcha_attempts)
+
+            # Ensure credentials are filled
             _fill_credentials(active_page)
+
+            # Solve Captcha
             captcha_val = solve_image(active_page, attempt)
             captcha_input = active_page.locator("#txtInput, input[name='captcha']").first
+            captcha_input.fill("")
             captcha_input.fill(captcha_val)
+            log.info("Captcha filled with: %s", captcha_val)
 
-            sign_in_btn = active_page.locator("button:has-text('Login'), input[value*='Login' i], button:has-text('Sign In')").first
-            sign_in_btn.click()
+            # Click Login
+            start_wait_otp = time.time()
+            login_btn = active_page.locator("button:has-text('Login'), input[value*='Login' i], button:has-text('Sign In')").first
+            login_btn.click()
+            log.info("Login clicked. Checking response...")
 
-            _otp_if_asked(active_page)
-            if _logged_in(active_page):
-                log.info("Logged in successfully!")
-                return True, active_page
+            active_page.wait_for_timeout(2000)
 
-            err = active_page.locator(".errorMessage, .error, #errorMsg, [class*='error' i]")
-            msg = err.first.inner_text().strip() if err.count() else "dashboard not shown"
-            log.warning("Login attempt %d failed: %s", attempt, msg)
-        except PWTimeout as e:
-            log.warning("Login attempt %d timed out: %s", attempt, e)
+            # Check if captcha or credential error was shown
+            err_box = active_page.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red']").first
+            if err_box.is_visible(timeout=2000):
+                err_text = err_box.inner_text().strip()
+                if "captcha" in err_text.lower():
+                    log.warning("Captcha rejected ('%s'). Refreshing captcha for attempt %d...", err_text, attempt + 1)
+                    if attempt < max_captcha_attempts:
+                        refresh_btn = active_page.locator("img[alt*='Refresh' i], a:has-text('Refresh'), img[src*='refresh' i], [title*='Refresh' i]").first
+                        try:
+                            if refresh_btn.is_visible(timeout=3000):
+                                refresh_btn.click()
+                                active_page.wait_for_timeout(1500)
+                        except Exception:
+                            pass
+                        continue
+                    else:
+                        log.error("Max login attempts reached on captcha. Aborting.")
+                        return False, active_page
+                elif "user" in err_text.lower() or "password" in err_text.lower() or "blocked" in err_text.lower():
+                    log.error("Portal login credentials error: %s", err_text)
+                    return False, active_page
 
-        if attempt < MAX_LOGIN_ATTEMPTS:
-            log.info("Refreshing the captcha image")
-            active_page.locator("img[alt*='Refresh' i], a:has-text('Refresh')").first.click()
+            # Check if OTP prompt appeared or dashboard loaded
+            otp_box = active_page.locator("input[name*='otp' i], [aria-label*='OTP' i], input[placeholder*='OTP' i]").first
+            if not otp_box.is_visible(timeout=4000):
+                try:
+                    otp_box = active_page.get_by_role("textbox", name=re.compile("Please enter the OTP|OTP", re.I)).first
+                except Exception:
+                    pass
 
-    log.error("Login failed after %d attempts", MAX_LOGIN_ATTEMPTS)
-    return False, active_page
+            dashboard_ready = False
+            for sel in ["iframe[name='mainframe']", "a:has-text('User Services')", "a:has-text('Sign Out')"]:
+                try:
+                    if active_page.locator(sel).first.is_visible():
+                        dashboard_ready = True
+                        break
+                except Exception:
+                    pass
+
+            if (otp_box and otp_box.is_visible()) or dashboard_ready:
+                login_success = True
+                break
+
+        if not login_success and (not otp_box or not otp_box.is_visible()):
+            log.error("Could not reach OTP screen or dashboard after %d login attempts.", max_captcha_attempts)
+            return False, active_page
+
+        if otp_box and otp_box.is_visible():
+            log.info("OTP prompt detected on screen!")
+            otp_val = _fetch_relayed_otp(timeout_seconds=60.0, start_time=start_wait_otp)
+            if not otp_val:
+                if sys.stdin.isatty():
+                    otp_val = input("Relay timeout: Please type the OTP manually from your phone: ").strip()
+                else:
+                    log.error("No OTP received from relay and running non-interactively.")
+                    return False, active_page
+            log.info("Filling OTP: %s", otp_val)
+            otp_box.fill(otp_val)
+
+            submit_btn = active_page.locator("button:has-text('Submit'), input[value*='Submit' i], button:has-text('Verify')").first
+            submit_btn.click()
+            log.info("OTP submitted. Checking if accepted...")
+
+            active_page.wait_for_timeout(2000)
+
+            # Check if OTP was rejected
+            err_box = active_page.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red']").first
+            if err_box.is_visible(timeout=3000):
+                err_text = err_box.inner_text().strip()
+                if "OTP" in err_text or "match" in err_text or "invalid" in err_text.lower():
+                    log.warning("Portal rejected OTP: '%s'. Waiting for next fresh OTP from phone...", err_text)
+                    retry_start = time.time()
+                    new_otp = _fetch_relayed_otp(timeout_seconds=60.0, start_time=retry_start)
+                    if not new_otp and sys.stdin.isatty():
+                        new_otp = input("Type new OTP: ").strip()
+                    if new_otp and new_otp != otp_val:
+                        log.info("New fresh OTP received: %s. Re-submitting...", new_otp)
+                        otp_box.fill("")
+                        otp_box.fill(new_otp)
+                        submit_btn.click()
+                        active_page.wait_for_timeout(2500)
+                    else:
+                        log.error("Could not obtain a newer OTP or relay timed out. Aborting.")
+                        return False, active_page
+
+        # Wait for portal navigation and dashboard elements
+        try:
+            active_page.wait_for_load_state("domcontentloaded", timeout=15000)
+        except Exception:
+            pass
+
+        # Check if there is still an error banner visible
+        err_box = active_page.locator(".errorMessage, .error, #errorMsg, [class*='error' i], font[color='red']").first
+        if err_box.is_visible(timeout=2000):
+            err_text = err_box.inner_text().strip()
+            if err_text:
+                log.error("Portal error displayed: %s. Aborting.", err_text)
+                return False, active_page
+
+        # Wait for dashboard marker
+        log.info("Waiting for dashboard to be ready...")
+        try:
+            active_page.locator("iframe[name='mainframe'], a:has-text('User Services'), a:has-text('Sign Out')").first.wait_for(timeout=20000)
+            log.info("Dashboard loaded.")
+            return True, active_page
+        except Exception as e:
+            log.error("Timeout waiting for dashboard marker: %s. Aborting.", e)
+            return False, active_page
+
+    except Exception as exc:
+        log.exception("Login flow failed: %s", exc)
+        return False, active_page
 
 
 def sign_out(page: Page) -> None:
@@ -463,14 +554,7 @@ def sign_out(page: Page) -> None:
 
 def open_csp(page: Page, code: str) -> Page:
     """Steps 8-16: Navigate to Capture PVR DRA IIBF AMFI and open CSP popup."""
-    def _safe_dialog(d):
-        try:
-            log.info("SBI Dialog: '%s' (auto-dismissed)", d.message)
-            d.dismiss()
-        except Exception:
-            pass
-
-    page.on("dialog", _safe_dialog)
+    attach_safe_dialog_handler(page)
 
     # Wait for dashboard navigation
     try:
@@ -597,11 +681,18 @@ def open_csp(page: Page, code: str) -> Page:
         # 8. Open CSP details popup
         with page.expect_popup(timeout=TIMEOUT_MS) as pop:
             if csp_direct_link.is_visible(timeout=3000):
+                log.info("Clicking direct link for CSP %s...", code)
                 csp_direct_link.click()
             elif result_row.is_visible() and result_row.locator("a").first.is_visible(timeout=2000):
+                log.info("Clicking link in CSP %s result row...", code)
                 result_row.locator("a").first.click()
             else:
-                mframe.locator("table a").first.click()
+                table_link = mframe.locator("table a:not([href*='hideCalendar'])").first
+                if table_link.is_visible(timeout=2000):
+                    log.info("Clicking available table link...")
+                    table_link.click()
+                else:
+                    raise RuntimeError(f"No clickable result link found for CSP {code}")
 
         popup = pop.value
         popup.wait_for_load_state("domcontentloaded")
