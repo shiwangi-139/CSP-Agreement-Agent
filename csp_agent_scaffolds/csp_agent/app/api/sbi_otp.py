@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 
 from fastapi import APIRouter, Header, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 logger = logging.getLogger("sbi_otp_router")
 
@@ -242,7 +242,9 @@ def get_latest_sbi_otp(max_age_seconds: float = 300.0):
 
 
 @router.get("/sbi-video/latest")
+@router.get("/admin/sbi-video/latest")
 @router.get("/csp-agreement-agent/sbi-video/latest")
+@router.get("/csp-agreement-agent/admin/sbi-video/latest")
 def get_latest_video():
     """Stream the latest Playwright test video recording."""
     candidates = [
@@ -258,7 +260,9 @@ def get_latest_video():
 
 
 @router.get("/sbi-screenshot/latest")
+@router.get("/admin/sbi-screenshot/latest")
 @router.get("/csp-agreement-agent/sbi-screenshot/latest")
+@router.get("/csp-agreement-agent/admin/sbi-screenshot/latest")
 def get_latest_screenshot():
     """View the latest test screenshot or failure artifact."""
     candidates = [
@@ -272,3 +276,85 @@ def get_latest_screenshot():
             if shots:
                 return FileResponse(shots[0], media_type="image/png", filename=shots[0].name)
     raise HTTPException(status_code=404, detail="No screenshots found")
+
+
+@router.get("/sbi-media", response_class=HTMLResponse)
+@router.get("/admin/sbi-media", response_class=HTMLResponse)
+@router.get("/csp-agreement-agent/sbi-media", response_class=HTMLResponse)
+@router.get("/csp-agreement-agent/admin/sbi-media", response_class=HTMLResponse)
+def view_sbi_media():
+    """Interactive visual gallery for Playwright test video recordings and screenshots."""
+    v_dirs = [
+        Path("/home/shiwangi/csp_agent_scaffolds/csp_agent/sbi_upload/screenshots/videos"),
+        Path(__file__).resolve().parent.parent.parent / "sbi_upload" / "screenshots" / "videos",
+    ]
+    s_dirs = [
+        Path("/home/shiwangi/csp_agent_scaffolds/csp_agent/sbi_upload/screenshots"),
+        Path(__file__).resolve().parent.parent.parent / "sbi_upload" / "screenshots",
+    ]
+
+    videos = []
+    for d in v_dirs:
+        if d.exists() and d.is_dir():
+            videos = sorted(d.glob("*.webm"), key=lambda p: p.stat().st_mtime, reverse=True)
+            break
+
+    screenshots = []
+    for d in s_dirs:
+        if d.exists() and d.is_dir():
+            screenshots = sorted([f for f in d.glob("*.png") if not f.name.startswith("test_captcha")],
+                                 key=lambda p: p.stat().st_mtime, reverse=True)
+            break
+
+    v_html = ""
+    if videos:
+        latest_v = videos[0].name
+        v_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(videos[0].stat().st_mtime))
+        v_size_mb = f"{videos[0].stat().st_size / (1024 * 1024):.2f} MB"
+        v_html = f"""
+        <div style="background:#1e293b;border-radius:10px;padding:20px;margin-bottom:24px;">
+            <h3 style="margin-top:0;color:#38bdf8;">Latest Automation Video: {latest_v}</h3>
+            <p style="color:#94a3b8;font-size:14px;margin-bottom:12px;">Recorded: {v_time} | Size: {v_size_mb}</p>
+            <video controls autoplay loop style="width:100%;max-width:960px;border-radius:8px;border:1px solid #334155;">
+                <source src="sbi-video/latest" type="video/webm">
+                Your browser does not support WebM video streaming.
+            </video>
+        </div>
+        """
+    else:
+        v_html = "<div style='padding:20px;background:#1e293b;border-radius:8px;color:#94a3b8;'>No video recordings found yet. Run test_sbi_login.py to create one.</div>"
+
+    s_html = ""
+    if screenshots:
+        latest_s = screenshots[0].name
+        s_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(screenshots[0].stat().st_mtime))
+        s_html = f"""
+        <div style="background:#1e293b;border-radius:10px;padding:20px;margin-bottom:24px;">
+            <h3 style="margin-top:0;color:#34d399;">Latest Screenshot / Popup: {latest_s}</h3>
+            <p style="color:#94a3b8;font-size:14px;margin-bottom:12px;">Captured: {s_time}</p>
+            <img src="sbi-screenshot/latest" style="width:100%;max-width:960px;border-radius:8px;border:1px solid #334155;display:block;" />
+        </div>
+        """
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>SBI Automation - Live Inspection</title>
+    <style>
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; padding: 24px; max-width: 1020px; margin: 0 auto; }}
+        h1 {{ font-size: 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #334155; padding-bottom: 16px; }}
+        a.btn {{ background: #2563eb; color: #fff; text-decoration: none; padding: 8px 16px; border-radius: 6px; font-size: 14px; font-weight: 500; }}
+        a.btn:hover {{ background: #1d4ed8; }}
+    </style>
+</head>
+<body>
+    <h1>
+        <span>SBI FI Automation & Inspector</span>
+        <a class="btn" href="javascript:location.reload()">Refresh</a>
+    </h1>
+    {v_html}
+    {s_html}
+</body>
+</html>
+"""
